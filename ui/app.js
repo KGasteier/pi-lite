@@ -306,7 +306,7 @@ async function refreshState() {
     state = r.data;
     refreshUsage();
     const m = state.model;
-    if (m) $("model").value = m.provider + "/" + m.id;
+    if (m) { $("model").value = m.provider + "/" + m.id; syncModelButton(); }
     if (state.thinkingLevel) $("think").value = state.thinkingLevel;
     document.title = "pi-lite" + (state.sessionName ? " – " + state.sessionName : "");
     markActive();
@@ -323,12 +323,56 @@ async function loadModels() {
       o.dataset.provider = m.provider; o.dataset.id = m.id;
       sel.appendChild(o);
     }
+    syncModelButton();
   } catch (e) { console.warn(e); }
   const t = $("think"); t.innerHTML = "";
   for (const l of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
     const o = document.createElement("option"); o.value = l; o.textContent = "Denken: " + l; t.appendChild(o);
   }
 }
+let modelCursor = 0;
+function syncModelButton() {
+  $("modelbutton").textContent = $("model").selectedOptions[0]?.textContent || "Modell auswählen";
+}
+function closeModelPicker(refocus = true) {
+  $("modellist").hidden = true; $("modelbutton").setAttribute("aria-expanded", "false");
+  if (refocus) $("modelbutton").focus();
+}
+function markModelCursor() {
+  const rows = [...$("modellist").children];
+  rows.forEach((row, i) => row.setAttribute("aria-selected", String(i === modelCursor)));
+  const row = rows[modelCursor];
+  if (row) { $("modellist").setAttribute("aria-activedescendant", row.id); row.scrollIntoView({ block: "nearest" }); }
+}
+function chooseModel(index) {
+  $("model").selectedIndex = index;
+  $("model").dispatchEvent(new Event("change")); syncModelButton(); closeModelPicker();
+}
+function openModelPicker() {
+  const list = $("modellist"); list.replaceChildren();
+  [...$("model").options].forEach((o, i) => {
+    const row = document.createElement("div"); row.id = `model-option-${i}`; row.setAttribute("role", "option"); row.textContent = o.textContent;
+    row.onclick = () => chooseModel(i); list.appendChild(row);
+  });
+  modelCursor = Math.max(0, $("model").selectedIndex);
+  list.hidden = false; $("modelbutton").setAttribute("aria-expanded", "true"); list.focus(); markModelCursor();
+}
+$("modelbutton").onclick = () => $("modellist").hidden ? openModelPicker() : closeModelPicker();
+$("modelbutton").onkeydown = e => {
+  if (["ArrowDown", "ArrowUp"].includes(e.key)) { e.preventDefault(); e.stopPropagation(); openModelPicker(); }
+};
+$("modellist").onkeydown = e => {
+  const count = $("modellist").children.length;
+  if (["ArrowDown", "ArrowUp", "Home", "End", "PageDown", "PageUp"].includes(e.key)) {
+    e.preventDefault(); e.stopPropagation();
+    const page = Math.max(1, Math.floor($("modellist").clientHeight / ($("modellist").children[modelCursor]?.offsetHeight || 32)));
+    modelCursor = e.key === "Home" ? 0 : e.key === "End" ? count - 1 : Math.max(0, Math.min(count - 1, modelCursor + ({ArrowDown:1, ArrowUp:-1, PageDown:page, PageUp:-page})[e.key]));
+    markModelCursor();
+  } else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); if (count) chooseModel(modelCursor); }
+  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeModelPicker(); }
+  else if (e.key === "Tab") closeModelPicker(false);
+};
+document.addEventListener("pointerdown", e => { if (!e.target.closest("#modelpicker")) closeModelPicker(false); });
 $("model").onchange = (e) => {
   const o = e.target.selectedOptions[0]; if (!o) return;
   send({ type: "set_model", provider: o.dataset.provider, modelId: o.dataset.id });
@@ -842,6 +886,8 @@ document.addEventListener("keydown", e => {
       controls[(i + (e.shiftKey ? controls.length - 1 : 1)) % controls.length]?.focus(); return;
     }
   }
+  if (e.target.closest?.("#modelpicker") && !$("modellist").hidden) return;
+  if (e.target.id === "modelbutton" && ["ArrowDown", "ArrowUp"].includes(e.key)) return;
   // Native text/select arrow behavior is never overridden.
   const textControl = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
   const group = dialog || (e.target.closest?.("#preview") ? $("preview") : e.target.closest?.("header"));
@@ -853,7 +899,7 @@ document.addEventListener("keydown", e => {
   if (dialog) return;
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
     const actions = { "1": () => $("prompt").focus(), "2": focusSide, "3": () => $("log").focus(), "4": () => $("toggle").focus(), "5": focusPreview,
-      n: () => $("newsess").click(), a: () => $("abort").click(), f: () => $("fork").click(), m: () => $("model").focus(), t: () => $("think").focus(),
+      n: () => $("newsess").click(), a: () => $("abort").click(), f: () => $("fork").click(), m: () => $("modelbutton").focus(), t: () => $("think").focus(),
       "-": () => resizeOutput(-1), "+": () => resizeOutput(1), "=": () => resizeOutput(1) };
     const action = actions[e.key.toLowerCase()];
     if (action) { e.preventDefault(); e.stopImmediatePropagation(); action(); return; }

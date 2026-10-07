@@ -30,8 +30,9 @@ Build-Verzeichnisse und Claude-Historien werden nicht rekursiv durchsucht.
 
 Ein Klick auf eine entdeckte Markdown-Datei öffnet einen Texteditor im Fenster.
 Andere Dateitypen bleiben reine Übersicht. Der Editor startet schreibgeschützt: Ein
-Schloss-Symbol unten rechts (🔒) sperrt Text und „Speichern“; erst nach Klick und
-Bestätigung („wirklich bearbeiten?“) wird freigegeben (🔓). Das schützt Neulinge vor
+Schloss-Symbol unten rechts (geschlossenes SVG-Schloss) sperrt Text und „Speichern“;
+der Speichern-Button ist dabei hellgrau und inaktiv. Erst nach Klick und
+Bestätigung („wirklich bearbeiten?“) wird freigegeben (SVG mit offenem Bügel). Das schützt Neulinge vor
 versehentlichen Änderungen wichtiger Dateien. Speichern ausdrücklich per Knopf oder
 Strg/Cmd+S; Esc schließt (mit Rückfrage bei ungespeicherten Änderungen).
 Bearbeitung ändert weder automatisch laufende pi-Instruktionen noch andere Harnesses.
@@ -40,6 +41,13 @@ Backend prüft den Pfad erneut gegen das Inventar, beschränkt Lesen/Schreiben a
 Markdown bis 2 MB und verweigert Speichern, wenn der ursprüngliche Inhalt inzwischen
 extern geändert wurde. Der Vergleich verhindert gewöhnliche Konflikte, ist aber kein
 atomarer Dateilock. Es gibt derzeit keine automatische Sicherung vor dem Speichern.
+
+## Prompt-Editor
+
+⤢ neben der Eingabe öffnet den bisherigen Prompt im großen Editor, ohne Schloss
+und sofort bearbeitbar. Speichern/Strg+S übernimmt den gesamten Text zurück ins
+Eingabefeld, ohne ihn zu senden. Erst Senden/Enter im Eingabefeld führt ihn aus.
+Schließen/Esc fragt bei ungespeicherten Änderungen nach.
 
 ## Prüfung
 

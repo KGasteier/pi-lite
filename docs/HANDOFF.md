@@ -2,6 +2,18 @@
 
 ## Aktueller Stand
 
+Korrektur Editor/Installation: Die UI-Commits d46cd7f und 6a95e48 waren zunächst
+nur im Quellcode, nicht in der installierten Binary. Jetzt Release neu gebaut und
+installiert, SHA256 von Build und Installation identisch. Laufendes Fenster nicht
+beendet; es braucht einen Neustart, bevor die neue Oberfläche sichtbar ist.
+MD-Editor: Speichern hellgrau bei Schreibschutz, eigene SVG-Schlösser geschlossen/offen.
+Prompt-Erweiterung über ⤢: frei editierbar ohne Schloss, Speichern übernimmt nur in
+die Eingabe, kein Senden. Modelle: eigene Listbox statt nativer WebKit-Auswahl;
+Pfeile/Home/End/PageUp/PageDown bewegen Markierung, Enter/Klick bestätigen, Esc
+verwirft. Navigation mit 80 Einträgen logisch getestet (scripts/test-model-picker.cjs).
+Syntax, History-/Preview-/Modelltests, Rust-Tests und Release-Build bestanden.
+Reale WebKit-Darstellung und Navigation weiterhin NICHT live geprüft.
+
 Privates GitHub-Projekt, main. Letzter Funktionsstand: Markdown in Vorschaufenstern
 (KI-Erklärung, Cache-Treffer, lokaler Auszug, Token-Erklärung) über den bestehenden
 DOMPurify-geschützten Renderer. Gebaut und lokal installiert; Darstellung noch

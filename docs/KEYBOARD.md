@@ -19,8 +19,10 @@ native Pfeilbedienung. Sichtbare Fokusmarkierung. F1 öffnet/schließt die Hilfe
 - Ressourcenlisten: ↑/↓, Home/End; Enter öffnet Markdown.
 - Seitenliste: ← zur Ansichtsauswahl, → in die bereits sichtbare Vorschau.
   Die Vorschau erscheint nach 450 ms Fokus; Alt+5 ist ein alternativer Zugang.
+- Modelle: ↑/↓ markieren ohne Modellwechsel; Home/End erreichen Anfang/Ende,
+  PageUp/PageDown springen seitenweise. Enter/Klick bestätigt, Esc verwirft.
+  Thinking behält die native Select-Bedienung.
 - Kopfzeilen- und Vorschauknöpfe: Pfeile/Home/End wechseln Knöpfe; Tab ebenfalls.
-  Pfeile in Selects ändern stattdessen wie gewohnt die Auswahl.
 - Chat selbst: ↑/↓, PageUp/PageDown, Home/End scrollen. Tab erreicht Links,
   Tool-Zusammenfassungen und andere native interaktive Elemente.
 - Eingabe: ↑/↓ ausschließlich Cursorbewegung. Alt+↑/↓ lädt History;

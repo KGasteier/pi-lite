@@ -43,6 +43,12 @@
   #editpath { overflow-wrap:anywhere; font-size:13px; }
   #editstatus { color:var(--dim); }
   #editbuttons { display:flex; gap:8px; align-items:center; }
+  #modelpicker { position:relative; min-width:0; }
+  #modelbutton { max-width:32vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #modellist { position:absolute; top:100%; left:0; z-index:70; width:min(560px,80vw); max-height:55vh; overflow-y:auto; background:var(--panel); border:1px solid var(--cat); border-radius:6px; padding:4px; }
+  #modellist[hidden] { display:none; }
+  #modellist [role=option] { padding:8px; cursor:pointer; overflow-wrap:anywhere; }
+  #modellist [aria-selected=true] { background:var(--acc); color:white; }
   #editlock[hidden] { display:none; }
   #editlock { margin-left:auto; order:3; font-size:16px; padding:2px 8px; }
   #editor textarea[readonly] { opacity:.8; }
@@ -172,7 +178,7 @@
   <button id="toggle" title="Seitenleiste ein-/ausblenden" aria-label="Seitenleiste">☰</button>
   <input id="cwd" placeholder="Arbeitsordner" aria-label="Arbeitsordner" title="Für die nächste neue Session; bestehende Sessions behalten ihren Ordner">
   <select id="cwdoptions" aria-label="Arbeitsordner auswählen"><option value="">Workspace:</option></select>
-  <select id="model" title="Modell"></select>
+  <div id="modelpicker"><button id="modelbutton" aria-haspopup="listbox" aria-expanded="false" title="Modell auswählen">Modell …</button><div id="modellist" role="listbox" aria-label="Modelle" tabindex="0" hidden></div><select id="model" hidden aria-hidden="true" tabindex="-1"></select></div>
   <select id="think" title="Thinking-Level"></select>
   <button id="fork" title="Ab einer früheren Nachricht abzweigen">⑂ Fork</button>
   <span id="textcontrols" aria-label="Ausgabeschriftgröße">
