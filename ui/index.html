@@ -44,11 +44,13 @@
   #editstatus { color:var(--dim); }
   #editbuttons { display:flex; gap:8px; align-items:center; }
   .picker { position:relative; min-width:0; }
-  .pickbtn { max-width:32vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:26px;
+  .picker .pickbtn { max-width:32vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:26px;
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23e6edf3' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat:no-repeat; background-position:right 9px center; }
-  .pickbtn[aria-expanded=true] { background-color:#555c66; }
-  #cwdbutton, #thinkbutton { max-width:24vw; }
+  .picker .pickbtn:hover, .picker .pickbtn:focus-visible { background-color:color-mix(in srgb, var(--cat) 35%, #444a52); }
+  .picker .pickbtn[aria-expanded=true] { background-color:color-mix(in srgb, var(--cat) 50%, #444a52); }
+  .picker #thinkbutton { max-width:24vw; }
+  #cwdpicker { flex:1 1 160px; max-width:42vw; } #cwdpicker #cwdbutton { max-width:100%; width:100%; text-align:left; }
   .picklist { position:absolute; top:100%; left:0; z-index:70; width:min(560px,80vw); max-height:55vh; overflow-y:auto; background:var(--panel); border:1px solid var(--cat); border-radius:6px; padding:4px; }
   .picklist[hidden] { display:none; }
   .picklist [role=option] { padding:8px; cursor:pointer; overflow-wrap:anywhere; }
@@ -123,7 +125,6 @@
   body { display:flex; flex-direction:column; }
   header { flex-wrap:wrap; display:flex; gap:8px; align-items:center; padding:8px 12px; background:var(--panel); border-bottom:1px solid #3a4046; }
   header input { background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:6px; padding:4px 8px; }
-  #cwd { flex:1 1 160px; min-width:0; }
   #status { color:var(--dim); font-size:13px; min-width:90px; text-align:right; }
   button { background:#444a52; color:var(--fg); border:0; border-radius:6px; padding:6px 14px; cursor:pointer; }
   button:hover { background:#555c66; }
@@ -181,8 +182,8 @@
 <div id="main">
 <header>
   <button id="toggle" title="Seitenleiste ein-/ausblenden" aria-label="Seitenleiste">☰</button>
-  <input id="cwd" placeholder="Arbeitsordner" aria-label="Arbeitsordner" title="Für die nächste neue Session; bestehende Sessions behalten ihren Ordner">
-  <div class="picker" id="cwdpicker"><button class="pickbtn" id="cwdbutton" aria-haspopup="listbox" aria-expanded="false" title="Arbeitsordner für die nächste neue Session wählen">Workspace:</button><div class="picklist" id="cwdlist" role="listbox" aria-label="Workspaces" tabindex="0" hidden></div><select id="cwdoptions" hidden aria-hidden="true" tabindex="-1"><option value="">Workspace:</option></select></div>
+  <input id="cwd" type="hidden" aria-label="Arbeitsordner">
+  <div class="picker" id="cwdpicker"><button class="pickbtn" id="cwdbutton" aria-haspopup="listbox" aria-expanded="false" title="Arbeitsordner wählen">Workspace:</button><div class="picklist" id="cwdlist" role="listbox" aria-label="Workspaces" tabindex="0" hidden></div><select id="cwdoptions" hidden aria-hidden="true" tabindex="-1"><option value="">Workspace:</option></select></div>
   <div class="picker" id="modelpicker"><button class="pickbtn" id="modelbutton" aria-haspopup="listbox" aria-expanded="false" title="Modell auswählen">Modell …</button><div class="picklist" id="modellist" role="listbox" aria-label="Modelle" tabindex="0" hidden></div><select id="model" hidden aria-hidden="true" tabindex="-1"></select></div>
   <div class="picker" id="thinkpicker"><button class="pickbtn" id="thinkbutton" aria-haspopup="listbox" aria-expanded="false" title="Thinking-Level wählen">Denken</button><div class="picklist" id="thinklist" role="listbox" aria-label="Thinking-Level" tabindex="0" hidden></div><select id="think" hidden aria-hidden="true" tabindex="-1"></select></div>
   <button id="fork" title="Ab einer früheren Nachricht abzweigen">⑂ Fork</button>

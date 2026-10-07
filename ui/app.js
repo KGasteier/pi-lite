@@ -405,7 +405,7 @@ function makePicker(name, select, fixedLabel) {
     cursor = Math.max(0, rows.indexOf(select.selectedIndex));
     list.hidden = false; button.setAttribute("aria-expanded", "true"); list.focus(); mark();
   };
-  const sync = () => { button.textContent = fixedLabel || select.selectedOptions[0]?.textContent || ""; };
+  const sync = () => { button.textContent = (typeof fixedLabel === "function" ? fixedLabel() : fixedLabel) || select.selectedOptions[0]?.textContent || ""; };
   button.onclick = () => list.hidden ? open() : close();
   button.onkeydown = e => { if (["ArrowDown", "ArrowUp"].includes(e.key)) { e.preventDefault(); e.stopPropagation(); open(); } };
   list.onkeydown = e => {
@@ -424,7 +424,10 @@ function makePicker(name, select, fixedLabel) {
   return { sync, open, close };
 }
 const thinkPicker = makePicker("think", $("think"));
-const cwdPicker = makePicker("cwd", $("cwdoptions"), "Workspace:");
+const cwdPicker = makePicker("cwd", $("cwdoptions"), () => {
+  const path = $("cwd").value; $("cwdbutton").title = path ? "Arbeitsordner für die nächste neue Session: " + path + " (bestehende Sessions behalten ihren Ordner)" : "Arbeitsordner wählen";
+  return "Workspace: " + (path.replace(/^\/home\/[^/]+/, "~") || "–");
+});
 
 // ---------- Sessions ----------
 let sessionList = [];
@@ -575,7 +578,7 @@ async function openSession(s) {
   document.body.classList.remove("side-open");
   if (busy) { note("pi arbeitet noch – erst abbrechen.", true); return; }
   // Der Arbeitsordner gehört zur Session, daher pi dort neu starten.
-  $("cwd").value = s.cwd;
+  $("cwd").value = s.cwd; cwdPicker.sync();
   await start({ session: s.path });
 }
 
@@ -970,7 +973,7 @@ document.addEventListener("keydown", e => {
 async function initializeWorkFolder() {
   try {
     const locations = await invoke("work_locations");
-    $("cwd").value = locations[0]?.path || "";
+    $("cwd").value = locations[0]?.path || ""; cwdPicker.sync();
     for (const location of locations) {
       const option = document.createElement("option"); option.value = location.path;
       option.textContent = location.name + " · " + location.path; $("cwdoptions").appendChild(option);
@@ -983,7 +986,7 @@ async function initializeWorkFolder() {
 }
 let folderGeneration = 0, folderCurrent = null, folderReturn = null;
 function setWorkFolder(path) {
-  $("cwd").value = path;
+  $("cwd").value = path; cwdPicker.sync();
   $("cwd").dispatchEvent(new Event("change"));
   toast("Arbeitsordner für die nächste neue Session ausgewählt.");
 }
