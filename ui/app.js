@@ -568,6 +568,7 @@ initializeWorkFolder();
 let inventoryGeneration = 0, editing = null;
 async function changeSideView() {
   const view = $("sideview").value, gen = ++inventoryGeneration;
+  document.body.dataset.cat = view;
   $("sessions").hidden = view !== "sessions";
   $("inventory").hidden = view === "sessions";
   $("newsess").hidden = view !== "sessions";

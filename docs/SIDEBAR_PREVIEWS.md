@@ -112,3 +112,10 @@ KI-Erklärungen (auch Cache-Treffer), lokaler Auszug und Token-Erklärung nutzen
 den bestehenden Markdown-Renderer mit DOMPurify-Sanitizing. Überschriften sind
 im Kontextfenster kompakt skaliert. Syntax-/Logiktests und Build erfolgreich;
 neue Darstellung noch nicht live geprüft.
+
+## Kategoriefarben
+
+Jede Seitenleistenrubrik hat einen dezenten Akzent (`body[data-cat]`, Variable `--cat`):
+Sessions blau, Extensions grün, Skills gelb, pi-Agent-/Kontextdateien violett, andere
+Harnesses orange. Einträge sind abgerundete Kästchen in dieser Farbe; Kontextmenü,
+Vorschau und Markdown-Editor übernehmen sie als Rahmen/Auswahlfarbe.
