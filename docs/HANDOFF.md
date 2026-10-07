@@ -2,6 +2,11 @@
 
 ## Aktueller Stand
 
+Eingabe: Option/Alt+Enter setzt explizit einen Zeilenumbruch an der Cursorposition
+(ersetzt eine Auswahl), Enter und Shift+Enter senden. Platzhalter und F1-Hilfe
+angepasst. Syntax-/Logiktests, Rust-Tests und Release-Build erfolgreich; installiert.
+Reale Tastaturbedienung im laufenden WebKit-Fenster noch nicht geprüft; Neustart nötig.
+
 Korrektur Editor/Installation: Die UI-Commits d46cd7f und 6a95e48 waren zunächst
 nur im Quellcode, nicht in der installierten Binary. Jetzt Release neu gebaut und
 installiert, SHA256 von Build und Installation identisch. Laufendes Fenster nicht

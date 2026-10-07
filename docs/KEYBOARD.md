@@ -27,7 +27,8 @@ native Pfeilbedienung. Sichtbare Fokusmarkierung. F1 öffnet/schließt die Hilfe
   Tool-Zusammenfassungen und andere native interaktive Elemente.
 - Eingabe: ↑/↓ ausschließlich Cursorbewegung. Alt+↑/↓ lädt History;
   daneben zwei vertikal angeordnete, per Maus/Tab/Enter bedienbare Pfeilknöpfe.
-  Enter sendet, Shift+Enter fügt eine Zeile ein.
+  Enter sendet, Option/Alt+Enter fügt eine Zeile ein (auch anstelle einer Auswahl).
+  Shift+Enter sendet ebenfalls; Option/Alt+Enter war zuvor nicht separat belegt.
 - Editor: native Textnavigation, Strg/Cmd+S speichern, Esc schließen.
 - Dialoge einschließlich Hilfe/Editor: Tab bleibt im Dialog. Pfeile navigieren
   Knöpfe, überschreiben aber keine Textnavigation. Esc schließt den obersten Dialog.

@@ -582,7 +582,15 @@ $("historynewer").onclick = () => recallInput(1);
 $("prompt").addEventListener("input", () => inputHistory.reset());
 $("prompt").addEventListener("keydown", (e) => {
   if (e.isComposing) return;
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    if (e.altKey && !e.ctrlKey && !e.metaKey) {
+      const field = e.target;
+      field.setRangeText("\n", field.selectionStart, field.selectionEnd, "end");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    } else submit();
+    return;
+  }
   if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
     const field = e.target, up = e.key === "ArrowUp";
     if (field.selectionStart !== field.selectionEnd) return;
