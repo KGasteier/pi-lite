@@ -101,13 +101,16 @@
   /* Dialoge der Extensions */
   #modal { position:fixed; inset:0; background:#000a; display:none; align-items:center; justify-content:center; z-index:20; padding:12px; }
   #modal.open { display:flex; }
-  #dlg { background:var(--panel); border:1px solid #3a4046; border-radius:12px; padding:16px; width:min(560px,100%); max-height:90vh; display:flex; flex-direction:column; gap:10px; }
+  #dlg { box-sizing:border-box; overflow:hidden; background:var(--panel); border:1px solid #3a4046; border-radius:12px; padding:16px; width:min(560px,100%); max-height:90vh; display:flex; flex-direction:column; gap:10px; }
   #dlg h4 { margin:0; font-size:15px; white-space:pre-wrap; word-break:break-word; }
   #dlg .body { white-space:pre-wrap; color:var(--dim); font-size:14px; word-break:break-word; }
   #dlg input, #dlg textarea { background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:6px; padding:8px; font:inherit; width:100%; }
   #dlg textarea { min-height:180px; resize:vertical; font:13px ui-monospace,monospace; }
-  #dlg .opts { display:flex; flex-direction:column; gap:6px; overflow:auto; }
-  #dlg .opts button { text-align:left; }
+  #dlg .opts { display:flex; flex-direction:column; gap:6px; min-height:0; max-height:60vh; flex:1 1 auto; overflow-y:scroll; scrollbar-gutter:stable; }
+  #dlg .opts button { flex:0 0 auto; text-align:left; white-space:normal; overflow-wrap:anywhere; }
+  #dlg .opts button[aria-selected="true"] { background:var(--acc); color:var(--bg); }
+  #dlg h4, #dlg .row, #dlg .selecthint { flex:0 0 auto; }
+  #dlg .selecthint { color:var(--dim); font-size:12px; }
   #dlg .row { display:flex; gap:8px; justify-content:flex-end; }
   #dlg .left { color:var(--dim); font-size:12px; margin-right:auto; align-self:center; }
   /* Meldungen und Status von Extensions */
@@ -262,6 +265,7 @@ Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhal
 <script src="history.js"></script>
 <script src="editor.js"></script>
 <script src="slash.js"></script>
+<script src="dialog-selection.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

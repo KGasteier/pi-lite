@@ -39,6 +39,18 @@ wie in der TUI Konfiguration ändern und erfordern bewusste Auswahl/Bestätigung
 Nach pi-/Extension-Neustart verfügbar. npm-Updates können die Anpassung überschreiben;
 dann erneut prüfen/anwenden. Keine automatische Installer-Anpassung.
 
+## Wizard-Auswahl
+
+Wizard-Dialoge haben einen begrenzten Scrollbereich mit Scrollbar und Positions-
+zähler. Hover und Tastaturfokus markieren denselben Eintrag; ↑↓, Home/End und
+PageUp/PageDown navigieren und scrollen den aktiven Eintrag ins Bild. Enter/Klick
+bestätigt, Tab erreicht auch Abbrechen, Esc bricht ab. Regressionstest:
+`node scripts/test-dialog-selection.cjs` mit 25 synthetischen Einträgen.
+„New models“ enthält laut Extension nur noch nicht konfigurierte Modelle; die
+Zahl kann kleiner als die Gesamtzahl des Providers sein. Der Zähler zählt alle
+vom RPC-Dialog gelieferten Optionen, bei Mehrfachwahl inklusive Confirm-Aktion.
+CSS-/DOM-Stubprüfung bestanden; echte WebKit-Bedienung bleibt manuell zu prüfen.
+
 ## Tests
 
 `node scripts/test-slash.cjs`: Filter, Präfixpriorität, Pfeilumlauf, Hover,

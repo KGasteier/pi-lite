@@ -2,6 +2,15 @@
 
 ## Aktueller Stand
 
+Wizard-select korrigiert: keine statische pinke erste Aktion mehr; Fokus/Hover
+synchronisieren die Auswahl. ↑↓, Home/End, PageUp/PageDown navigieren mit explizitem
+ScrollIntoView. Liste max. 60vh, min-height:0, nicht schrumpfende Einträge, sichtbare
+Scrollbar; Zähler zeigt Position und tatsächliche Optionszahl. Regression mit 25
+synthetischen Optionen bestanden; Syntax/bestehende JS/Rust/Release geprüft.
+Neu installiert, echte WebKit-Bedienung noch durch Nutzer zu prüfen.
+„New models“ filtert in der Extension bereits konfigurierte IDs heraus; 14 neue
+Modelle sind nicht zwingend eine abgeschnittene Liste von 25 Gesamtmodellen.
+
 Slash-Auswahl über Prompt: / öffnet dynamische RPC-Befehle, tippen filtert,
 Hover/↑↓ markieren, Tab/Enter/Klick übernehmen, danach Enter führt aus, Esc schließt.
 Extension-Aufrufe verwenden prompt auch bei Streaming; Wizard ohne kurzen Timeout.

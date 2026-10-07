@@ -1,0 +1,15 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const doc={activeElement:null,createElement(){return {attrs:{},offsetHeight:30,setAttribute(k,v){this.attrs[k]=v;},focus(){doc.activeElement=this;this.onfocus?.();},scrollIntoView(){this.scrolled=true;}};}};
+const box={children:[],clientHeight:180,setAttribute(){},appendChild(b){this.children.push(b);},contains(b){return this.children.includes(b);}},hint={};
+const context=vm.createContext({document:doc,box,hint,options:Array.from({length:25},(_,i)=>'Model '+i),chosen:null});
+vm.runInContext(fs.readFileSync('ui/dialog-selection.js','utf8')+'\nconst selection=setupDialogSelection(box,hint,options,o=>chosen=o); selection.first.focus();',context);
+const key=k=>vm.runInContext(`selection.key({key:${JSON.stringify(k)},preventDefault(){},stopImmediatePropagation(){}})`,context);
+assert.equal(box.children.length,25);
+key('ArrowDown');assert.equal(doc.activeElement,box.children[1]);assert.equal(box.children[0].attrs['aria-selected'],'false');
+key('End');assert.equal(doc.activeElement,box.children[24]);assert.ok(doc.activeElement.scrolled);assert.match(hint.textContent,/25 \/ 25/);
+key('Home');key('PageDown');assert.equal(doc.activeElement,box.children[5]);key('PageUp');assert.equal(doc.activeElement,box.children[0]);
+box.children[20].onmouseenter();assert.equal(doc.activeElement,box.children[20]);assert.equal(box.children[20].attrs['aria-selected'],'true');
+box.children[20].onclick();assert.equal(context.chosen,'Model 20');
+for(let i=0;i<50;i++)key('ArrowDown');assert.equal(doc.activeElement,box.children[24]);
+const css=fs.readFileSync('ui/index.html','utf8');assert.match(css,/#dlg \.opts \{[^}]*min-height:0;[^}]*max-height:60vh;[^}]*overflow-y:scroll;/);assert.match(css,/#dlg \.opts button \{[^}]*flex:0 0 auto;/);
+console.log('Dialog selection: all 25 entries, arrows, Home/End, paging, hover, selection and scroll constraints passed');

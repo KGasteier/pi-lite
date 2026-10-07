@@ -278,15 +278,14 @@ function nextDialog() {
   const row = document.createElement("div"); row.className = "row";
   const btn = (label, fn, cls) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; return b; };
   const cancel = () => closeDialog({ cancelled: true });
-  let focusEl = null;
+  let focusEl = null, selection = null;
 
   if (ev.method === "select") {
     const box = document.createElement("div"); box.className = "opts";
-    (ev.options || []).forEach((o, i) => {
-      const b = btn(o, () => closeDialog({ value: o }), i === 0 ? "primary" : ""); box.appendChild(b);
-      if (i === 0) focusEl = b;
-    });
-    dlg.appendChild(box); row.append(btn("Abbrechen", cancel));
+    const hint = document.createElement("div"); hint.className = "selecthint";
+    selection = setupDialogSelection(box, hint, ev.options || [], o => closeDialog({ value: o }));
+    focusEl = selection.first;
+    dlg.appendChild(box); dlg.appendChild(hint); row.append(btn("Abbrechen", cancel));
   } else if (ev.method === "confirm") {
     if (ev.message) { const m = document.createElement("div"); m.className = "body"; m.textContent = ev.message; dlg.appendChild(m); }
     const yes = btn("Ja", () => closeDialog({ confirmed: true }), "primary");
@@ -304,7 +303,7 @@ function nextDialog() {
     row.append(btn("Abbrechen", cancel), btn("OK", ok, "primary"));
   }
   dlg.appendChild(row);
-  activeDialog = { ev, timer: 0 };
+  activeDialog = { ev, timer: 0, selection };
   // pi löst bei Timeout selbst auf – der Dialog soll dann ebenfalls verschwinden.
   if (ev.timeout > 0) activeDialog.timer = setTimeout(() => closeDialog(null), ev.timeout);
   $("modal").classList.add("open");
@@ -998,6 +997,7 @@ document.addEventListener("keydown", e => {
   if (e.isComposing) return;
   const dialog = !$("usagepopup").hidden ? $("usagepopup") : !$("folderdialog").hidden ? $("folderdialog") : !$("keyhelp").hidden ? $("keyhelp") : !$("editor").hidden ? $("editor") : activeDialog ? $("dlg") : null;
   if (e.key === "F1") { e.preventDefault(); e.stopImmediatePropagation(); if (!$("keyhelp").hidden) closeKeyHelp(); else showKeyHelp(); return; }
+  if (dialog === $("dlg") && activeDialog?.selection?.key(e)) return;
   if (dialog) {
     if (e.key === "Escape") {
       e.preventDefault(); e.stopImmediatePropagation();
