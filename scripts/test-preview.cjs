@@ -8,7 +8,7 @@ function $(id) {
   return elements.get(id);
 }
 const calls = [];
-const ctx = vm.createContext({ $, clearTimeout, setTimeout, innerWidth: 1000, innerHeight: 760, Date, document: { activeElement: null, addEventListener() {} }, window: { addEventListener() {} }, confirm: () => false,
+const ctx = vm.createContext({ renderMd: (el, text) => { el.textContent = text; }, $, clearTimeout, setTimeout, innerWidth: 1000, innerHeight: 760, Date, document: { activeElement: null, addEventListener() {} }, window: { addEventListener() {} }, confirm: () => false,
   invoke: async (command, args) => { if (command === 'cached_purpose') return { text: 'Gecachte KI', method: 'Haiku' }; calls.push(args); return { text: args.purpose ? 'KI-Erklärung' : 'Lokaler Text', method: 'Test', updated: 0 }; }, toast() {} });
 vm.runInContext(source, ctx);
 const row = { isConnected: true, matches: () => false, contains: () => false, getBoundingClientRect: () => ({ right: 240, top: 100 }) };

@@ -105,3 +105,10 @@ zeigt sein Ergebnis aber nicht in einer inzwischen anderen Vorschau.
 Simulierter UI-Test prüft Cache-Anzeige, Offenbleiben bei Hover innerhalb der
 Vorschau und Schließen nach Verlassen. Tests und Release-Build erfolgreich;
 reale Maus-/Fokusereignisse in WebKit noch nicht live geprüft.
+
+## Markdown-Darstellung
+
+KI-Erklärungen (auch Cache-Treffer), lokaler Auszug und Token-Erklärung nutzen
+den bestehenden Markdown-Renderer mit DOMPurify-Sanitizing. Überschriften sind
+im Kontextfenster kompakt skaliert. Syntax-/Logiktests und Build erfolgreich;
+neue Darstellung noch nicht live geprüft.

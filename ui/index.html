@@ -20,6 +20,10 @@
   #preview[hidden] { display:none; }
   #previewtext { margin:8px 0; overflow-wrap:anywhere; }
   #preview { max-height:85vh; overflow:auto; }
+  #preview .md, #usagepopup .md { white-space:normal; overflow-wrap:anywhere; margin:10px 0; }
+  #preview .md h1, #usagepopup .md h1 { font-size:1.2em; }
+  #preview .md h2, #usagepopup .md h2 { font-size:1.1em; }
+  #preview .md ul, #preview .md ol, #usagepopup .md ul, #usagepopup .md ol { padding-left:22px; }
   #previewai { border-bottom:1px solid #555c66; margin-bottom:10px; padding-bottom:10px; }
   #previewconsent { background:var(--bg); padding:8px; margin:8px 0; border-radius:6px; }
   #previewai[hidden], #previewconsent[hidden] { display:none; }
@@ -93,7 +97,7 @@
   #usageinfo { padding:1px 6px; }
   #usagepopup { position:fixed; bottom:38px; right:12px; z-index:65; width:min(440px,calc(100vw - 24px)); max-height:70vh; overflow:auto; padding:12px; background:var(--panel); border:1px solid var(--acc); border-radius:8px; font-size:13px; }
   #usagepopup[hidden] { display:none; }
-  #usageexplanation { white-space:pre-wrap; }
+  #usageexplanation { white-space:normal; }
   #extstatus { color:var(--dim); font-size:12px; padding:2px 12px; background:var(--panel); border-top:1px solid #3a4046; display:none; white-space:pre-wrap; }
   .widget { color:var(--dim); font:12px ui-monospace,monospace; padding:4px 12px; background:var(--panel); border-top:1px solid #3a4046; white-space:pre-wrap; }
   html,body { height:100%; overflow:hidden; color-scheme:dark; margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,sans-serif; }
@@ -182,7 +186,7 @@
 <div id="widgets-below"></div>
 <div id="extstatus"></div>
 <div id="usagebar"><span id="usagetext">Tokenverbrauch: —</span><button id="usageinfo" aria-label="Tokenanzeige erklären" title="Tokenanzeige erklären">ⓘ</button></div>
-<div id="usagepopup" hidden role="dialog" aria-label="Tokenanzeige erklären"><strong>KI · Tokenanzeige erklären</strong><button id="usageclose" aria-label="Schließen">×</button><p id="usagesnapshot"></p><div id="usageconsent"><p>Die angezeigten Statistiken und Modellinformationen werden an das konfigurierte KI-Hilfsmodell gesendet (mögliche Modellkosten). Keine Chatinhalte.</p><button id="usageallow">Erklären lassen</button></div><p id="usageexplanation"></p></div>
+<div id="usagepopup" hidden role="dialog" aria-label="Tokenanzeige erklären"><strong>KI · Tokenanzeige erklären</strong><button id="usageclose" aria-label="Schließen">×</button><p id="usagesnapshot"></p><div id="usageconsent"><p>Die angezeigten Statistiken und Modellinformationen werden an das konfigurierte KI-Hilfsmodell gesendet (mögliche Modellkosten). Keine Chatinhalte.</p><button id="usageallow">Erklären lassen</button></div><div id="usageexplanation" class="md"></div></div>
 </div>
 </div>
 <div id="modal"><div id="dlg"></div></div>
@@ -192,7 +196,7 @@
   <span id="editstatus">Änderungen werden erst mit Speichern geschrieben.</span>
   <div><button id="editsave" class="primary">Speichern</button> <button id="editclose">Schließen</button></div>
 </div>
-<div id="preview" hidden role="region" aria-label="Datei-Kurzinfo"><div id="previewtop"><strong id="previewtitle"></strong><button id="previewpurpose" title="Dateiauszug an das konfigurierte KI-Hilfsmodell senden und Zweck erklären lassen">Zweck?</button><button id="previewclose" aria-label="Vorschau schließen">×</button></div><div id="previewconsent" hidden><p>Für die Zweckerklärung wird ein begrenzter Dateiauszug an das konfigurierte KI-Hilfsmodell gesendet. Er kann vertrauliche Inhalte enthalten. Vorhandene Erklärungen werden aus dem Cache geladen.</p><button id="previewallow">Erklären lassen</button> <button id="previewdeny">Abbrechen</button></div><section id="previewai" hidden><strong>KI · Zweck</strong><p id="previewaitext"></p><small id="previewaimethod"></small></section><small>Lokaler Auszug · keine KI</small><p id="previewtext"></p><small id="previewmethod"></small><div id="previewbottom"><small id="previewpath"></small><button id="previewrefresh" title="Angezeigte Kurzinfo neu erzeugen" aria-label="Kurzinfo aktualisieren">↻</button></div></div>
+<div id="preview" hidden role="region" aria-label="Datei-Kurzinfo"><div id="previewtop"><strong id="previewtitle"></strong><button id="previewpurpose" title="Dateiauszug an das konfigurierte KI-Hilfsmodell senden und Zweck erklären lassen">Zweck?</button><button id="previewclose" aria-label="Vorschau schließen">×</button></div><div id="previewconsent" hidden><p>Für die Zweckerklärung wird ein begrenzter Dateiauszug an das konfigurierte KI-Hilfsmodell gesendet. Er kann vertrauliche Inhalte enthalten. Vorhandene Erklärungen werden aus dem Cache geladen.</p><button id="previewallow">Erklären lassen</button> <button id="previewdeny">Abbrechen</button></div><section id="previewai" hidden><strong>KI · Zweck</strong><div id="previewaitext" class="md"></div><small id="previewaimethod"></small></section><small>Lokaler Auszug · keine KI</small><div id="previewtext" class="md"></div><small id="previewmethod"></small><div id="previewbottom"><small id="previewpath"></small><button id="previewrefresh" title="Angezeigte Kurzinfo neu erzeugen" aria-label="Kurzinfo aktualisieren">↻</button></div></div>
 <div id="folderdialog" hidden role="dialog" aria-label="Arbeitsordner auswählen">
 <strong>Arbeitsordner auswählen</strong>
 <input id="folderpath" aria-label="Ordnerpfad" placeholder="Pfad eingeben und Enter drücken">

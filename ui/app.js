@@ -681,14 +681,14 @@ async function showPreview(entry, row, refresh = false, purpose = false) {
   try {
     const result = await invoke("preview", { cwd: $("cwd").value, path: entry.path, refresh, purpose });
     if (sequence !== previewSequence) return;
-    $(purpose ? "previewaitext" : "previewtext").textContent = result.text;
+    renderMd($(purpose ? "previewaitext" : "previewtext"), result.text);
     $(purpose ? "previewaimethod" : "previewmethod").textContent = result.method + (result.updated ? " · " + new Date(result.updated * 1000).toLocaleString() : "");
     if (!purpose) {
       const cached = await invoke("cached_purpose", { cwd: $("cwd").value, path: entry.path });
       if (sequence !== previewSequence) return;
       if (cached) {
         $("previewai").hidden = false;
-        $("previewaitext").textContent = cached.text;
+        renderMd($("previewaitext"), cached.text);
         $("previewaimethod").textContent = cached.method + " · Cache";
         previewItem.purpose = true;
       }
@@ -947,6 +947,6 @@ $("usageallow").onclick = async () => {
   $("usageconsent").hidden = true; $("usageexplanation").textContent = "das konfigurierte KI-Hilfsmodell erklärt die Anzeige…";
   try {
     const text = await invoke("explain_usage", { snapshot: JSON.stringify(usageFrozen) });
-    if (sequence === usageExplanationSequence) $("usageexplanation").textContent = text;
+    if (sequence === usageExplanationSequence) renderMd($("usageexplanation"), text);
   } catch(e) { if (sequence === usageExplanationSequence) $("usageexplanation").textContent = String(e); }
 };
