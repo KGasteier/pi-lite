@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#1b1a19" stroke="#3c3b39" stroke-width="4"/>
+  <!-- pi monogram, drawn as paths to avoid font dependencies. -->
+  <path fill="#ffffff" d="M57 67h142v19h-23v65c0 13 4 18 15 18v18c-25 0-36-11-36-35V86H105l-6 62c-2 23-10 35-27 42l-9-17c11-6 15-13 17-30l5-57H57z"/>
+  <rect x="40" y="208" width="176" height="10" rx="5" fill="#e879d0" opacity="0.55"/>
+</svg>
