@@ -10,6 +10,7 @@ native Pfeilbedienung. Sichtbare Fokusmarkierung. F1 öffnet/schließt die Hilfe
 - Alt+N neue Session, Alt+A abbrechen, Alt+F Fork
 - Alt+M Modell, Alt+T Thinking (Modell, Workspace und Denken sind gleich bedienbare Dropdowns: ↑/↓ öffnet, Enter wählt, Esc schließt)
 - Alt+− / Alt++ Ausgabeschrift (Alt+= ebenfalls vergrößern)
+- Super+A markiert im Eingabefeld den gesamten Text (Strg+A funktioniert weiterhin)
 - Strg/Cmd+B wechselt zur Sessionansicht und fokussiert die Liste
 
 ## Bereiche

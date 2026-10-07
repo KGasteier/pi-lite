@@ -632,6 +632,10 @@ $("historynewer").onclick = () => recallInput(1);
 $("prompt").addEventListener("input", () => inputHistory.reset());
 $("prompt").addEventListener("keydown", (e) => {
   if (e.isComposing) return;
+  // Super/Cmd+A markiert den gesamten Eingabetext (Strg+A bleibt nativ).
+  if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "a") {
+    e.preventDefault(); e.target.select(); return;
+  }
   if (e.key === "Enter") {
     e.preventDefault();
     if (e.altKey && !e.ctrlKey && !e.metaKey) {
