@@ -630,11 +630,24 @@ function recallInput(direction) {
 $("historyolder").onclick = () => recallInput(-1);
 $("historynewer").onclick = () => recallInput(1);
 $("prompt").addEventListener("input", () => inputHistory.reset());
+// WebKitGTK may report the Linux Super modifier as Super/OS rather than metaKey.
+let superHeld = false;
+document.addEventListener("keydown", e => {
+  if (["Meta", "Super", "OS"].includes(e.key)) superHeld = true;
+}, true);
+document.addEventListener("keyup", e => {
+  if (["Meta", "Super", "OS"].includes(e.key)) superHeld = false;
+}, true);
+window.addEventListener("blur", () => { superHeld = false; });
+function isSelectAllShortcut(e) {
+  const superKey = e.metaKey || superHeld || ["Meta", "Super", "OS"].some(key => e.getModifierState?.(key));
+  return superKey && !e.ctrlKey && !e.altKey && !e.shiftKey && (e.code === "KeyA" || e.key.toLowerCase() === "a");
+}
 $("prompt").addEventListener("keydown", (e) => {
   if (e.isComposing) return;
   // Super/Cmd+A markiert den gesamten Eingabetext (Strg+A bleibt nativ).
-  if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "a") {
-    e.preventDefault(); e.target.select(); return;
+  if (isSelectAllShortcut(e)) {
+    e.preventDefault(); e.target.setSelectionRange(0, e.target.value.length); return;
   }
   if (e.key === "Enter") {
     e.preventDefault();

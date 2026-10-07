@@ -17,7 +17,7 @@
   #inventory { flex:1; overflow:auto; padding:8px; }
   #sideview { margin:8px; max-width:none; border:1px solid var(--cat); }
   .resource, .sess { border-radius:8px; background:color-mix(in srgb, var(--cat) 9%, #2b3137); border:1px solid color-mix(in srgb, var(--cat) 32%, transparent); }
-  .resource:hover, .sess:hover { background:color-mix(in srgb, var(--cat) 17%, #2b3137); }
+  .resource:hover, .sess:hover { background:#38424d; background:color-mix(in srgb, var(--cat) 17%, #2b3137); }
   .resource { display:block; width:100%; text-align:left; margin:5px 0; padding:8px; color:var(--fg); }
   .resource small { display:block; color:var(--dim); overflow-wrap:anywhere; }
   body.side-hidden #side { display:none; }
@@ -47,14 +47,15 @@
   .picker .pickbtn { max-width:32vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:26px;
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23e6edf3' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat:no-repeat; background-position:right 9px center; }
-  .picker .pickbtn:hover, .picker .pickbtn:focus-visible { background-color:color-mix(in srgb, var(--cat) 35%, #444a52); }
-  .picker .pickbtn[aria-expanded=true] { background-color:color-mix(in srgb, var(--cat) 50%, #444a52); }
+  .picker .pickbtn:hover, .picker .pickbtn:focus-visible { background-color:#667b96; box-shadow:inset 0 0 0 1px var(--cat); }
+  .picker .pickbtn[aria-expanded=true] { background-color:#526781; }
   .picker #thinkbutton { max-width:24vw; }
   #cwdpicker { flex:1 1 160px; max-width:42vw; } #cwdpicker #cwdbutton { max-width:100%; width:100%; text-align:left; }
   .picklist { position:absolute; top:100%; left:0; z-index:70; width:min(560px,80vw); max-height:55vh; overflow-y:auto; background:var(--panel); border:1px solid var(--cat); border-radius:6px; padding:4px; }
   .picklist[hidden] { display:none; }
   .picklist [role=option] { padding:8px; cursor:pointer; overflow-wrap:anywhere; }
   .picklist [aria-selected=true] { background:var(--acc); color:white; }
+  .picklist [role=option]:hover { background:#526781; color:white; box-shadow:inset 0 0 0 1px var(--cat); }
   #thinkpicker .picklist { width:max-content; min-width:160px; }
   #editlock[hidden] { display:none; }
   #editlock { margin-left:auto; order:3; font-size:16px; padding:2px 8px; }
@@ -113,7 +114,11 @@
   #toasts { position:fixed; right:12px; bottom:90px; display:flex; flex-direction:column; gap:6px; z-index:30; max-width:min(420px,90vw); }
   .toast { background:#323940; border-left:3px solid var(--ok); padding:8px 12px; border-radius:8px; font-size:13px; box-shadow:0 2px 8px #0008; word-break:break-word; }
   .toast.warning { border-color:#e0a030; } .toast.error { border-color:var(--err); }
-  footer > button { order:3; }
+  footer > button, #sendcontrols { order:3; }
+  #sendcontrols { display:flex; flex:0 0 62px; flex-direction:column; gap:3px; }
+  #sendcontrols button { flex:1; min-height:24px; padding:2px 6px; font-size:12px; line-height:1.2; }
+  #speechcontrols { margin-left:auto; display:flex; gap:4px; }
+  #speechcontrols button, #usageinfo { padding:0 6px; line-height:20px; font-size:12px; }
   #usagebar { display:flex; align-items:center; gap:8px; padding:4px 12px; background:var(--panel); font-size:12px; color:var(--dim); }
   #usageinfo { padding:1px 6px; }
   #usagepopup { position:fixed; bottom:38px; right:12px; z-index:65; width:min(440px,calc(100vw - 24px)); max-height:70vh; overflow:auto; padding:12px; background:var(--panel); border:1px solid var(--acc); border-radius:8px; font-size:13px; }
@@ -127,7 +132,9 @@
   header input { background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:6px; padding:4px 8px; }
   #status { color:var(--dim); font-size:13px; min-width:90px; text-align:right; }
   button { background:#444a52; color:var(--fg); border:0; border-radius:6px; padding:6px 14px; cursor:pointer; }
-  button:hover { background:#555c66; }
+  button:hover { background-color:#555c66; }
+  button:not(:disabled):hover { filter:brightness(1.35); }
+  button:disabled { cursor:default; opacity:.55; }
   button.primary { background:var(--acc); color:#fff; }
   #editsave:disabled { background:#b9bec5; color:#6a7079; cursor:not-allowed; }
   #editlock[aria-pressed="true"] { background:var(--acc); color:#fff; }
@@ -192,8 +199,6 @@
     <button id="textsize" title="Auf 15 px zurücksetzen">15 px</button>
     <button id="textlarger" title="Ausgabetext vergrößern" aria-label="Ausgabetext vergrößern">A+</button>
   </span>
-  <button id="speech" disabled aria-label="Sprachausgabe" title="Sprachausgabe wird geprüft">🔇</button>
-  <button id="speechstop" disabled aria-label="Sprachausgabe stoppen" title="Sprachausgabe stoppen">■</button>
   <button id="keyboardhelp" title="Tastaturhilfe (F1)" aria-label="Tastaturhilfe">?</button>
   <span id="status">startet…</span>
 </header>
@@ -202,13 +207,12 @@
 <footer>
   <textarea id="prompt" placeholder="Nachricht an pi … (Enter = senden, Option/Alt+Enter = Zeilenumbruch)"></textarea>
   <div id="historycontrols" aria-label="Eingabe-History"><button id="historyolder" title="Ältere Eingabe (Alt+↑)" aria-label="Ältere Eingabe">↑</button><button id="historynewer" title="Neuere Eingabe (Alt+↓)" aria-label="Neuere Eingabe">↓</button></div>
-  <button id="promptexpand" title="Eingabe im großen Editor bearbeiten" aria-label="Eingabe im großen Editor öffnen">⤢</button>
-  <button id="send" class="primary">Senden</button>
+  <div id="sendcontrols"><button id="promptexpand" title="Eingabe im großen Editor bearbeiten" aria-label="Eingabe im großen Editor öffnen">⤢</button><button id="send" class="primary">Senden</button></div>
   <button id="abort">Abbrechen</button>
 </footer>
 <div id="widgets-below"></div>
 <div id="extstatus"></div>
-<div id="usagebar"><span id="usagetext">Tokenverbrauch: —</span><button id="usageinfo" aria-label="Tokenanzeige erklären" title="Tokenanzeige erklären">ⓘ</button></div>
+<div id="usagebar"><span id="usagetext">Tokenverbrauch: —</span><button id="usageinfo" aria-label="Tokenanzeige erklären" title="Tokenanzeige erklären">ⓘ</button><span id="speechcontrols"><button id="speech" disabled aria-label="Sprachausgabe" title="Sprachausgabe wird geprüft">🔇</button><button id="speechstop" disabled aria-label="Sprachausgabe stoppen" title="Sprachausgabe stoppen">■</button></span></div>
 <div id="usagepopup" hidden role="dialog" aria-label="Tokenanzeige erklären"><strong>KI · Tokenanzeige erklären</strong><button id="usageclose" aria-label="Schließen">×</button><p id="usagesnapshot"></p><div id="usageconsent"><p>Die angezeigten Statistiken und Modellinformationen werden an das konfigurierte KI-Hilfsmodell gesendet (mögliche Modellkosten). Keine Chatinhalte.</p><button id="usageallow">Erklären lassen</button></div><div id="usageexplanation" class="md"></div></div>
 </div>
 </div>

@@ -2,6 +2,18 @@
 
 ## Aktueller Stand
 
+Korrektur 2026-10-07: Der vorherige Layoutversuch war nur im Quellcode vorhanden.
+Jetzt Release gebaut und installiert, SHA256 identisch. Editor/Senden bilden eine
+62-px-Spalte; Vorlesen/Stop stehen rechts in der unteren Tokenleiste. Picker-Knöpfe
+haben eine explizite Hover-Farbe mit Rahmen; Dropdown-Einträge eigene Hover-Zustände.
+Super+A erkennt Meta sowie WebKitGTK-Super/OS und zurückgesetzten Held-Key-Fallback.
+Kein unmodifiziertes A wird abgefangen, keine Hyprland-Regeln verändert.
+Syntax, History/Preview/Picker/Super-Tests, Rust-Tests und Build bestanden.
+Isolierter Chromium-Layoutcheck: Buttons gestapelt, 62 px breit, Sprache am unteren
+Rand. Dies ersetzt keinen echten WebKit-Maus-/Tastaturtest; dieser bleibt offen.
+Das laufende Chatfenster wurde nicht beendet und verwendet noch die alte Binary.
+Neustart erforderlich.
+
 Eingabe: Option/Alt+Enter setzt explizit einen Zeilenumbruch an der Cursorposition
 (ersetzt eine Auswahl), Enter und Shift+Enter senden. Platzhalter und F1-Hilfe
 angepasst. Syntax-/Logiktests, Rust-Tests und Release-Build erfolgreich; installiert.
