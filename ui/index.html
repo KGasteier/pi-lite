@@ -166,11 +166,20 @@
   #keyhelp { position:fixed; inset:10vh 10vw; z-index:80; background:var(--panel); border:1px solid var(--acc); padding:20px; overflow:auto; border-radius:10px; box-shadow:0 0 0 100vmax #000a; }
   #keyhelp[hidden] { display:none; }
   #log:focus-visible { outline-offset:-3px; }
-  footer { display:flex; align-items:stretch; gap:8px; padding:10px 12px; background:var(--panel); border-top:1px solid #3a4046; }
+  footer { position:relative; display:flex; align-items:stretch; gap:8px; padding:10px 12px; background:var(--panel); border-top:1px solid #3a4046; }
   .chataction { display:block; font-size:11px; padding:3px 7px; margin:5px 0; }
   .copyanswer { margin-left:auto; }
   .msg.user { position:relative; padding-right:30px; }
   .repeatrequest { position:absolute; right:5px; bottom:2px; margin:0; padding:0 3px; line-height:16px; font-size:12px; background:transparent; border:0; }
+  #slashpopup { position:absolute; bottom:calc(100% + 4px); left:12px; right:12px; z-index:30; background:var(--panel); border:1px solid var(--acc); border-radius:8px; box-shadow:0 8px 24px #0008; padding:6px; }
+  #slashpopup[hidden] { display:none; }
+  #slashlist { max-height: min(320px, 45vh); overflow-y:auto; }
+  #slashlist > div { padding:7px 9px; border-radius:5px; cursor:pointer; }
+  #slashlist > div[aria-selected="true"] { background:var(--acc); color:var(--bg); }
+  #slashlist strong { margin-right:12px; }
+  #slashlist small { opacity:.75; }
+  #slashlist span { display:block; font-size:12px; opacity:.85; white-space:normal; }
+  #slashhint { font-size:11px; color:var(--dim); padding:5px 9px 1px; }
   #prompt { order:2; flex:1; min-width:0; resize:none; height:64px; background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:8px; padding:8px; font:inherit; }
 </style>
 </head>
@@ -206,7 +215,8 @@
 <div id="log" tabindex="0" role="region" aria-label="Chatverlauf"></div>
 <div id="widgets-above"></div>
 <footer>
-  <textarea id="prompt" placeholder="Nachricht an pi … (Enter = senden, Option/Alt+Enter = Zeilenumbruch)"></textarea>
+  <div id="slashpopup" hidden><div id="slashlist" role="listbox" aria-label="pi-Befehle"></div><div id="slashhint">Tippen filtert · ↑↓ / Hover wählen · Tab/Enter/Klick übernehmen · danach Enter ausführen · Esc schließen</div></div>
+  <textarea id="prompt" role="combobox" aria-autocomplete="list" aria-controls="slashlist" aria-expanded="false" placeholder="Nachricht oder /Befehl … (Enter = senden, Option/Alt+Enter = Zeilenumbruch)"></textarea>
   <div id="historycontrols" aria-label="Eingabe-History"><button id="historyolder" title="Ältere Eingabe (Alt+↑)" aria-label="Ältere Eingabe">↑</button><button id="historynewer" title="Neuere Eingabe (Alt+↓)" aria-label="Neuere Eingabe">↓</button></div>
   <div id="sendcontrols"><button id="promptexpand" title="Eingabe im großen Editor bearbeiten" aria-label="Eingabe im großen Editor öffnen">⤢</button><button id="send" class="primary">Senden</button><button id="abort">Abbrechen</button></div>
 </footer>
@@ -242,6 +252,7 @@ Sessions: Enter öffnen · R/F2 umbenennen · Backspace löschen · M/Shift+F10 
 Chat: ↑/↓ scrollen · Home/End Anfang/Ende · Tab erreicht Links und Tool-Blöcke</p>
 <p>Eingabe: ↑/↓ an erster/letzter Zeile: History; sonst Cursor · Alt+↑/↓ oder Pfeilknöpfe: History<br>
 Enter sendet · Option/Alt+Enter: neue Zeile · Editor: Strg/Cmd+S speichert<br>
+/ öffnet Befehle · Tippen filtert · Hover/↑↓ markieren · Tab/Enter übernehmen · danach Enter ausführen · Esc schließen<br>
 Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhalb von Textfeldern.</p>
 <button id="keyhelpclose">Schließen (Esc)</button></div>
 <div id="toasts"></div>
@@ -250,6 +261,7 @@ Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhal
 <script src="vendor/purify.js"></script>
 <script src="history.js"></script>
 <script src="editor.js"></script>
+<script src="slash.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

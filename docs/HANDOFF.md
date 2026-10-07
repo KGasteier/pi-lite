@@ -2,6 +2,16 @@
 
 ## Aktueller Stand
 
+Slash-Auswahl über Prompt: / öffnet dynamische RPC-Befehle, tippen filtert,
+Hover/↑↓ markieren, Tab/Enter/Klick übernehmen, danach Enter führt aus, Esc schließt.
+Extension-Aufrufe verwenden prompt auch bei Streaming; Wizard ohne kurzen Timeout.
+Lokale endpoint-custom-Extension mit Backup um RPC-select-Fallback ergänzt;
+Opt-in-Skript scripts/adapt-endpoint-rpc.py. Details/Testgrenzen: SLASH_COMMANDS.md.
+DOM-Stubtests, Syntax/bestehende JS-Tests, Rust/Release bestanden; realer separater
+RPC-Test entdeckt endpoint-custom, öffnet Wizard-select und bricht ohne Änderung ab.
+Neu installiert; laufende Session unberührt, Neustart erforderlich. Echte WebKit-
+Interaktion und vollständiger Wizard noch nicht live geprüft.
+
 Nutzeranfragen im Chat: Hintergrund nutzt die Highlight-/Akzentfarbe --acc
 (#e454c4), dunkler Text (#1e2227) für Kontrast; Übernahmepfeil erbt die Textfarbe.
 Gilt auch für geladene Verläufe. Syntax, History/Preview/Footer, Rust-Tests und

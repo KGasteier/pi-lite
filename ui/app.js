@@ -322,7 +322,7 @@ function request(obj, timeoutMs = 15000) {
   const id = "r" + (++reqSeq);
   return new Promise((resolve, reject) => {
     pending.set(id, resolve);
-    setTimeout(() => { if (pending.delete(id)) reject(new Error(obj.type + ": Zeitüberschreitung")); }, timeoutMs);
+    if (timeoutMs > 0) setTimeout(() => { if (pending.delete(id)) reject(new Error(obj.type + ": Zeitüberschreitung")); }, timeoutMs);
     send({ ...obj, id });
   });
 }
@@ -613,6 +613,7 @@ async function openSession(s) {
 
 // ---------- Start ----------
 async function start({ session = null } = {}) {
+  slashPicker.setCommands([]); slashPicker.close();
   log.innerHTML = ""; tools.clear(); cur = curThink = null; pending.clear(); dropDialogs();
   usageSequence++; usageSnapshot = null;
   $("usagetext").textContent = "Tokenverbrauch: —";
@@ -643,11 +644,21 @@ listen("pi-stderr", (e) => console.warn("pi:", e.payload));
 listen("pi-exit", () => { dropDialogs(); note("pi wurde beendet.", true); setStatus("beendet", false); });
 
 const inputHistory = new InputHistory();
-function submit() {
+const slashPicker = createSlashPicker($("prompt"), $("slashpopup"), $("slashlist"));
+async function submit() {
   const t = $("prompt").value.trim(); if (!t) return;
   inputHistory.add(t);
   $("prompt").value = "";
-  send(busy ? { type: "steer", message: t } : { type: "prompt", message: t });
+  slashPicker.close();
+  try {
+    // Extension commands must use prompt, including during streaming.
+    const result = await request({ type: "prompt", message: t, ...(busy ? { streamingBehavior: "steer" } : {}) }, 0);
+    if (!result.success) {
+      if (!$("prompt").value) $("prompt").value = t;
+      toast(result.error || "Eingabe fehlgeschlagen", "error");
+    }
+    if (t.startsWith("/")) { await loadModels(); await refreshState(); await detectSpeech(); }
+  } catch (e) { if (!$("prompt").value) $("prompt").value = t; toast(String(e), "error"); }
 }
 $("send").onclick = submit;
 $("abort").onclick = () => send({ type: "abort" });
@@ -675,6 +686,7 @@ function isSelectAllShortcut(e) {
 }
 $("prompt").addEventListener("keydown", (e) => {
   if (e.isComposing) return;
+  if (slashPicker.key(e)) return;
   // Super/Cmd+A markiert den gesamten Eingabetext (Strg+A bleibt nativ).
   if (isSelectAllShortcut(e)) {
     e.preventDefault(); e.target.setSelectionRange(0, e.target.value.length); return;
@@ -1097,6 +1109,7 @@ async function speechCommand(command) {
 async function detectSpeech() {
   try {
     const r = await request({ type: "get_commands" });
+    slashPicker.setCommands(r.success ? r.data?.commands || [] : []);
     const available = r.success && r.data?.commands?.some(c => c.name === "vorlesen");
     $("speech").disabled = $("speechstop").disabled = !available;
     if (!available) $("speech").title = "Keine Vorlesen-Extension geladen";
