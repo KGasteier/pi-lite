@@ -6,6 +6,8 @@ pub struct Location { name: String, path: String }
 pub struct Folders { path: String, parent: Option<String>, folders: Vec<Location> }
 fn home() -> PathBuf { std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(".")) }
 #[tauri::command]
+pub fn resume_session() -> Option<String> { std::env::var("PI_LITE_RESUME_SESSION").ok().filter(|p| PathBuf::from(p).is_file()) }
+#[tauri::command]
 pub fn work_locations() -> Result<Vec<Location>, String> {
     let default = std::env::current_dir().map_err(|e| e.to_string())?;
     let mut out = vec![Location { name: "Standard (Startordner)".into(), path: default.to_string_lossy().into() }, Location { name: "Home".into(), path: home().to_string_lossy().into() }];

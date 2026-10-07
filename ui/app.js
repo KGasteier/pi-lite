@@ -840,7 +840,8 @@ async function initializeWorkFolder() {
     const browse = document.createElement("option"); browse.value = "__browse__"; browse.textContent = "Workspace auswählen …";
     $("cwdoptions").appendChild(browse);
   } catch (e) { toast(String(e), "error"); }
-  await start();
+  const session = await invoke("resume_session").catch(() => null);
+  await start({ session });
 }
 let folderGeneration = 0, folderCurrent = null, folderReturn = null;
 function setWorkFolder(path) {
