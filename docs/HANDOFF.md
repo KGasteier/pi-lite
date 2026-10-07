@@ -9,7 +9,9 @@ Spalte, drei gleich hohen Reihen mit 4-px-Abstand, bündig zum Eingabefeld.
 Test scripts/test-footer.cjs ergänzt; Syntax, bestehende JS-Tests, Rust-Tests,
 Release und Installation erfolgreich, SHA256 identisch. Isolierter Chromium-Check
 bestätigt gleiche Breiten/Höhen, Abstände und bündige Ober-/Unterkanten.
-Reale WebKit-Bedienung nicht geprüft; laufendes Fenster nicht neu gestartet.
+Nutzer bestätigt nach Neustart: Änderungen funktionieren. Automatisierte Prüfung
+und isolierter Layoutcheck sind oben dokumentiert; keine eigene ferngesteuerte
+WebKit-Prüfung durchgeführt.
 
 Korrektur 2026-10-07: Der vorherige Layoutversuch war nur im Quellcode vorhanden.
 Jetzt Release gebaut und installiert, SHA256 identisch. Editor/Senden bilden eine
