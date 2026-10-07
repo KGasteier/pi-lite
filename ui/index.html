@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>pi-lite</title>
+<link rel="stylesheet" href="vendor/hljs.css">
+<style>
+  :root { --bg:#1e2227; --panel:#262b30; --fg:#e6edf3; --dim:#8b949e; --acc:#e454c4; --user:#2f353b; --err:#ef476f; --ok:#18a999; }
+  * { box-sizing:border-box; }
+  #app { flex:1; display:flex; min-height:0; }
+  #side { width:240px; flex:none; background:var(--panel); border-right:1px solid #3a4046; display:flex; flex-direction:column; }
+  #side h3 { margin:0; padding:10px 12px; font-size:13px; color:var(--dim); display:flex; justify-content:space-between; align-items:center; }
+  #sessions { flex:1; overflow:auto; }
+  #inventory { flex:1; overflow:auto; padding:8px; }
+  #sideview { margin:8px; max-width:none; }
+  .resource { display:block; width:100%; text-align:left; margin:5px 0; padding:8px; }
+  .resource small { display:block; color:var(--dim); overflow-wrap:anywhere; }
+  body.side-hidden #side { display:none; }
+  #preview { position:fixed; z-index:55; width:min(340px,90vw); background:var(--panel); border:1px solid #555c66; padding:12px; border-radius:8px; box-shadow:0 8px 24px #000a; font-size:13px; }
+  #preview[hidden] { display:none; }
+  #previewtext { margin:8px 0; overflow-wrap:anywhere; }
+  #preview { max-height:85vh; overflow:auto; }
+  #previewai { border-bottom:1px solid #555c66; margin-bottom:10px; padding-bottom:10px; }
+  #previewconsent { background:var(--bg); padding:8px; margin:8px 0; border-radius:6px; }
+  #previewai[hidden], #previewconsent[hidden] { display:none; }
+  #previewpath { font:10px/1.3 ui-monospace,monospace; color:var(--dim); overflow-wrap:anywhere; flex:1; }
+  #previewbottom, #previewtop { display:flex; gap:8px; align-items:center; }
+  #previewrefresh, #previewclose, #cacheclear { padding:2px 5px; font-size:12px; }
+  #previewpurpose { margin-left:auto; padding:3px 7px; }
+  #previewmethod { display:block; color:var(--dim); font-size:11px; margin-bottom:8px; }
+  #editor { position:fixed; inset:4vh 4vw; z-index:60; background:var(--panel); border:1px solid var(--acc); border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:10px; box-shadow:0 0 0 100vmax #000a; }
+  #editor[hidden] { display:none; }
+  #editor textarea { flex:1; min-height:0; resize:none; background:var(--bg); color:var(--fg); padding:10px; font:14px ui-monospace,monospace; }
+  #editpath { overflow-wrap:anywhere; font-size:13px; }
+  #editstatus { color:var(--dim); }
+  .sess { padding:8px 12px; cursor:pointer; border-left:3px solid transparent; }
+  .sess:hover { background:#2f353b; }
+  .sess.active { border-color:var(--acc); background:#2f353b; }
+  .sess .t { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sess { position:relative; }
+  .sess .act { position:absolute; right:6px; top:6px; opacity:0; }
+  .sess:hover .act, .sess:focus-within .act { opacity:1; }
+  .sess .act button { padding:2px 6px; font-size:12px; }
+  #ctx { position:fixed; z-index:50; min-width:190px; background:#2b3137; border:1px solid #444c54; border-radius:8px; padding:4px; box-shadow:0 8px 24px #000a; }
+#ctx button { display:flex; justify-content:space-between; gap:24px; width:100%; text-align:left; background:none; border:0; padding:6px 10px; border-radius:5px; color:inherit; font:inherit; font-size:13px; }
+#ctx button:hover, #ctx button:focus { background:var(--acc); color:#fff; outline:none; }
+#ctx kbd { font:inherit; font-size:11px; opacity:.6; }
+.sess:focus { outline:none; background:#2f353b; box-shadow:inset 0 0 0 1px var(--acc); }
+.sess .m { font-size:11px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  select { flex:0 1 auto; min-width:0; background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:6px; padding:4px 6px; max-width:260px; }
+  .md { white-space:normal; }
+  .md > :first-child { margin-top:0; } .md > :last-child { margin-bottom:0; }
+  .md pre { background:#161b22; padding:10px; border-radius:8px; overflow:auto; }
+  .md code { font:13px ui-monospace,monospace; }
+  .md :not(pre) > code { background:#161b22; padding:1px 5px; border-radius:4px; }
+  .md table { border-collapse:collapse; } .md th,.md td { border:1px solid #3a4046; padding:4px 8px; }
+  .md a { color:#8095ff; } .md blockquote { margin:0; padding-left:12px; border-left:3px solid #3a4046; color:var(--dim); }
+  .md img { max-width:100%; }
+  /* schmale Fenster (gekachelt): Seitenleiste als Overlay, kompakte Kopfzeile */
+  #toggle { display:inline-block; padding:6px 10px; }
+  @media (max-width: 860px) {
+    #toggle { display:inline-block; }
+    #side { position:absolute; z-index:5; top:0; bottom:0; left:0; transform:translateX(-100%); visibility:hidden; transition:transform .15s, visibility .15s; box-shadow:2px 0 12px #0008; }
+    body.side-open #side { transform:none; visibility:visible; }
+    body.side-hidden #side { display:flex; }
+    #app { position:relative; }
+    header { gap:6px; padding:6px 8px; }
+    select { max-width:46vw; }
+    #status { min-width:0; }
+    footer { padding:8px; gap:6px; }
+    #prompt { height:52px; }
+    button { padding:6px 10px; }
+  }
+  /* Dialoge der Extensions */
+  #modal { position:fixed; inset:0; background:#000a; display:none; align-items:center; justify-content:center; z-index:20; padding:12px; }
+  #modal.open { display:flex; }
+  #dlg { background:var(--panel); border:1px solid #3a4046; border-radius:12px; padding:16px; width:min(560px,100%); max-height:90vh; display:flex; flex-direction:column; gap:10px; }
+  #dlg h4 { margin:0; font-size:15px; white-space:pre-wrap; word-break:break-word; }
+  #dlg .body { white-space:pre-wrap; color:var(--dim); font-size:14px; word-break:break-word; }
+  #dlg input, #dlg textarea { background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:6px; padding:8px; font:inherit; width:100%; }
+  #dlg textarea { min-height:180px; resize:vertical; font:13px ui-monospace,monospace; }
+  #dlg .opts { display:flex; flex-direction:column; gap:6px; overflow:auto; }
+  #dlg .opts button { text-align:left; }
+  #dlg .row { display:flex; gap:8px; justify-content:flex-end; }
+  #dlg .left { color:var(--dim); font-size:12px; margin-right:auto; align-self:center; }
+  /* Meldungen und Status von Extensions */
+  #toasts { position:fixed; right:12px; bottom:90px; display:flex; flex-direction:column; gap:6px; z-index:30; max-width:min(420px,90vw); }
+  .toast { background:#323940; border-left:3px solid var(--ok); padding:8px 12px; border-radius:8px; font-size:13px; box-shadow:0 2px 8px #0008; word-break:break-word; }
+  .toast.warning { border-color:#e0a030; } .toast.error { border-color:var(--err); }
+  footer > button { order:3; }
+  #usagebar { display:flex; align-items:center; gap:8px; padding:4px 12px; background:var(--panel); font-size:12px; color:var(--dim); }
+  #usageinfo { padding:1px 6px; }
+  #usagepopup { position:fixed; bottom:38px; right:12px; z-index:65; width:min(440px,calc(100vw - 24px)); max-height:70vh; overflow:auto; padding:12px; background:var(--panel); border:1px solid var(--acc); border-radius:8px; font-size:13px; }
+  #usagepopup[hidden] { display:none; }
+  #usageexplanation { white-space:pre-wrap; }
+  #extstatus { color:var(--dim); font-size:12px; padding:2px 12px; background:var(--panel); border-top:1px solid #3a4046; display:none; white-space:pre-wrap; }
+  .widget { color:var(--dim); font:12px ui-monospace,monospace; padding:4px 12px; background:var(--panel); border-top:1px solid #3a4046; white-space:pre-wrap; }
+  html,body { height:100%; overflow:hidden; color-scheme:dark; margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,sans-serif; }
+  body { display:flex; flex-direction:column; }
+  header { flex-wrap:wrap; display:flex; gap:8px; align-items:center; padding:8px 12px; background:var(--panel); border-bottom:1px solid #3a4046; }
+  header input { background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:6px; padding:4px 8px; }
+  #cwd { flex:1 1 160px; min-width:0; }
+  #status { color:var(--dim); font-size:13px; min-width:90px; text-align:right; }
+  button { background:#444a52; color:var(--fg); border:0; border-radius:6px; padding:6px 14px; cursor:pointer; }
+  button:hover { background:#555c66; }
+  button.primary { background:var(--acc); color:#fff; }
+  #log { flex:1; min-height:0; overflow:auto; overflow-x:hidden; padding:16px; display:flex; flex-direction:column; gap:12px; }
+  .msg { min-width:0; max-width:min(900px,100%); padding:10px 14px; border-radius:10px; white-space:pre-wrap; word-wrap:break-word; }
+  .user { background:var(--user); align-self:flex-end; }
+  .assistant { background:var(--panel); align-self:flex-start; }
+  .thinking { color:var(--dim); font-style:italic; font-size:13px; }
+  .tool { align-self:stretch; background:#1a1f24; border-left:3px solid var(--ok); font:13px ui-monospace,monospace; max-width:900px; width:100%; }
+  .tool.err { border-color:var(--err); }
+  .tool summary { cursor:pointer; color:var(--dim); }
+  .tool pre { margin:6px 0 0; white-space:pre-wrap; max-height:300px; overflow:auto; }
+  .note { color:var(--dim); font-size:13px; align-self:center; }
+  .note.err { color:var(--err); }
+  #log { --output-size:15px; font-size:var(--output-size); }
+  #log .md code, #log .tool { font-size:calc(var(--output-size) * .87); }
+  #log .thinking, #log .note { font-size:calc(var(--output-size) * .87); }
+  #textcontrols { display:flex; gap:4px; align-items:center; }
+  #textcontrols button { padding:4px 7px; }
+  #folderdialog { position:fixed; inset:8vh 12vw; z-index:70; background:var(--panel); border:1px solid var(--acc); border-radius:10px; padding:16px; display:flex; flex-direction:column; gap:10px; box-shadow:0 0 0 100vmax #000a; }
+  #folderdialog[hidden] { display:none; }
+  #folderlist { flex:1; min-height:0; overflow:auto; }
+  #folderlist button { display:block; width:100%; text-align:left; margin:3px 0; }
+  #folderpath { width:100%; background:var(--bg); color:var(--fg); padding:8px; }
+  #cwdoptions { max-width:160px; }
+  :focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+  #historycontrols { order:1; display:flex; flex-direction:column; gap:3px; }
+  #historycontrols button { padding:3px 8px; flex:1; }
+  #keyhelp { position:fixed; inset:10vh 10vw; z-index:80; background:var(--panel); border:1px solid var(--acc); padding:20px; overflow:auto; border-radius:10px; box-shadow:0 0 0 100vmax #000a; }
+  #keyhelp[hidden] { display:none; }
+  #log:focus-visible { outline-offset:-3px; }
+  footer { display:flex; gap:8px; padding:12px; background:var(--panel); border-top:1px solid #3a4046; }
+  .chataction { display:block; font-size:11px; padding:3px 7px; margin:5px 0; }
+  .copyanswer { margin-left:auto; }
+  .msg.user { position:relative; padding-right:30px; }
+  .repeatrequest { position:absolute; right:5px; bottom:2px; margin:0; padding:0 3px; line-height:16px; font-size:12px; background:transparent; border:0; }
+  #prompt { order:2; flex:1; min-width:0; resize:none; height:64px; background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:8px; padding:8px; font:inherit; }
+</style>
+</head>
+<body>
+<div id="app">
+<aside id="side">
+  <h3><span id="sidetitle">Sessions</span> <button id="cacheclear" title="Alle Vorschau-Caches und Archive löschen" aria-label="Vorschau-Cache löschen">⌫</button> <button id="newsess">+ Neu</button></h3>
+  <select id="sideview" aria-label="Seitenleistenansicht">
+    <option value="sessions">Sessions</option><option value="extensions">Extensions / Plugins</option>
+    <option value="skills">Skills</option><option value="agents">pi · Agent- und Kontextdateien</option>
+    <option value="harnesses">Andere Agent Harnesses</option>
+  </select>
+  <div id="sessions"></div>
+  <div id="inventory" hidden></div>
+</aside>
+<div id="main">
+<header>
+  <button id="toggle" title="Seitenleiste ein-/ausblenden" aria-label="Seitenleiste">☰</button>
+  <input id="cwd" placeholder="Arbeitsordner" aria-label="Arbeitsordner" title="Für die nächste neue Session; bestehende Sessions behalten ihren Ordner">
+  <select id="cwdoptions" aria-label="Arbeitsordner auswählen"><option value="">Workspace …</option></select>
+  <select id="model" title="Modell"></select>
+  <select id="think" title="Thinking-Level"></select>
+  <button id="fork" title="Ab einer früheren Nachricht abzweigen">⑂ Fork</button>
+  <span id="textcontrols" aria-label="Ausgabeschriftgröße">
+    <button id="textsmaller" title="Ausgabetext verkleinern" aria-label="Ausgabetext verkleinern">A−</button>
+    <button id="textsize" title="Auf 15 px zurücksetzen">15 px</button>
+    <button id="textlarger" title="Ausgabetext vergrößern" aria-label="Ausgabetext vergrößern">A+</button>
+  </span>
+  <button id="speech" disabled aria-label="Sprachausgabe" title="Sprachausgabe wird geprüft">🔇</button>
+  <button id="speechstop" disabled aria-label="Sprachausgabe stoppen" title="Sprachausgabe stoppen">■</button>
+  <button id="keyboardhelp" title="Tastaturhilfe (F1)" aria-label="Tastaturhilfe">?</button>
+  <span id="status">startet…</span>
+</header>
+<div id="log" tabindex="0" role="region" aria-label="Chatverlauf"></div>
+<div id="widgets-above"></div>
+<footer>
+  <textarea id="prompt" placeholder="Nachricht an pi … (Enter = senden, Shift+Enter = Zeilenumbruch)"></textarea>
+  <div id="historycontrols" aria-label="Eingabe-History"><button id="historyolder" title="Ältere Eingabe (Alt+↑)" aria-label="Ältere Eingabe">↑</button><button id="historynewer" title="Neuere Eingabe (Alt+↓)" aria-label="Neuere Eingabe">↓</button></div>
+  <button id="send" class="primary">Senden</button>
+  <button id="abort">Abbrechen</button>
+</footer>
+<div id="widgets-below"></div>
+<div id="extstatus"></div>
+<div id="usagebar"><span id="usagetext">Tokenverbrauch: —</span><button id="usageinfo" aria-label="Tokenanzeige erklären" title="Tokenanzeige erklären">ⓘ</button></div>
+<div id="usagepopup" hidden role="dialog" aria-label="Tokenanzeige erklären"><strong>KI · Tokenanzeige erklären</strong><button id="usageclose" aria-label="Schließen">×</button><p id="usagesnapshot"></p><div id="usageconsent"><p>Die angezeigten Statistiken und Modellinformationen werden an das konfigurierte KI-Hilfsmodell gesendet (mögliche Modellkosten). Keine Chatinhalte.</p><button id="usageallow">Erklären lassen</button></div><p id="usageexplanation"></p></div>
+</div>
+</div>
+<div id="modal"><div id="dlg"></div></div>
+<div id="editor" hidden role="dialog" aria-label="Markdown-Editor">
+  <strong id="editpath"></strong>
+  <textarea id="edittext" aria-label="Dateiinhalt" spellcheck="false"></textarea>
+  <span id="editstatus">Änderungen werden erst mit Speichern geschrieben.</span>
+  <div><button id="editsave" class="primary">Speichern</button> <button id="editclose">Schließen</button></div>
+</div>
+<div id="preview" hidden role="region" aria-label="Datei-Kurzinfo"><div id="previewtop"><strong id="previewtitle"></strong><button id="previewpurpose" title="Dateiauszug an das konfigurierte KI-Hilfsmodell senden und Zweck erklären lassen">Zweck?</button><button id="previewclose" aria-label="Vorschau schließen">×</button></div><div id="previewconsent" hidden><p>Für die Zweckerklärung wird ein begrenzter Dateiauszug an das konfigurierte KI-Hilfsmodell gesendet. Er kann vertrauliche Inhalte enthalten. Vorhandene Erklärungen werden aus dem Cache geladen.</p><button id="previewallow">Erklären lassen</button> <button id="previewdeny">Abbrechen</button></div><section id="previewai" hidden><strong>KI · Zweck</strong><p id="previewaitext"></p><small id="previewaimethod"></small></section><small>Lokaler Auszug · keine KI</small><p id="previewtext"></p><small id="previewmethod"></small><div id="previewbottom"><small id="previewpath"></small><button id="previewrefresh" title="Angezeigte Kurzinfo neu erzeugen" aria-label="Kurzinfo aktualisieren">↻</button></div></div>
+<div id="folderdialog" hidden role="dialog" aria-label="Arbeitsordner auswählen">
+<strong>Arbeitsordner auswählen</strong>
+<input id="folderpath" aria-label="Ordnerpfad" placeholder="Pfad eingeben und Enter drücken">
+<div><button id="folderup">↑ Übergeordnet</button><button id="foldergo">Pfad öffnen</button></div>
+<div id="folderlist"></div><small id="folderstatus"></small>
+<div><button id="folderchoose" class="primary">Diesen Ordner wählen</button> <button id="foldercancel">Abbrechen</button></div>
+</div>
+<div id="keyhelp" hidden role="dialog" aria-label="Tastaturhilfe">
+<h3>Tastatursteuerung</h3>
+<p>Tab / Shift+Tab: nächstes / vorheriges Bedienelement · Enter/Leertaste: aktivieren · Esc: schließen/zurück</p>
+<p>Alt+1: Eingabe · Alt+2: Seitenliste · Alt+3: Chat · Alt+4: Kopfzeile · Alt+5: Vorschau<br>
+Alt+N: neue Session · Alt+A: abbrechen · Alt+F: Fork · Alt+M: Modell · Alt+T: Thinking<br>
+Alt+− / Alt++: Ausgabeschrift · F1: diese Hilfe · Strg/Cmd+B: Sessions</p>
+<p>Listen: ↑/↓, Home/End · ←: Ansichtsauswahl · →: Vorschau<br>
+Sessions: Enter öffnen · R/F2 umbenennen · Backspace löschen · M/Shift+F10 Menü<br>
+Chat: ↑/↓ scrollen · Home/End Anfang/Ende · Tab erreicht Links und Tool-Blöcke</p>
+<p>Eingabe: ↑/↓ an erster/letzter Zeile: History; sonst Cursor · Alt+↑/↓ oder Pfeilknöpfe: History<br>
+Enter sendet · Shift+Enter: neue Zeile · Editor: Strg/Cmd+S speichert<br>
+Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhalb von Textfeldern.</p>
+<button id="keyhelpclose">Schließen (Esc)</button></div>
+<div id="toasts"></div>
+<script src="vendor/marked.js"></script>
+<script src="vendor/hljs.js"></script>
+<script src="vendor/purify.js"></script>
+<script src="history.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

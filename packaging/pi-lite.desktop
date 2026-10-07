@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=pi-lite
+GenericName=AI Coding Agent
+Comment=Schlankes Fenster für den pi-Coding-Agent (ohne Webserver)
+Exec=pi-lite
+Terminal=false
+Type=Application
+Icon=pi-lite
+Categories=Development;
+Keywords=pi;agent;ki;chat;
+StartupWMClass=pi-lite
+StartupNotify=true

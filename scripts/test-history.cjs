@@ -1,0 +1,16 @@
+const assert = require('node:assert/strict');
+const History = require('../ui/history.js');
+const h = new History(3);
+assert.equal(h.move(-1, 'draft'), 'draft');
+h.add('one'); h.add('two'); h.add('two');
+assert.deepEqual(h.items, ['one', 'two']);
+assert.equal(h.move(-1, 'draft'), 'two');
+assert.equal(h.move(-1, 'two'), 'one');
+assert.equal(h.move(-1, 'one'), 'one');
+assert.equal(h.move(1, 'one'), 'two');
+assert.equal(h.move(1, 'two'), 'draft');
+h.add('three'); h.add('four');
+assert.deepEqual(h.items, ['two', 'three', 'four']);
+h.reset(); assert.equal(h.move(-1, 'edited draft'), 'four');
+assert.equal(h.move(1, 'four'), 'edited draft');
+console.log('Input history: all tests passed');
