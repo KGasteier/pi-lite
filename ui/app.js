@@ -596,6 +596,22 @@ async function changeSideView() {
 }
 $("sideview").onchange = changeSideView;
 $("cwd").addEventListener("change", () => { if ($("sideview").value !== "sessions") changeSideView(); });
+let editSaving = false;
+function setEditLock(locked) {
+  const lock = $("editlock");
+  lock.textContent = locked ? "🔒" : "🔓"; lock.setAttribute("aria-pressed", String(!locked));
+  const tip = locked
+    ? "Schreibschutz aktiv: Speichern ist gesperrt. Klicken, um die Bearbeitung freizugeben – nur wenn du die Datei wirklich ändern willst."
+    : "Bearbeitung freigegeben. Klicken, um wieder zu sperren.";
+  lock.title = tip; lock.setAttribute("aria-label", tip);
+  $("edittext").readOnly = locked; $("editsave").disabled = locked || editSaving;
+}
+$("editlock").onclick = () => {
+  const unlock = $("edittext").readOnly;
+  if (unlock && !confirm("Diese Datei wirklich bearbeiten? Fehlerhafte Änderungen können Konfigurationen oder Anweisungen beeinträchtigen.")) return;
+  setEditLock(!unlock);
+  $("editstatus").textContent = unlock ? "Bearbeitung freigegeben. Änderungen werden erst mit Speichern geschrieben." : "Gesperrt. Zum Bearbeiten das Schloss öffnen.";
+};
 async function openConfig(entry) {
   const cwd = $("cwd").value;
   try {
@@ -603,21 +619,23 @@ async function openConfig(entry) {
     editing = { cwd, path: entry.path, original: text, focus: document.activeElement };
     $("editpath").textContent = entry.path; $("edittext").value = text;
     $("editstatus").textContent = "Änderungen gelten erst nach erneutem Laden bzw. Neustart des jeweiligen Harness.";
+    setEditLock(true);
+    $("editstatus").textContent = "Schreibschutz aktiv. Zum Bearbeiten unten rechts das Schloss öffnen.";
     $("editor").hidden = false; $("edittext").focus();
   } catch (e) { toast(String(e), "error"); }
 }
 $("editsave").onclick = async () => {
-  if (!editing) return;
+  if (!editing || $("edittext").readOnly || editSaving) return;
   const file = editing, text = $("edittext").value;
-  $("editsave").disabled = true;
+  editSaving = true; $("editsave").disabled = true;
   try {
     await invoke("save_config", { cwd: file.cwd, path: file.path, original: file.original, text });
     file.original = text; $("editstatus").textContent = "Gespeichert. Zum Anwenden ggf. Harness neu laden/starten.";
   } catch (e) { $("editstatus").textContent = String(e); }
-  finally { $("editsave").disabled = false; }
+  finally { editSaving = false; $("editsave").disabled = $("edittext").readOnly; }
 };
 function closeEditor() {
-  if ($("editsave").disabled) return;
+  if (editSaving) return;
   if (editing && editing.original !== $("edittext").value && !confirm("Ungespeicherte Änderungen verwerfen?")) return;
   $("editor").hidden = true; editing?.focus?.focus(); editing = null;
 }
@@ -627,8 +645,8 @@ $("editor").onkeydown = e => {
   if (e.key === "Escape") { e.preventDefault(); closeEditor(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); $("editsave").click(); }
   if (e.key === "Tab") {
-    const controls = [$("edittext"), $("editsave"), $("editclose")], i = controls.indexOf(document.activeElement);
-    e.preventDefault(); controls[(i + (e.shiftKey ? 2 : 1)) % 3].focus();
+    const controls = [$("edittext"), $("editsave"), $("editclose"), $("editlock")].filter(c => !c.disabled), i = controls.indexOf(document.activeElement);
+    e.preventDefault(); controls[(i + (e.shiftKey ? controls.length - 1 : 1)) % controls.length].focus();
   }
 };
 
@@ -837,7 +855,7 @@ async function initializeWorkFolder() {
       const option = document.createElement("option"); option.value = location.path;
       option.textContent = location.name + " · " + location.path; $("cwdoptions").appendChild(option);
     }
-    const browse = document.createElement("option"); browse.value = "__browse__"; browse.textContent = "Workspace auswählen …";
+    const browse = document.createElement("option"); browse.value = "__browse__"; browse.textContent = "Workspace: Ordner wählen …";
     $("cwdoptions").appendChild(browse);
   } catch (e) { toast(String(e), "error"); }
   const session = await invoke("resume_session").catch(() => null);

@@ -29,7 +29,10 @@ Build-Verzeichnisse und Claude-Historien werden nicht rekursiv durchsucht.
 ## Eingebauter Markdown-Editor
 
 Ein Klick auf eine entdeckte Markdown-Datei öffnet einen Texteditor im Fenster.
-Andere Dateitypen bleiben reine Übersicht. Speichern ausdrücklich per Knopf oder
+Andere Dateitypen bleiben reine Übersicht. Der Editor startet schreibgeschützt: Ein
+Schloss-Symbol unten rechts (🔒) sperrt Text und „Speichern“; erst nach Klick und
+Bestätigung („wirklich bearbeiten?“) wird freigegeben (🔓). Das schützt Neulinge vor
+versehentlichen Änderungen wichtiger Dateien. Speichern ausdrücklich per Knopf oder
 Strg/Cmd+S; Esc schließt (mit Rückfrage bei ungespeicherten Änderungen).
 Bearbeitung ändert weder automatisch laufende pi-Instruktionen noch andere Harnesses.
 

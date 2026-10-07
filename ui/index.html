@@ -37,6 +37,9 @@
   #editor textarea { flex:1; min-height:0; resize:none; background:var(--bg); color:var(--fg); padding:10px; font:14px ui-monospace,monospace; }
   #editpath { overflow-wrap:anywhere; font-size:13px; }
   #editstatus { color:var(--dim); }
+  #editbuttons { display:flex; gap:8px; align-items:center; }
+  #editlock { margin-left:auto; order:3; font-size:16px; padding:2px 8px; }
+  #editor textarea[readonly] { opacity:.8; }
   .sess { padding:8px 12px; cursor:pointer; border-left:3px solid transparent; }
   .sess:hover { background:#2f353b; }
   .sess.active { border-color:var(--acc); background:#2f353b; }
@@ -161,7 +164,7 @@
 <header>
   <button id="toggle" title="Seitenleiste ein-/ausblenden" aria-label="Seitenleiste">☰</button>
   <input id="cwd" placeholder="Arbeitsordner" aria-label="Arbeitsordner" title="Für die nächste neue Session; bestehende Sessions behalten ihren Ordner">
-  <select id="cwdoptions" aria-label="Arbeitsordner auswählen"><option value="">Workspace …</option></select>
+  <select id="cwdoptions" aria-label="Arbeitsordner auswählen"><option value="">Workspace:</option></select>
   <select id="model" title="Modell"></select>
   <select id="think" title="Thinking-Level"></select>
   <button id="fork" title="Ab einer früheren Nachricht abzweigen">⑂ Fork</button>
@@ -194,7 +197,7 @@
   <strong id="editpath"></strong>
   <textarea id="edittext" aria-label="Dateiinhalt" spellcheck="false"></textarea>
   <span id="editstatus">Änderungen werden erst mit Speichern geschrieben.</span>
-  <div><button id="editsave" class="primary">Speichern</button> <button id="editclose">Schließen</button></div>
+  <div id="editbuttons"><button id="editsave" class="primary" disabled>Speichern</button> <button id="editclose">Schließen</button> <button id="editlock" aria-pressed="false"></button></div>
 </div>
 <div id="preview" hidden role="region" aria-label="Datei-Kurzinfo"><div id="previewtop"><strong id="previewtitle"></strong><button id="previewpurpose" title="Dateiauszug an das konfigurierte KI-Hilfsmodell senden und Zweck erklären lassen">Zweck?</button><button id="previewclose" aria-label="Vorschau schließen">×</button></div><div id="previewconsent" hidden><p>Für die Zweckerklärung wird ein begrenzter Dateiauszug an das konfigurierte KI-Hilfsmodell gesendet. Er kann vertrauliche Inhalte enthalten. Vorhandene Erklärungen werden aus dem Cache geladen.</p><button id="previewallow">Erklären lassen</button> <button id="previewdeny">Abbrechen</button></div><section id="previewai" hidden><strong>KI · Zweck</strong><div id="previewaitext" class="md"></div><small id="previewaimethod"></small></section><small>Lokaler Auszug · keine KI</small><div id="previewtext" class="md"></div><small id="previewmethod"></small><div id="previewbottom"><small id="previewpath"></small><button id="previewrefresh" title="Angezeigte Kurzinfo neu erzeugen" aria-label="Kurzinfo aktualisieren">↻</button></div></div>
 <div id="folderdialog" hidden role="dialog" aria-label="Arbeitsordner auswählen">
