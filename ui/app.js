@@ -307,7 +307,7 @@ async function refreshState() {
     refreshUsage();
     const m = state.model;
     if (m) { $("model").value = m.provider + "/" + m.id; syncModelButton(); }
-    if (state.thinkingLevel) $("think").value = state.thinkingLevel;
+    if (state.thinkingLevel) { $("think").value = state.thinkingLevel; thinkPicker.sync(); }
     document.title = "pi-lite" + (state.sessionName ? " – " + state.sessionName : "");
     markActive();
   } catch (e) { console.warn(e); }
@@ -329,6 +329,7 @@ async function loadModels() {
   for (const l of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
     const o = document.createElement("option"); o.value = l; o.textContent = "Denken: " + l; t.appendChild(o);
   }
+  thinkPicker.sync();
 }
 let modelCursor = 0;
 function syncModelButton() {
@@ -378,6 +379,52 @@ $("model").onchange = (e) => {
   send({ type: "set_model", provider: o.dataset.provider, modelId: o.dataset.id });
 };
 $("think").onchange = (e) => send({ type: "set_thinking_level", level: e.target.value });
+
+// Gleiches Dropdown-Verhalten wie die Modellauswahl für Workspace und Denken.
+// Das verborgene <select> bleibt Quelle der Wahrheit; leere Platzhalter-Optionen werden nicht gelistet.
+function makePicker(name, select, fixedLabel) {
+  const button = $(name + "button"), list = $(name + "list");
+  let cursor = 0, rows = [];
+  const close = (refocus = true) => { list.hidden = true; button.setAttribute("aria-expanded", "false"); if (refocus) button.focus(); };
+  const mark = () => {
+    [...list.children].forEach((row, i) => row.setAttribute("aria-selected", String(i === cursor)));
+    const row = list.children[cursor];
+    if (row) { list.setAttribute("aria-activedescendant", row.id); row.scrollIntoView({ block: "nearest" }); }
+  };
+  const choose = (i) => {
+    select.selectedIndex = rows[i]; select.dispatchEvent(new Event("change")); sync(); close();
+  };
+  const open = () => {
+    list.replaceChildren(); rows = [];
+    [...select.options].forEach((o, i) => {
+      if (o.value === "") return;
+      const row = document.createElement("div"); const n = rows.length; rows.push(i);
+      row.id = `${name}-option-${n}`; row.setAttribute("role", "option"); row.textContent = o.textContent;
+      row.onclick = () => choose(n); list.appendChild(row);
+    });
+    cursor = Math.max(0, rows.indexOf(select.selectedIndex));
+    list.hidden = false; button.setAttribute("aria-expanded", "true"); list.focus(); mark();
+  };
+  const sync = () => { button.textContent = fixedLabel || select.selectedOptions[0]?.textContent || ""; };
+  button.onclick = () => list.hidden ? open() : close();
+  button.onkeydown = e => { if (["ArrowDown", "ArrowUp"].includes(e.key)) { e.preventDefault(); e.stopPropagation(); open(); } };
+  list.onkeydown = e => {
+    const count = list.children.length;
+    if (["ArrowDown", "ArrowUp", "Home", "End", "PageDown", "PageUp"].includes(e.key)) {
+      e.preventDefault(); e.stopPropagation();
+      const page = Math.max(1, Math.floor(list.clientHeight / (list.children[cursor]?.offsetHeight || 32)));
+      cursor = e.key === "Home" ? 0 : e.key === "End" ? count - 1 : Math.max(0, Math.min(count - 1, cursor + ({ArrowDown:1, ArrowUp:-1, PageDown:page, PageUp:-page})[e.key]));
+      mark();
+    } else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); if (count) choose(cursor); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
+    else if (e.key === "Tab") close(false);
+  };
+  document.addEventListener("pointerdown", e => { if (!e.target.closest("#" + name + "picker")) close(false); });
+  sync();
+  return { sync, open, close };
+}
+const thinkPicker = makePicker("think", $("think"));
+const cwdPicker = makePicker("cwd", $("cwdoptions"), "Workspace:");
 
 // ---------- Sessions ----------
 let sessionList = [];
@@ -894,8 +941,8 @@ document.addEventListener("keydown", e => {
       controls[(i + (e.shiftKey ? controls.length - 1 : 1)) % controls.length]?.focus(); return;
     }
   }
-  if (e.target.closest?.("#modelpicker") && !$("modellist").hidden) return;
-  if (e.target.id === "modelbutton" && ["ArrowDown", "ArrowUp"].includes(e.key)) return;
+  if (e.target.closest?.(".picker") && !e.target.closest(".picker").querySelector(".picklist").hidden) return;
+  if (e.target.classList?.contains("pickbtn") && ["ArrowDown", "ArrowUp"].includes(e.key)) return;
   // Native text/select arrow behavior is never overridden.
   const textControl = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
   const group = dialog || (e.target.closest?.("#preview") ? $("preview") : e.target.closest?.("header"));
@@ -907,7 +954,7 @@ document.addEventListener("keydown", e => {
   if (dialog) return;
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
     const actions = { "1": () => $("prompt").focus(), "2": focusSide, "3": () => $("log").focus(), "4": () => $("toggle").focus(), "5": focusPreview,
-      n: () => $("newsess").click(), a: () => $("abort").click(), f: () => $("fork").click(), m: () => $("modelbutton").focus(), t: () => $("think").focus(),
+      n: () => $("newsess").click(), a: () => $("abort").click(), f: () => $("fork").click(), m: () => $("modelbutton").focus(), t: () => $("thinkbutton").focus(),
       "-": () => resizeOutput(-1), "+": () => resizeOutput(1), "=": () => resizeOutput(1) };
     const action = actions[e.key.toLowerCase()];
     if (action) { e.preventDefault(); e.stopImmediatePropagation(); action(); return; }

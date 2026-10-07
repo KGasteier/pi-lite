@@ -43,12 +43,17 @@
   #editpath { overflow-wrap:anywhere; font-size:13px; }
   #editstatus { color:var(--dim); }
   #editbuttons { display:flex; gap:8px; align-items:center; }
-  #modelpicker { position:relative; min-width:0; }
-  #modelbutton { max-width:32vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #modellist { position:absolute; top:100%; left:0; z-index:70; width:min(560px,80vw); max-height:55vh; overflow-y:auto; background:var(--panel); border:1px solid var(--cat); border-radius:6px; padding:4px; }
-  #modellist[hidden] { display:none; }
-  #modellist [role=option] { padding:8px; cursor:pointer; overflow-wrap:anywhere; }
-  #modellist [aria-selected=true] { background:var(--acc); color:white; }
+  .picker { position:relative; min-width:0; }
+  .pickbtn { max-width:32vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:26px;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23e6edf3' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 9px center; }
+  .pickbtn[aria-expanded=true] { background-color:#555c66; }
+  #cwdbutton, #thinkbutton { max-width:24vw; }
+  .picklist { position:absolute; top:100%; left:0; z-index:70; width:min(560px,80vw); max-height:55vh; overflow-y:auto; background:var(--panel); border:1px solid var(--cat); border-radius:6px; padding:4px; }
+  .picklist[hidden] { display:none; }
+  .picklist [role=option] { padding:8px; cursor:pointer; overflow-wrap:anywhere; }
+  .picklist [aria-selected=true] { background:var(--acc); color:white; }
+  #thinkpicker .picklist { width:max-content; min-width:160px; }
   #editlock[hidden] { display:none; }
   #editlock { margin-left:auto; order:3; font-size:16px; padding:2px 8px; }
   #editor textarea[readonly] { opacity:.8; }
@@ -177,9 +182,9 @@
 <header>
   <button id="toggle" title="Seitenleiste ein-/ausblenden" aria-label="Seitenleiste">☰</button>
   <input id="cwd" placeholder="Arbeitsordner" aria-label="Arbeitsordner" title="Für die nächste neue Session; bestehende Sessions behalten ihren Ordner">
-  <select id="cwdoptions" aria-label="Arbeitsordner auswählen"><option value="">Workspace:</option></select>
-  <div id="modelpicker"><button id="modelbutton" aria-haspopup="listbox" aria-expanded="false" title="Modell auswählen">Modell …</button><div id="modellist" role="listbox" aria-label="Modelle" tabindex="0" hidden></div><select id="model" hidden aria-hidden="true" tabindex="-1"></select></div>
-  <select id="think" title="Thinking-Level"></select>
+  <div class="picker" id="cwdpicker"><button class="pickbtn" id="cwdbutton" aria-haspopup="listbox" aria-expanded="false" title="Arbeitsordner für die nächste neue Session wählen">Workspace:</button><div class="picklist" id="cwdlist" role="listbox" aria-label="Workspaces" tabindex="0" hidden></div><select id="cwdoptions" hidden aria-hidden="true" tabindex="-1"><option value="">Workspace:</option></select></div>
+  <div class="picker" id="modelpicker"><button class="pickbtn" id="modelbutton" aria-haspopup="listbox" aria-expanded="false" title="Modell auswählen">Modell …</button><div class="picklist" id="modellist" role="listbox" aria-label="Modelle" tabindex="0" hidden></div><select id="model" hidden aria-hidden="true" tabindex="-1"></select></div>
+  <div class="picker" id="thinkpicker"><button class="pickbtn" id="thinkbutton" aria-haspopup="listbox" aria-expanded="false" title="Thinking-Level wählen">Denken</button><div class="picklist" id="thinklist" role="listbox" aria-label="Thinking-Level" tabindex="0" hidden></div><select id="think" hidden aria-hidden="true" tabindex="-1"></select></div>
   <button id="fork" title="Ab einer früheren Nachricht abzweigen">⑂ Fork</button>
   <span id="textcontrols" aria-label="Ausgabeschriftgröße">
     <button id="textsmaller" title="Ausgabetext verkleinern" aria-label="Ausgabetext verkleinern">A−</button>

@@ -8,7 +8,7 @@ native Pfeilbedienung. Sichtbare Fokusmarkierung. F1 öffnet/schließt die Hilfe
 
 - Alt+1 Eingabe, Alt+2 aktuelle Seitenliste, Alt+3 Chat, Alt+4 Kopfzeile, Alt+5 Vorschau
 - Alt+N neue Session, Alt+A abbrechen, Alt+F Fork
-- Alt+M Modell, Alt+T Thinking
+- Alt+M Modell, Alt+T Thinking (Modell, Workspace und Denken sind gleich bedienbare Dropdowns: ↑/↓ öffnet, Enter wählt, Esc schließt)
 - Alt+− / Alt++ Ausgabeschrift (Alt+= ebenfalls vergrößern)
 - Strg/Cmd+B wechselt zur Sessionansicht und fokussiert die Liste
 
