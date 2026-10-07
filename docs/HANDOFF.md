@@ -2,6 +2,12 @@
 
 ## Aktueller Stand
 
+Nutzeranfragen im Chat: Hintergrund nutzt die Highlight-/Akzentfarbe --acc
+(#e454c4), dunkler Text (#1e2227) für Kontrast; Übernahmepfeil erbt die Textfarbe.
+Gilt auch für geladene Verläufe. Syntax, History/Preview/Footer, Rust-Tests und
+Release geprüft; neu installiert, SHA256 identisch. Darstellung in laufendem
+WebKit noch nicht geprüft, Neustart nötig.
+
 VSCodium-Anbindung: Workspace-Button ↗ Editor, lokale Inline-Code/Markdown-Datei-
 referenzen im Assistentenchat, Read/Write/Edit-Toolaktionen und Datei-Editor-Button.
 Relative Chatpfade binden an den tatsächlichen Session-Workspace. Explizite Klicks,

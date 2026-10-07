@@ -5,7 +5,7 @@
 <title>pi-lite</title>
 <link rel="stylesheet" href="vendor/hljs.css">
 <style>
-  :root { --bg:#1e2227; --panel:#262b30; --fg:#e6edf3; --dim:#8b949e; --acc:#e454c4; --user:#2f353b; --err:#ef476f; --ok:#18a999;
+  :root { --bg:#1e2227; --panel:#262b30; --fg:#e6edf3; --dim:#8b949e; --acc:#e454c4; --user:var(--acc); --err:#ef476f; --ok:#18a999;
     --cat:#6aa5e8; }
   body[data-cat=sessions] { --cat:#6aa5e8; } body[data-cat=extensions] { --cat:#5ec2a0; } body[data-cat=skills] { --cat:#e0b25a; }
   body[data-cat=agents] { --cat:#b08cf0; } body[data-cat=harnesses] { --cat:#e68f6e; }
@@ -139,7 +139,8 @@
   #editlock[aria-pressed="true"] { background:var(--acc); color:#fff; }
   #log { flex:1; min-height:0; overflow:auto; overflow-x:hidden; padding:16px; display:flex; flex-direction:column; gap:12px; }
   .msg { min-width:0; max-width:min(900px,100%); padding:10px 14px; border-radius:10px; white-space:pre-wrap; word-wrap:break-word; }
-  .user { background:var(--user); align-self:flex-end; }
+  .user { background:var(--user); color:#1e2227; align-self:flex-end; }
+  .user .repeatrequest { color:inherit; }
   .assistant { background:var(--panel); align-self:flex-start; }
   .thinking { color:var(--dim); font-style:italic; font-size:13px; }
   .tool { align-self:stretch; background:#1a1f24; border-left:3px solid var(--ok); font:13px ui-monospace,monospace; max-width:900px; width:100%; }
