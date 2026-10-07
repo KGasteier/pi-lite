@@ -43,6 +43,7 @@
   #editpath { overflow-wrap:anywhere; font-size:13px; }
   #editstatus { color:var(--dim); }
   #editbuttons { display:flex; gap:8px; align-items:center; }
+  #editlock[hidden] { display:none; }
   #editlock { margin-left:auto; order:3; font-size:16px; padding:2px 8px; }
   #editor textarea[readonly] { opacity:.8; }
   .sess { padding:8px 12px; cursor:pointer; margin:5px 0; }
@@ -116,7 +117,7 @@
   button { background:#444a52; color:var(--fg); border:0; border-radius:6px; padding:6px 14px; cursor:pointer; }
   button:hover { background:#555c66; }
   button.primary { background:var(--acc); color:#fff; }
-  button:disabled, button.primary:disabled { background:#2c3036; color:#6b727b; cursor:not-allowed; opacity:.6; }
+  #editsave:disabled { background:#b9bec5; color:#6a7079; cursor:not-allowed; }
   #editlock[aria-pressed="true"] { background:var(--acc); color:#fff; }
   #log { flex:1; min-height:0; overflow:auto; overflow-x:hidden; padding:16px; display:flex; flex-direction:column; gap:12px; }
   .msg { min-width:0; max-width:min(900px,100%); padding:10px 14px; border-radius:10px; white-space:pre-wrap; word-wrap:break-word; }
@@ -189,6 +190,7 @@
 <footer>
   <textarea id="prompt" placeholder="Nachricht an pi … (Enter = senden, Shift+Enter = Zeilenumbruch)"></textarea>
   <div id="historycontrols" aria-label="Eingabe-History"><button id="historyolder" title="Ältere Eingabe (Alt+↑)" aria-label="Ältere Eingabe">↑</button><button id="historynewer" title="Neuere Eingabe (Alt+↓)" aria-label="Neuere Eingabe">↓</button></div>
+  <button id="promptexpand" title="Eingabe im großen Editor bearbeiten" aria-label="Eingabe im großen Editor öffnen">⤢</button>
   <button id="send" class="primary">Senden</button>
   <button id="abort">Abbrechen</button>
 </footer>
@@ -203,7 +205,7 @@
   <strong id="editpath"></strong>
   <textarea id="edittext" aria-label="Dateiinhalt" spellcheck="false"></textarea>
   <span id="editstatus">Änderungen werden erst mit Speichern geschrieben.</span>
-  <div id="editbuttons"><button id="editsave" class="primary" disabled>Speichern</button> <button id="editclose">Schließen</button> <button id="editlock" aria-pressed="false">🔒</button></div>
+  <div id="editbuttons"><button id="editsave" class="primary" disabled>Speichern</button> <button id="editclose">Schließen</button> <button id="editlock" aria-pressed="false"></button></div>
 </div>
 <div id="preview" hidden role="region" aria-label="Datei-Kurzinfo"><div id="previewtop"><strong id="previewtitle"></strong><button id="previewpurpose" title="Dateiauszug an das konfigurierte KI-Hilfsmodell senden und Zweck erklären lassen">Zweck?</button><button id="previewclose" aria-label="Vorschau schließen">×</button></div><div id="previewconsent" hidden><p>Für die Zweckerklärung wird ein begrenzter Dateiauszug an das konfigurierte KI-Hilfsmodell gesendet. Er kann vertrauliche Inhalte enthalten. Vorhandene Erklärungen werden aus dem Cache geladen.</p><button id="previewallow">Erklären lassen</button> <button id="previewdeny">Abbrechen</button></div><section id="previewai" hidden><strong>KI · Zweck</strong><div id="previewaitext" class="md"></div><small id="previewaimethod"></small></section><small>Lokaler Auszug · keine KI</small><div id="previewtext" class="md"></div><small id="previewmethod"></small><div id="previewbottom"><small id="previewpath"></small><button id="previewrefresh" title="Angezeigte Kurzinfo neu erzeugen" aria-label="Kurzinfo aktualisieren">↻</button></div></div>
 <div id="folderdialog" hidden role="dialog" aria-label="Arbeitsordner auswählen">

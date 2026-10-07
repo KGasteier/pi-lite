@@ -598,9 +598,11 @@ async function changeSideView() {
 $("sideview").onchange = changeSideView;
 $("cwd").addEventListener("change", () => { if ($("sideview").value !== "sessions") changeSideView(); });
 let editSaving = false;
+const svgLock = shackle => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" fill="currentColor" fill-opacity=".25"/><path d="${shackle}"/></svg>`;
+const LOCK_CLOSED = svgLock("M8 11V7a4 4 0 0 1 8 0v4"), LOCK_OPEN = svgLock("M8 11V7a4 4 0 0 1 7.5-2");
 function setEditLock(locked) {
   const lock = $("editlock");
-  lock.textContent = locked ? "🔒" : "🔓"; lock.setAttribute("aria-pressed", String(!locked));
+  lock.innerHTML = locked ? LOCK_CLOSED : LOCK_OPEN; lock.setAttribute("aria-pressed", String(!locked));
   const tip = locked
     ? "Schreibschutz aktiv: Speichern ist gesperrt. Klicken, um die Bearbeitung freizugeben – nur wenn du die Datei wirklich ändern willst."
     : "Bearbeitung freigegeben. Klicken, um wieder zu sperren.";
@@ -617,6 +619,7 @@ async function openConfig(entry) {
   const cwd = $("cwd").value;
   try {
     const text = await invoke("read_config", { cwd, path: entry.path });
+    $("editlock").hidden = false;
     editing = { cwd, path: entry.path, original: text, focus: document.activeElement };
     $("editpath").textContent = entry.path; $("edittext").value = text;
     $("editstatus").textContent = "Änderungen gelten erst nach erneutem Laden bzw. Neustart des jeweiligen Harness.";
@@ -625,7 +628,22 @@ async function openConfig(entry) {
     $("editor").hidden = false; $("edittext").focus();
   } catch (e) { toast(String(e), "error"); }
 }
+function openPromptEditor() {
+  editing = { prompt: true, original: $("prompt").value, focus: $("prompt") };
+  $("editpath").textContent = "Prompt-Editor";
+  $("edittext").value = $("prompt").value; $("edittext").readOnly = false;
+  $("editlock").hidden = true; $("editsave").disabled = false;
+  $("editstatus").textContent = "Speichern übernimmt den Text ins Eingabefeld; gesendet wird erst dort mit Senden/Enter.";
+  $("editor").hidden = false; $("edittext").focus();
+}
+$("promptexpand").onclick = openPromptEditor;
 $("editsave").onclick = async () => {
+  if (editing?.prompt) {
+    $("prompt").value = $("edittext").value; editing.original = $("edittext").value;
+    $("editor").hidden = true; $("editlock").hidden = false; const f = editing.focus; editing = null;
+    f.focus(); f.setSelectionRange(f.value.length, f.value.length);
+    return;
+  }
   if (!editing || $("edittext").readOnly || editSaving) return;
   const file = editing, text = $("edittext").value;
   editSaving = true; $("editsave").disabled = true;
@@ -638,7 +656,7 @@ $("editsave").onclick = async () => {
 function closeEditor() {
   if (editSaving) return;
   if (editing && editing.original !== $("edittext").value && !confirm("Ungespeicherte Änderungen verwerfen?")) return;
-  $("editor").hidden = true; editing?.focus?.focus(); editing = null;
+  $("editor").hidden = true; $("editlock").hidden = false; editing?.focus?.focus(); editing = null;
 }
 $("editclose").onclick = closeEditor;
 $("editor").onkeydown = e => {
@@ -646,7 +664,7 @@ $("editor").onkeydown = e => {
   if (e.key === "Escape") { e.preventDefault(); closeEditor(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); $("editsave").click(); }
   if (e.key === "Tab") {
-    const controls = [$("edittext"), $("editsave"), $("editclose"), $("editlock")].filter(c => !c.disabled), i = controls.indexOf(document.activeElement);
+    const controls = [$("edittext"), $("editsave"), $("editclose"), $("editlock")].filter(c => !c.disabled && !c.hidden), i = controls.indexOf(document.activeElement);
     e.preventDefault(); controls[(i + (e.shiftKey ? controls.length - 1 : 1)) % controls.length].focus();
   }
 };
