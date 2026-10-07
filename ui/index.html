@@ -114,9 +114,8 @@
   #toasts { position:fixed; right:12px; bottom:90px; display:flex; flex-direction:column; gap:6px; z-index:30; max-width:min(420px,90vw); }
   .toast { background:#323940; border-left:3px solid var(--ok); padding:8px 12px; border-radius:8px; font-size:13px; box-shadow:0 2px 8px #0008; word-break:break-word; }
   .toast.warning { border-color:#e0a030; } .toast.error { border-color:var(--err); }
-  footer > button, #sendcontrols { order:3; }
-  #sendcontrols { display:flex; flex:0 0 62px; flex-direction:column; gap:3px; }
-  #sendcontrols button { flex:1; min-height:24px; padding:2px 6px; font-size:12px; line-height:1.2; }
+  #sendcontrols { order:3; display:grid; flex:0 0 76px; grid-template-rows:repeat(3,1fr); gap:4px; }
+  #sendcontrols button { min-width:0; min-height:0; padding:2px 6px; font-size:12px; line-height:1.2; }
   #speechcontrols { margin-left:auto; display:flex; gap:4px; }
   #speechcontrols button, #usageinfo { padding:0 6px; line-height:20px; font-size:12px; }
   #usagebar { display:flex; align-items:center; gap:8px; padding:4px 12px; background:var(--panel); font-size:12px; color:var(--dim); }
@@ -166,7 +165,7 @@
   #keyhelp { position:fixed; inset:10vh 10vw; z-index:80; background:var(--panel); border:1px solid var(--acc); padding:20px; overflow:auto; border-radius:10px; box-shadow:0 0 0 100vmax #000a; }
   #keyhelp[hidden] { display:none; }
   #log:focus-visible { outline-offset:-3px; }
-  footer { display:flex; gap:8px; padding:12px; background:var(--panel); border-top:1px solid #3a4046; }
+  footer { display:flex; align-items:stretch; gap:8px; padding:10px 12px; background:var(--panel); border-top:1px solid #3a4046; }
   .chataction { display:block; font-size:11px; padding:3px 7px; margin:5px 0; }
   .copyanswer { margin-left:auto; }
   .msg.user { position:relative; padding-right:30px; }
@@ -207,8 +206,7 @@
 <footer>
   <textarea id="prompt" placeholder="Nachricht an pi … (Enter = senden, Option/Alt+Enter = Zeilenumbruch)"></textarea>
   <div id="historycontrols" aria-label="Eingabe-History"><button id="historyolder" title="Ältere Eingabe (Alt+↑)" aria-label="Ältere Eingabe">↑</button><button id="historynewer" title="Neuere Eingabe (Alt+↓)" aria-label="Neuere Eingabe">↓</button></div>
-  <div id="sendcontrols"><button id="promptexpand" title="Eingabe im großen Editor bearbeiten" aria-label="Eingabe im großen Editor öffnen">⤢</button><button id="send" class="primary">Senden</button></div>
-  <button id="abort">Abbrechen</button>
+  <div id="sendcontrols"><button id="promptexpand" title="Eingabe im großen Editor bearbeiten" aria-label="Eingabe im großen Editor öffnen">⤢</button><button id="send" class="primary">Senden</button><button id="abort">Abbrechen</button></div>
 </footer>
 <div id="widgets-below"></div>
 <div id="extstatus"></div>

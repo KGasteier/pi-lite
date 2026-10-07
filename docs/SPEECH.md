@@ -1,9 +1,11 @@
 # Sprachausgabe
 
 pi-lite nutzt die vorhandene lokale pi-Extension `vorlesen`, deren Piper-Stimme,
-Regeln und Aktivierungszustand. Keine zweite TTS-Implementierung. 🔊/🔇 in der
-Kopfzeile schaltet Vorlesen um; ■ stoppt die laufende Ausgabe. Beide Knöpfe sind
-per Tab/Enter und Kopfzeilen-Pfeilnavigation erreichbar. Ohne registrierten
+Regeln und Aktivierungszustand. Keine zweite TTS-Implementierung. 🔊/🔇 rechts unten
+in der Tokenleiste schaltet Vorlesen um; ■ stoppt die laufende Ausgabe. Beide Knöpfe
+sind per Tab/Enter erreichbar. Die zusätzliche Extension-Statuszeile „🔊 vorlesen“
+wird ausgeblendet, da sie denselben Zustand ohne zusätzliche Funktion anzeigt.
+Andere Extension-Statusmeldungen bleiben sichtbar. Ohne registrierten
 `vorlesen`-Befehl bleiben sie deaktiviert.
 
 Der Installer adaptiert die bekannte vorhandene Extension minimal: Sie darf neben

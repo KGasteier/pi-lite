@@ -2,6 +2,15 @@
 
 ## Aktueller Stand
 
+Nachtrag: Doppelte Vorlesen-Statuszeile wird beim Rendern ausgefiltert, der Status
+bleibt für den Schalter rechts unten erhalten. Andere Extension-Meldungen bleiben
+sichtbar. Rechts vom Prompt stehen Editor/Senden/Abbrechen nun in einer 76-px-
+Spalte, drei gleich hohen Reihen mit 4-px-Abstand, bündig zum Eingabefeld.
+Test scripts/test-footer.cjs ergänzt; Syntax, bestehende JS-Tests, Rust-Tests,
+Release und Installation erfolgreich, SHA256 identisch. Isolierter Chromium-Check
+bestätigt gleiche Breiten/Höhen, Abstände und bündige Ober-/Unterkanten.
+Reale WebKit-Bedienung nicht geprüft; laufendes Fenster nicht neu gestartet.
+
 Korrektur 2026-10-07: Der vorherige Layoutversuch war nur im Quellcode vorhanden.
 Jetzt Release gebaut und installiert, SHA256 identisch. Editor/Senden bilden eine
 62-px-Spalte; Vorlesen/Stop stehen rechts in der unteren Tokenleiste. Picker-Knöpfe

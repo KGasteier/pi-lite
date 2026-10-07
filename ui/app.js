@@ -178,7 +178,7 @@ function toast(msg, type = "info") {
   setTimeout(() => d.remove(), type === "error" ? 9000 : 5000);
 }
 function renderStatus() {
-  const t = [...statuses.values()].filter(Boolean).join("  ·  ");
+  const t = [...statuses.entries()].filter(([key, text]) => key !== "vorlesen" && text).map(([, text]) => text).join("  ·  ");
   $("extstatus").textContent = t; $("extstatus").style.display = t ? "block" : "none";
 }
 function renderWidgets() {
