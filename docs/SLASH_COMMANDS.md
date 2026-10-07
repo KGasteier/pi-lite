@@ -2,11 +2,14 @@
 
 Im Eingabefeld `/` tippen: über dem Feld erscheint eine Liste der tatsächlich
 vom laufenden pi per `get_commands` angebotenen Extensions, Prompt-Vorlagen und
-Skills. Namen und Beschreibungen werden gefiltert; Namenspräfixe erscheinen zuerst.
+Skills. Namen werden nach Präfix gefiltert (Skills auch ohne `skill:`); Beschreibungen
+werden nicht durchsucht. Alle Treffer sind alphabetisch nach Befehlsname sortiert.
+`/model` wird lokal ergänzt und öffnet die vorhandene pi-lite-Modellauswahl.
 
 - Tippen filtert, ↑/↓ navigieren mit Umlauf, Hover markiert.
-- Tab, Enter oder Klick übernimmt `/name ` in die Eingabe, ohne Ausführung.
-- Ein weiteres Enter oder Senden führt aus; davor können Argumente ergänzt werden.
+- Enter oder Klick führt den gewählten Befehl direkt aus.
+- Tab übernimmt `/name ` ohne Ausführung, um Argumente ergänzen zu können.
+- Danach Enter/Senden führt den vervollständigten Befehl aus.
 - Esc schließt, ohne den Text zu löschen. Beim nächsten Tippen öffnet die Liste
   wieder. Ohne offene Liste bleiben die Eingabe-History-Pfeile unverändert.
 - Nur ein einzelnes `/wort` am Eingabeanfang und Cursor am Ende öffnet die Liste;
@@ -53,8 +56,9 @@ CSS-/DOM-Stubprüfung bestanden; echte WebKit-Bedienung bleibt manuell zu prüfe
 
 ## Tests
 
-`node scripts/test-slash.cjs`: Filter, Präfixpriorität, Pfeilumlauf, Hover,
-Übernahme ohne Ausführen, Escape und History-Abgrenzung (DOM-Stubs).
+`node scripts/test-slash.cjs`: Namenspräfixfilter und alphabetische Sortierung,
+/model und /mo ohne Beschreibungstreffer, Pfeilumlauf, Hover,
+Tab-Vervollständigung, direkte Enter/Klick-Ausführung, Escape und History-Abgrenzung (DOM-Stubs).
 Separater echter pi-RPC-Test ohne Session: endpoint-custom entdeckt, erster
 Wizard-select empfangen, abgebrochen, erfolgreiche Antwort. Keine Konfiguration
 verändert. Syntax, bestehende JS-Checks, Rust-Tests und Release-Build geprüft.

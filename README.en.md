@@ -33,7 +33,7 @@ Streaming Markdown chat, tools/thinking, sessions, model selection, workspace
 picker, configuration browser/editor, keyboard navigation (F1), prompt history,
 Markdown copying, prompt recall, token statistics and optional AI explanations.
 [Slash-command completion](docs/SLASH_COMMANDS.md) in the input: type to filter,
-hover/arrows to select, Tab/Enter/click to insert, then Enter to execute.
+hover/arrows to select, Tab to complete, Enter/click to execute directly.
 VSCodium integration opens workspaces and referenced files with explicit clicks,
 without a second agent (see [editor integration](docs/EDITOR_INTEGRATION.md), German).
 

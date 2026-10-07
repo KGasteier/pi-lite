@@ -2,6 +2,15 @@
 
 ## Aktueller Stand
 
+Slash-Korrektur nach Nutzerscreenshots: /model als lokale Modellauswahl ergänzt;
+/mo und /model filtern nur Befehlsnamen-Präfixe statt Beschreibungen (keine falschen
+/llama-Treffer). Skills auch ohne skill:-Präfix suchbar. Alphabetische Sortierung.
+Klick/Enter führen direkt aus, Tab vervollständigt für optionale Argumente.
+Wizard-Optionen ohne globalen brightness-Hover und äußeren Fokusrahmen; aktive
+Auswahl hat nur einen Akzenthintergrund. Slash-Beschreibungen auf zwei Zeilen begrenzt.
+Regression/Syntax/bestehende Tests und Release geprüft; neu installiert.
+Echte WebKit-Interaktion weiterhin manuell durch Nutzer zu prüfen.
+
 Wizard-select korrigiert: keine statische pinke erste Aktion mehr; Fokus/Hover
 synchronisieren die Auswahl. ↑↓, Home/End, PageUp/PageDown navigieren mit explizitem
 ScrollIntoView. Liste max. 60vh, min-height:0, nicht schrumpfende Einträge, sichtbare

@@ -18,8 +18,9 @@ native Pfeilbedienung. Sichtbare Fokusmarkierung. F1 öffnet/schließt die Hilfe
 ## Bereiche
 
 - Slash-Auswahl: `/` im leeren Eingabefeld öffnet die Liste, Tippen filtert,
-  ↑/↓ oder Hover markieren, Tab/Enter/Klick übernehmen ohne Ausführung.
-  Danach Enter/Senden ausführen; Esc schließen. Bei offener Liste haben die
+  ↑/↓ oder Hover markieren, Enter/Klick führen direkt aus.
+  Tab vervollständigt ohne Ausführung; danach Argumente ergänzen und Enter/Senden.
+  Esc schließen. Bei offener Liste haben die
   Pfeile Vorrang vor History. Details: [Slash-Befehle](SLASH_COMMANDS.md).
 
 - Sessions: ↑/↓, Home/End; Enter/Space öffnen; R/F2 umbenennen;

@@ -643,12 +643,13 @@ listen("pi-stderr", (e) => console.warn("pi:", e.payload));
 listen("pi-exit", () => { dropDialogs(); note("pi wurde beendet.", true); setStatus("beendet", false); });
 
 const inputHistory = new InputHistory();
-const slashPicker = createSlashPicker($("prompt"), $("slashpopup"), $("slashlist"));
+const slashPicker = createSlashPicker($("prompt"), $("slashpopup"), $("slashlist"), () => submit());
 async function submit() {
   const t = $("prompt").value.trim(); if (!t) return;
   inputHistory.add(t);
   $("prompt").value = "";
   slashPicker.close();
+  if (t === "/model") { openModelPicker(); return; }
   try {
     // Extension commands must use prompt, including during streaming.
     const result = await request({ type: "prompt", message: t, ...(busy ? { streamingBehavior: "steer" } : {}) }, 0);
@@ -1109,7 +1110,8 @@ async function speechCommand(command) {
 async function detectSpeech() {
   try {
     const r = await request({ type: "get_commands" });
-    slashPicker.setCommands(r.success ? r.data?.commands || [] : []);
+    const commands = r.success ? r.data?.commands || [] : [];
+    slashPicker.setCommands([{ name: "model", source: "local", description: "Modell auswählen (pi-lite)" }, ...commands.filter(c => c.name !== "model")]);
     const available = r.success && r.data?.commands?.some(c => c.name === "vorlesen");
     $("speech").disabled = $("speechstop").disabled = !available;
     if (!available) $("speech").title = "Keine Vorlesen-Extension geladen";
