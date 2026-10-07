@@ -9,6 +9,19 @@ let curThink = null;     // aktuelle Thinking-Blase { el, text }
 const tools = new Map(); // toolCallId -> <details>
 let busy = false;
 let state = {};          // letzter get_state-Stand
+let sessionCwd = "";     // relative Chatpfade gehören zur Session, nicht zum nächsten Workspace
+async function openEditor(reference = {}, cwd = sessionCwd || $("cwd").value) {
+  try { await invoke("open_in_editor", { cwd, path: reference.path || null, line: reference.line || null, column: reference.column || null }); }
+  catch (e) { toast(String(e), "error"); }
+}
+function editorButton(reference, cwd) {
+  const button = document.createElement("button"); button.className = "chataction fileeditor";
+  button.textContent = "↗ VSCodium"; button.title = "In VSCodium öffnen: " + reference.path;
+  button.setAttribute("aria-label", button.title);
+  button.onclick = () => openEditor(reference, cwd);
+  return button;
+}
+$("workspaceeditor").onclick = () => openEditor({}, $("cwd").value);
 let reqSeq = 0;
 const pending = new Map(); // id -> Promise-Resolver
 
@@ -19,6 +32,17 @@ function renderMd(el, text) {
   el.innerHTML = html;
   el.querySelectorAll("pre code").forEach((c) => { try { hljs.highlightElement(c); } catch {} });
   el.querySelectorAll("a").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; });
+  // Only chat outputs, not AI previews: never navigate local links in the webview.
+  if (el.classList.contains("assistant") && el.classList.contains("md")) {
+    el.querySelectorAll("a, :not(pre) > code").forEach(node => {
+      const reference = editorReference(node.tagName === "A" ? node.getAttribute("href") : node.textContent);
+      if (!reference) return;
+      const cwd = sessionCwd || $("cwd").value;
+      if (node.tagName === "A") node.onclick = e => { e.preventDefault(); openEditor(reference, cwd); };
+      const button = editorButton(reference, cwd); button.style.display = "inline-block"; button.style.margin = "0 4px";
+      node.after(button);
+    });
+  }
 }
 // Während des Streamings höchstens alle 80 ms neu rendern.
 function scheduleRender(b) {
@@ -92,6 +116,11 @@ function addTool(id, name, args) {
   d.className = "msg tool";
   d.innerHTML = "<summary></summary><pre></pre>";
   d.querySelector("summary").textContent = `🔧 ${name} ${JSON.stringify(args ?? {}).slice(0, 160)}`;
+  if (["read", "write", "edit"].includes(name) && typeof args?.path === "string") {
+    const actions = document.createElement("div");
+    actions.appendChild(editorButton({ path: args.path }, sessionCwd || $("cwd").value));
+    d.appendChild(actions);
+  }
   log.appendChild(d); tools.set(id, d); scroll();
   return d;
 }
@@ -593,6 +622,7 @@ async function start({ session = null } = {}) {
   const args = session ? ["--session", session] : [];
   try {
     await invoke("start_pi", { cwd: $("cwd").value.trim(), args });
+    sessionCwd = $("cwd").value.trim();
     await loadModels();
     await refreshState();
     await detectSpeech();
@@ -738,6 +768,7 @@ async function openConfig(entry) {
   const cwd = $("cwd").value;
   try {
     const text = await invoke("read_config", { cwd, path: entry.path });
+    $("editexternal").hidden = false;
     $("editlock").hidden = false;
     editing = { cwd, path: entry.path, original: text, focus: document.activeElement };
     $("editpath").textContent = entry.path; $("edittext").value = text;
@@ -747,7 +778,13 @@ async function openConfig(entry) {
     $("editor").hidden = false; $("edittext").focus();
   } catch (e) { toast(String(e), "error"); }
 }
+$("editexternal").onclick = () => {
+  if (!editing || editing.prompt) return;
+  if ($("edittext").value !== editing.original && !confirm("Ungespeicherte Änderungen bleiben nur hier. Die gespeicherte Datei in VSCodium öffnen?")) return;
+  openEditor({ path: editing.path }, editing.cwd);
+};
 function openPromptEditor() {
+  $("editexternal").hidden = true;
   editing = { prompt: true, original: $("prompt").value, focus: $("prompt") };
   $("editpath").textContent = "Prompt-Editor";
   $("edittext").value = $("prompt").value; $("edittext").readOnly = false;
@@ -783,7 +820,7 @@ $("editor").onkeydown = e => {
   if (e.key === "Escape") { e.preventDefault(); closeEditor(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); $("editsave").click(); }
   if (e.key === "Tab") {
-    const controls = [$("edittext"), $("editsave"), $("editclose"), $("editlock")].filter(c => !c.disabled && !c.hidden), i = controls.indexOf(document.activeElement);
+    const controls = [$("edittext"), $("editsave"), $("editexternal"), $("editclose"), $("editlock")].filter(c => !c.disabled && !c.hidden), i = controls.indexOf(document.activeElement);
     e.preventDefault(); controls[(i + (e.shiftKey ? controls.length - 1 : 1)) % controls.length].focus();
   }
 };

@@ -2,6 +2,14 @@
 
 ## Aktueller Stand
 
+VSCodium-Anbindung: Workspace-Button ↗ Editor, lokale Inline-Code/Markdown-Datei-
+referenzen im Assistentenchat, Read/Write/Edit-Toolaktionen und Datei-Editor-Button.
+Relative Chatpfade binden an den tatsächlichen Session-Workspace. Explizite Klicks,
+keine Shell, nur existierende kanonisierte Ziele; Zeile/Spalte unterstützt.
+Kein zweiter Agent und keine automatische KI-Übertragung. Siehe EDITOR_INTEGRATION.md.
+Parser-/Rust-Pfadtests und bestehende Checks/Release bestanden. Installation erfolgt;
+reale Klicks und VSCodium-Zeilensprung noch nicht live geprüft; Neustart erforderlich.
+
 Nachtrag: Doppelte Vorlesen-Statuszeile wird beim Rendern ausgefiltert, der Status
 bleibt für den Schalter rechts unten erhalten. Andere Extension-Meldungen bleiben
 sichtbar. Rechts vom Prompt stehen Editor/Senden/Abbrechen nun in einer 76-px-

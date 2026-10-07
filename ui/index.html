@@ -190,6 +190,7 @@
   <button id="toggle" title="Seitenleiste ein-/ausblenden" aria-label="Seitenleiste">☰</button>
   <input id="cwd" type="hidden" aria-label="Arbeitsordner">
   <div class="picker" id="cwdpicker"><button class="pickbtn" id="cwdbutton" aria-haspopup="listbox" aria-expanded="false" title="Arbeitsordner wählen">Workspace:</button><div class="picklist" id="cwdlist" role="listbox" aria-label="Workspaces" tabindex="0" hidden></div><select id="cwdoptions" hidden aria-hidden="true" tabindex="-1"><option value="">Workspace:</option></select></div>
+  <button id="workspaceeditor" title="Ausgewählten Workspace in VSCodium öffnen">↗ Editor</button>
   <div class="picker" id="modelpicker"><button class="pickbtn" id="modelbutton" aria-haspopup="listbox" aria-expanded="false" title="Modell auswählen">Modell …</button><div class="picklist" id="modellist" role="listbox" aria-label="Modelle" tabindex="0" hidden></div><select id="model" hidden aria-hidden="true" tabindex="-1"></select></div>
   <div class="picker" id="thinkpicker"><button class="pickbtn" id="thinkbutton" aria-haspopup="listbox" aria-expanded="false" title="Thinking-Level wählen">Denken</button><div class="picklist" id="thinklist" role="listbox" aria-label="Thinking-Level" tabindex="0" hidden></div><select id="think" hidden aria-hidden="true" tabindex="-1"></select></div>
   <button id="fork" title="Ab einer früheren Nachricht abzweigen">⑂ Fork</button>
@@ -219,7 +220,7 @@
   <strong id="editpath"></strong>
   <textarea id="edittext" aria-label="Dateiinhalt" spellcheck="false"></textarea>
   <span id="editstatus">Änderungen werden erst mit Speichern geschrieben.</span>
-  <div id="editbuttons"><button id="editsave" class="primary" disabled>Speichern</button> <button id="editclose">Schließen</button> <button id="editlock" aria-pressed="false"></button></div>
+  <div id="editbuttons"><button id="editsave" class="primary" disabled>Speichern</button> <button id="editexternal" title="Gespeicherte Datei in VSCodium öffnen">↗ VSCodium</button> <button id="editclose">Schließen</button> <button id="editlock" aria-pressed="false"></button></div>
 </div>
 <div id="preview" hidden role="region" aria-label="Datei-Kurzinfo"><div id="previewtop"><strong id="previewtitle"></strong><button id="previewpurpose" title="Dateiauszug an das konfigurierte KI-Hilfsmodell senden und Zweck erklären lassen">Zweck?</button><button id="previewclose" aria-label="Vorschau schließen">×</button></div><div id="previewconsent" hidden><p>Für die Zweckerklärung wird ein begrenzter Dateiauszug an das konfigurierte KI-Hilfsmodell gesendet. Er kann vertrauliche Inhalte enthalten. Vorhandene Erklärungen werden aus dem Cache geladen.</p><button id="previewallow">Erklären lassen</button> <button id="previewdeny">Abbrechen</button></div><section id="previewai" hidden><strong>KI · Zweck</strong><div id="previewaitext" class="md"></div><small id="previewaimethod"></small></section><small>Lokaler Auszug · keine KI</small><div id="previewtext" class="md"></div><small id="previewmethod"></small><div id="previewbottom"><small id="previewpath"></small><button id="previewrefresh" title="Angezeigte Kurzinfo neu erzeugen" aria-label="Kurzinfo aktualisieren">↻</button></div></div>
 <div id="folderdialog" hidden role="dialog" aria-label="Arbeitsordner auswählen">
@@ -247,6 +248,7 @@ Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhal
 <script src="vendor/hljs.js"></script>
 <script src="vendor/purify.js"></script>
 <script src="history.js"></script>
+<script src="editor.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

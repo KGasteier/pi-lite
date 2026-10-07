@@ -42,7 +42,9 @@ Bereits gebaut? `./scripts/install.sh` installiert nur die Benutzerdateien.
 Streaming-Chat, Markdown/Code, Thinking und Tools; Sessionliste mit Öffnen,
 Umbenennen, Löschen und Fork; Modell/Thinking-Wahl; Workspace-Auswahl; Ressourcen-
 Browser und Markdown-Editor; Eingabe-History; Copy-/Anfrageübernahme-Knöpfe;
-Tastaturhilfe (F1); Tokenanzeige und optionale KI-Erklärungen.
+Tastaturhilfe (F1); Tokenanzeige und optionale KI-Erklärungen. VSCodium-Anbindung:
+Workspace und referenzierte Dateien per Klick im externen Editor öffnen, ohne
+zweiten Agenten (siehe [Editor-Anbindung](docs/EDITOR_INTEGRATION.md)).
 
 ## Optionale KI-Hilfe
 

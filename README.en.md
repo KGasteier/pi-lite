@@ -32,6 +32,8 @@ Update a partially upgraded Arch system normally before setup.
 Streaming Markdown chat, tools/thinking, sessions, model selection, workspace
 picker, configuration browser/editor, keyboard navigation (F1), prompt history,
 Markdown copying, prompt recall, token statistics and optional AI explanations.
+VSCodium integration opens workspaces and referenced files with explicit clicks,
+without a second agent (see [editor integration](docs/EDITOR_INTEGRATION.md), German).
 
 Optional explanations require `PI_LITE_HELP_PROVIDER` and `PI_LITE_HELP_MODEL` in
 the app environment, matching your existing pi model configuration. No provider

@@ -1,6 +1,7 @@
 mod inventory;
 mod preview;
 mod folders;
+mod editor;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
@@ -176,7 +177,7 @@ fn main() {
         .manage(Pi::default())
         .manage(preview::CacheLock::default())
         .manage(InfoCache::default())
-        .invoke_handler(tauri::generate_handler![start_pi, send, list_sessions, delete_session, inventory::inventory, inventory::read_config, inventory::save_config, preview::preview, preview::cached_purpose, preview::clear_previews, preview::explain_usage, folders::resume_session, folders::work_locations, folders::list_folders])
+        .invoke_handler(tauri::generate_handler![start_pi, send, list_sessions, delete_session, inventory::inventory, inventory::read_config, inventory::save_config, preview::preview, preview::cached_purpose, preview::clear_previews, preview::explain_usage, folders::resume_session, folders::work_locations, folders::list_folders, editor::open_in_editor])
         .build(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen")
         .run(|app, ev| {
