@@ -5,8 +5,11 @@
 Material erster Ausbau: + mit Portal-Mehrfachauswahl/URL-Liste, entfernbare Chips,
 explizites Senden, automatische Bildübergabe und begrenzte lokale PDF-Extraktion.
 Details: nur Verweise / manuelles Modell; Bildfallback gleicher Anbieter mit
-Bestätigung. Keine automatische Audio/Video-Verarbeitung oder parallelen Jobs;
-keine Lokal-only-Garantie/Kostenlimits. Vollständiger Stand: MATERIAL.md.
+Bestätigung. Separater Audio/Video-Adapter: MEDIA_ANALYSIS.md; bestätigte,
+authentifizierte Routen, Laufzeit-Katalogprüfung, Zustimmung vor Upload,
+Hauptmodell unverändert. Keine parallelen Jobs/Worker-Abbruch oder festen Kostenlimits;
+keine Lokal-only-Garantie. Noch keine reale Route aus modelle.pdf eingerichtet.
+Vollständiger Stand: MATERIAL.md und MEDIA_ANALYSIS.md.
 Rust-Materialtests, Syntax/bestehende Regressionstests und Release geprüft;
 neu installiert. Native Dateiauswahl/echte Provideranalyse/WebKit bleiben offen.
 

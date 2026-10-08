@@ -632,6 +632,7 @@ async function start({ session = null } = {}) {
     await loadModels();
     await refreshState();
     await detectSpeech();
+    await loadMediaRoutes();
     if (session) {
       const r = await request({ type: "get_messages" });
       if (r.success) showHistory(r.data.messages || []);
@@ -649,6 +650,15 @@ listen("pi-stderr", (e) => console.warn("pi:", e.payload));
 listen("pi-exit", () => { dropDialogs(); note("pi wurde beendet.", true); setStatus("beendet", false); });
 
 let materialItems = [], materialPreparing = false, availableModels = [];
+async function loadMediaRoutes() {
+  try {
+    const routes = await invoke("media_routes"), select = $("mediaroute"), previous = select.value;
+    select.replaceChildren();
+    const auto = document.createElement("option"); auto.value = ""; auto.textContent = "Automatisch – bestätigte Route"; select.appendChild(auto);
+    routes.forEach(route => { const option = document.createElement("option"); option.value = route.id; option.disabled = !route.available; option.textContent = (route.label || route.model) + " · " + route.modalities.join("/") + (!route.available ? " · Zugang fehlt" : ""); select.appendChild(option); });
+    select.value = previous;
+  } catch(e) { console.warn("Medienrouten:", e); }
+}
 function renderMaterials() {
   $("materialchips").replaceChildren();
   materialItems.forEach(item => {
@@ -695,7 +705,19 @@ async function submit() {
     let prepared = { text:"", images:[] };
     if (materials.length) {
       $("materialstatus").textContent = "Material wird lokal vorbereitet …";
-      prepared = await invoke("prepare_material", { paths: materials.filter(i => !i.url).map(i => i.value), referencesOnly: $("materialmode").value === "references" });
+      const referencesOnly = $("materialmode").value === "references";
+      const media = referencesOnly ? [] : materials.filter(i => !i.url && /\.(wav|mp3|flac|ogg|m4a|mp4|webm|mov)$/i.test(i.value));
+      let mediaResult = null;
+      if (media.length) {
+        const permission = await ask({method:"confirm", title:"Audio-/Videoanalyse", message:"Die ausgewählten Medien an einen separat konfigurierten Analysedienst übertragen? Dies kann zusätzliche Kosten verursachen (keine feste Kostenobergrenze). Das Chatmodell bleibt unverändert, sofern du nicht separat ein anderes gewählt hast. Details → Medienanalyse erlaubt eine manuelle Route. Abbrechen behält das Material."});
+        if (!permission?.confirmed) throw new Error("Medienanalyse abgebrochen; Material bleibt ausgewählt.");
+        $("materialstatus").textContent = "Separater Analysedienst untersucht Audio/Video …";
+        mediaResult = await invoke("analyze_media", {paths:media.map(i=>i.value), question:t, route:$("mediaroute").value || null});
+      }
+      prepared = await invoke("prepare_material", { paths: materials.filter(i => !i.url && !media.includes(i)).map(i => i.value), referencesOnly });
+      if (mediaResult) {
+        prepared.text += "\nSeparater Medienbefund (nicht unabhängig verifiziert), Modell: " + mediaResult.model + "\n" + media.map(i=>"Datei: " + JSON.stringify(i.value)).join("\n") + "\n" + mediaResult.text + "\nEnde Medienbefund.\n";
+      }
       prepared.text += materials.filter(i => i.url).map(i => "\nURL: " + i.value).join("");
       const modelKey = $("materialmodel").value;
       let target = modelKey ? availableModels.find(m => m.provider + "/" + m.id === modelKey) : state.model;

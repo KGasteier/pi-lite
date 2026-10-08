@@ -1,0 +1,16 @@
+{
+  "routes": [
+    {
+      "id": "my-audio-video-route",
+      "label": "Mein Audio-/Videodienst",
+      "adapter": "openrouter",
+      "model": "REPLACE_WITH_EXACT_VERIFIED_API_MODEL_ID",
+      "modalities": ["audio", "video"],
+      "verified": false,
+      "keyEnv": "OPENROUTER_API_KEY",
+      "priority": 10,
+      "maxBytes": 20971520,
+      "maxOutputTokens": 2048
+    }
+  ]
+}

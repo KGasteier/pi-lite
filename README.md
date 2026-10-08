@@ -48,7 +48,9 @@ Workspace und referenzierte Dateien per Klick im externen Editor öffnen, ohne
 zweiten Agenten (siehe [Editor-Anbindung](docs/EDITOR_INTEGRATION.md)).
 [Material hinzufügen](docs/MATERIAL.md): Dateien/URLs für die nächste Anfrage,
 Bildübergabe, lokaler PDF-Auszug und manuelle Verarbeitung-/Modellauswahl.
-Audio-/Video-Automatik und parallele Spezialjobs sind noch nicht implementiert.
+[Audio-/Videoanalyse](docs/MEDIA_ANALYSIS.md): isolierter OpenRouter-Aufruf über
+bestätigte Routen mit Zustimmung, ohne Wechsel des Hauptmodells. Einrichtung
+nötig; parallele Spezialjobs und feste Kostenlimits noch nicht implementiert.
 
 ## Optionale KI-Hilfe
 

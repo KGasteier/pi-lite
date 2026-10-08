@@ -38,7 +38,9 @@ VSCodium integration opens workspaces and referenced files with explicit clicks,
 without a second agent (see [editor integration](docs/EDITOR_INTEGRATION.md), German).
 [Material attachments](docs/MATERIAL.md) (German): files/URLs for the next prompt,
 image input, bounded local PDF text extraction and manual processing/model choice.
-Automatic audio/video analysis and parallel specialist jobs are not implemented.
+[Audio/video analysis](docs/MEDIA_ANALYSIS.md): isolated OpenRouter call through
+explicitly verified routes with confirmation; keeps the main model unchanged.
+Requires configuration; parallel specialist jobs and fixed cost budgets remain unimplemented.
 
 Optional explanations require `PI_LITE_HELP_PROVIDER` and `PI_LITE_HELP_MODEL` in
 the app environment, matching your existing pi model configuration. No provider

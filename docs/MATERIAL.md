@@ -43,11 +43,13 @@ Materialinhalt ist als Untersuchungsdaten gekennzeichnet, aber diese Kennzeichnu
 ist keine technische Prompt-Injection-Sandbox. Kein separater Kostenbudget-Manager.
 Senden kann Material an den aktuellen/gewählten Modellprovider übertragen.
 
-Audio/Video werden im automatischen Modus mit verständlichem Hinweis abgelehnt;
-als Dateiverweis möglich. ffmpeg/ffprobe sind hier vorhanden, aber kein verifizierter
-Transkriptions-/Videodienst eingerichtet. **Audio-/Video-Automatik, parallele
-Spezialjobs, Job-Abbruch/Timeouts, Kostenlimits und echte Lokal-only-Verarbeitung
-sind noch nicht umgesetzt.** Diese Funktionen dürfen nicht als vorhanden gelten.
+Audio/Video werden im Automatikmodus über einen separaten, ausdrücklich
+konfigurierten OpenRouter-Analysedienst verarbeitet, sofern eine bestätigte,
+authentifizierte und aktuell verfügbare Route existiert. Vor jedem Upload erfolgt
+eine Bestätigung. Details erlauben manuelle Routenwahl; nur Verweise umgeht den
+Medienaufruf. Einrichtung, Grenzen und Teststand: [MEDIA_ANALYSIS.md](MEDIA_ANALYSIS.md).
+Parallele Spezialjobs, unmittelbarer Worker-Abbruch, feste Kostenlimits und echte
+Lokal-only-Verarbeitung sind weiterhin nicht umgesetzt.
 
 ## Teststand
 
