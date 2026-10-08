@@ -36,6 +36,8 @@ Markdown copying, prompt recall, token statistics and optional AI explanations.
 hover/arrows to select, Tab to complete, Enter/click to execute directly.
 VSCodium integration opens workspaces and referenced files with explicit clicks,
 without a second agent (see [editor integration](docs/EDITOR_INTEGRATION.md), German).
+[Session bookmarks](docs/SESSION_BOOKMARKS.md) (German): persistent small bookmark
+buttons and compact time/bookmark sorting in the sidebar.
 [Material attachments](docs/MATERIAL.md) (German): files/URLs for the next prompt,
 image input, bounded local PDF text extraction and manual processing/model choice.
 [Audio/video analysis](docs/MEDIA_ANALYSIS.md): isolated OpenRouter call through

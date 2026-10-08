@@ -60,6 +60,11 @@
   #editlock[hidden] { display:none; }
   #editlock { margin-left:auto; order:3; font-size:16px; padding:2px 8px; }
   #editor textarea[readonly] { opacity:.8; }
+  #sessionsort { font-size:11px; padding:2px; min-width:0; max-width:92px; }
+  .sess .bookmark { position:absolute; right:6px; bottom:5px; padding:3px; width:23px; height:23px; display:flex; align-items:center; justify-content:center; background:transparent; color:var(--dim); }
+  .sess .bookmark[aria-pressed=true] { color:var(--cat); }
+  .sess .bookmark svg { width:13px; height:16px; }
+  .sess .m { padding-right:24px; }
   .sess { padding:8px 12px; cursor:pointer; margin:5px 0; }
   .sess.active { border-color:var(--cat); background:color-mix(in srgb, var(--cat) 22%, #2b3137); }
   .sess .t { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -197,7 +202,7 @@
 <body data-cat="sessions">
 <div id="app">
 <aside id="side">
-  <h3><span id="sidetitle">Sessions</span> <button id="cacheclear" title="Alle Vorschau-Caches und Archive löschen" aria-label="Vorschau-Cache löschen">⌫</button> <button id="newsess">+ Neu</button></h3>
+  <h3><span id="sidetitle">Sessions</span> <select id="sessionsort" aria-label="Sessions sortieren" title="Sessions sortieren"><option value="time">Zeit ↓</option><option value="bookmarks">Bookmarks</option></select> <button id="cacheclear" title="Alle Vorschau-Caches und Archive löschen" aria-label="Vorschau-Cache löschen">⌫</button> <button id="newsess">+ Neu</button></h3>
   <select id="sideview" aria-label="Seitenleistenansicht">
     <option value="sessions">Sessions</option><option value="extensions">Extensions / Plugins</option>
     <option value="skills">Skills</option><option value="agents">pi · Agent- und Kontextdateien</option>
@@ -280,6 +285,7 @@ Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhal
 <script src="vendor/purify.js"></script>
 <script src="history.js"></script>
 <script src="editor.js"></script>
+<script src="session-bookmarks.js"></script>
 <script src="slash.js"></script>
 <script src="dialog-selection.js"></script>
 <script src="app.js"></script>

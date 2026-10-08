@@ -465,6 +465,23 @@ const cwdPicker = makePicker("cwd", $("cwdoptions"), () => {
 
 // ---------- Sessions ----------
 let sessionList = [];
+const sessionBookmarks = createSessionBookmarks({
+  getItem: key => window.localStorage.getItem(key),
+  setItem: (key, value) => window.localStorage.setItem(key, value)
+});
+$("sessionsort").value = sessionBookmarks.mode;
+$("sessionsort").onchange = () => {
+  try { sessionBookmarks.setMode($("sessionsort").value); renderSessions(); }
+  catch(e) { $("sessionsort").value = sessionBookmarks.mode; toast("Sortierung konnte nicht gespeichert werden.", "error"); }
+};
+function toggleSessionBookmark(s) {
+  try {
+    sessionBookmarks.toggle(s.path);
+    renderSessions();
+    const row = [...$("sessions").children].find(el => el.dataset.path === s.path);
+    row?.querySelector(".bookmark")?.focus();
+  } catch(e) { toast("Bookmark konnte nicht gespeichert werden.", "error"); }
+}
 function fmtDate(sec) {
   const d = new Date(sec * 1000), now = new Date();
   return d.toDateString() === now.toDateString()
@@ -477,8 +494,11 @@ function markActive() {
 }
 async function loadSessions() {
   try { sessionList = await invoke("list_sessions"); } catch (e) { console.warn(e); return; }
+  renderSessions();
+}
+function renderSessions() {
   const box = $("sessions"); box.innerHTML = "";
-  for (const s of sessionList) {
+  for (const s of sessionBookmarks.sort(sessionList)) {
     const d = document.createElement("div");
     d.className = "sess"; d.dataset.path = s.path;
     const t = document.createElement("div"); t.className = "t"; t.textContent = s.name || s.title || "(leer)";
@@ -489,7 +509,15 @@ async function loadSessions() {
       b.onclick = (e) => { e.stopPropagation(); fn(); }; b.onkeydown = (e) => e.stopPropagation(); return b; };
     if (s.path === state.sessionFile) act.append(mk("✎", "Umbenennen", renameCurrent));
     else act.append(mk("🗑", "Löschen", () => removeSession(s)));
-    d.append(t, m, act);
+    const bookmark = mk("", "Bookmark", () => toggleSessionBookmark(s));
+    bookmark.className = "bookmark";
+    const marked = sessionBookmarks.has(s.path);
+    bookmark.setAttribute("aria-pressed", String(marked));
+    bookmark.setAttribute("aria-label", marked ? "Bookmark entfernen" : "Als Bookmark markieren");
+    bookmark.title = marked ? "Bookmark entfernen" : "Als Bookmark markieren";
+    bookmark.innerHTML = `<svg viewBox="0 0 16 20" aria-hidden="true"><path d="M3 2h10v16l-5-4-5 4z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="${marked ? "currentColor" : "none"}"/></svg>`;
+    bookmark.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); };
+    d.append(t, m, act, bookmark);
     d.tabIndex = 0;
     d.onclick = () => openSession(s);
     d.oncontextmenu = (e) => { e.preventDefault(); sessMenu(s, e.clientX, e.clientY, d); };
@@ -515,6 +543,7 @@ function sessMenu(s, x, y, from) {
     b.onclick = () => { closeMenu(false); fn(); }; m.appendChild(b);
   };
   if (!active) item("Öffnen", "↵", () => openSession(s));
+  item(sessionBookmarks.has(s.path) ? "Bookmark entfernen" : "Als Bookmark markieren", "", () => toggleSessionBookmark(s));
   item("Umbenennen", "R", () => renameSession(s));
   if (!active) item("Löschen …", "⌫", () => removeSession(s));
   document.body.appendChild(m);
@@ -825,6 +854,7 @@ async function changeSideView() {
   $("sessions").hidden = view !== "sessions";
   $("inventory").hidden = view === "sessions";
   $("newsess").hidden = view !== "sessions";
+  $("sessionsort").hidden = view !== "sessions";
   $("sidetitle").textContent = $("sideview").selectedOptions[0].textContent;
   if (view === "sessions") return;
   const container = $("inventory"); container.replaceChildren();

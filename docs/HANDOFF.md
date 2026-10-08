@@ -2,6 +2,12 @@
 
 ## Aktueller Stand
 
+Session-Bookmarks: dauerhaft sichtbares Umriss-/gefülltes Symbol unten rechts;
+Klick ohne Sessionöffnung, Kontextmenüaktion, lokaler persistenter Status.
+Kompakte Sortierung Zeit/Bookmarks in Überschrift, nur Sessions-Ansicht.
+Details/Testgrenzen: SESSION_BOOKMARKS.md. Release gebaut und installiert;
+realer WebKit-Bedientest weiterhin offen.
+
 Material erster Ausbau: + mit Portal-Mehrfachauswahl/URL-Liste, entfernbare Chips,
 explizites Senden, automatische Bildübergabe und begrenzte lokale PDF-Extraktion.
 Details: nur Verweise / manuelles Modell; Bildfallback gleicher Anbieter mit

@@ -46,6 +46,8 @@ Tastaturhilfe (F1); [Slash-Befehlsauswahl im Eingabefeld](docs/SLASH_COMMANDS.md
 Tokenanzeige und optionale KI-Erklärungen. VSCodium-Anbindung:
 Workspace und referenzierte Dateien per Klick im externen Editor öffnen, ohne
 zweiten Agenten (siehe [Editor-Anbindung](docs/EDITOR_INTEGRATION.md)).
+[Session-Bookmarks](docs/SESSION_BOOKMARKS.md): kleine persistente Markierungen
+und kompakte Sortierung nach Zeit oder Bookmarks in der Seitenleiste.
 [Material hinzufügen](docs/MATERIAL.md): Dateien/URLs für die nächste Anfrage,
 Bildübergabe, lokaler PDF-Auszug und manuelle Verarbeitung-/Modellauswahl.
 [Audio-/Videoanalyse](docs/MEDIA_ANALYSIS.md): isolierter OpenRouter-Aufruf über
