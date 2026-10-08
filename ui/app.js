@@ -14,6 +14,12 @@ async function openEditor(reference = {}, cwd = sessionCwd || $("cwd").value) {
   try { await invoke("open_in_editor", { cwd, path: reference.path || null, line: reference.line || null, column: reference.column || null }); }
   catch (e) { toast(String(e), "error"); }
 }
+const pathChecks = new Map();   // "cwd\0pfad" -> Promise<bool>; Streaming rendert oft neu
+function pathExists(cwd, path) {
+  const key = cwd + "\0" + path;
+  if (!pathChecks.has(key)) pathChecks.set(key, invoke("existing_paths", { cwd, paths: [path] }).then(r => !!r[0]).catch(() => false));
+  return pathChecks.get(key);
+}
 function editorButton(reference, cwd) {
   const button = document.createElement("button"); button.className = "chataction fileeditor";
   button.textContent = "↗ VSCodium"; button.title = "In VSCodium öffnen: " + reference.path;
@@ -34,13 +40,17 @@ function renderMd(el, text) {
   el.querySelectorAll("a").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; });
   // Only chat outputs, not AI previews: never navigate local links in the webview.
   if (el.classList.contains("assistant") && el.classList.contains("md")) {
+    const cwd = sessionCwd || $("cwd").value;
     el.querySelectorAll("a, :not(pre) > code").forEach(node => {
       const reference = editorReference(node.tagName === "A" ? node.getAttribute("href") : node.textContent);
       if (!reference) return;
-      const cwd = sessionCwd || $("cwd").value;
       if (node.tagName === "A") node.onclick = e => { e.preventDefault(); openEditor(reference, cwd); };
-      const button = editorButton(reference, cwd); button.style.display = "inline-block"; button.style.margin = "0 4px";
-      node.after(button);
+      // Button nur, wenn der Pfad relativ zum Session-Ordner wirklich existiert.
+      pathExists(cwd, reference.path).then(ok => {
+        if (!ok || !node.isConnected || node.nextSibling?.classList?.contains("fileeditor")) return;
+        const button = editorButton(reference, cwd); button.style.display = "inline-block"; button.style.margin = "0 4px";
+        node.after(button);
+      });
     });
   }
 }
@@ -140,6 +150,9 @@ function showHistory(messages) {
         else if (p.type === "thinking" && p.thinking) addThinking(p.thinking);
         else if (p.type === "toolCall") addTool(p.id, p.name, p.arguments);
       }
+    } else if (m.role === "bashExecution") {
+      const b = addShellBlock((m.excludeFromContext ? "!! " : "! ") + m.command); b.append(stripAnsi(m.output || ""));
+      b.finish(m.cancelled ? "abgebrochen" : "Exit " + m.exitCode, m.cancelled || m.exitCode > 0);
     } else if (m.role === "toolResult") {
       const d = tools.get(m.toolCallId);
       if (d) { d.querySelector("pre").textContent = textOf(m.content); if (m.isError) d.classList.add("err"); }
@@ -155,6 +168,7 @@ function handle(ev) {
       if (ev.id && pending.has(ev.id)) { pending.get(ev.id)(ev); pending.delete(ev.id); }
       else if (!ev.success) note(`${ev.command}: ${ev.error || "Fehler"}`, true);
       break;
+    case "bash_execution_update": bashBlocks.get(ev.id)?.append(stripAnsi(ev.delta || "")); break;
     case "agent_start": setStatus("arbeitet …", true); break;
     case "agent_settled": setStatus("bereit", false); refreshState(); loadSessions(); break;
     case "message_start":
@@ -667,6 +681,7 @@ async function start({ session = null } = {}) {
       if (r.success) showHistory(r.data.messages || []);
     }
     setStatus("bereit", false);
+    if (!session) renderStartCard();
   } catch (e) { note(String(e), true); setStatus("Fehler", false); }
   loadSessions();
   $("prompt").focus();
@@ -717,7 +732,13 @@ const inputHistory = new InputHistory();
 const slashPicker = createSlashPicker($("prompt"), $("slashpopup"), $("slashlist"), () => submit());
 async function submit() {
   const t = $("prompt").value.trim(); if (!t || materialPreparing) return;
-  if (materialItems.length && t.startsWith("/")) { toast("Material mit einer normalen Frage senden, nicht mit einem Slash-Befehl.", "error"); return; }
+  const parsed = parseInput(t);
+  if (materialItems.length && (t.startsWith("/") || parsed.kind !== "prompt")) { toast("Material mit einer normalen Frage senden, nicht mit einem Befehl.", "error"); return; }
+  if (parsed.kind !== "prompt") {
+    inputHistory.add(t); $("prompt").value = ""; slashPicker.close();
+    await runCommand(parsed);
+    return;
+  }
   const materials = [...materialItems];
   if (materials.length && busy) { toast("Material bitte erst senden, wenn der Agent bereit ist.", "error"); return; }
   materialPreparing = true;
@@ -725,11 +746,6 @@ async function submit() {
   inputHistory.add(t);
   $("prompt").value = "";
   slashPicker.close();
-  if (t === "/model") {
-    materialPreparing = false;
-    $("materialadd").disabled = $("materialmode").disabled = $("materialmodel").disabled = $("send").disabled = $("newsess").disabled = false;
-    openModelPicker(); return;
-  }
   try {
     let prepared = { text:"", images:[] };
     if (materials.length) {
@@ -782,7 +798,8 @@ async function submit() {
   }
 }
 $("send").onclick = submit;
-$("abort").onclick = () => send({ type: "abort" });
+function abortCurrent() { if (activeJob) activeJob.cancel(); else send({ type: "abort" }); }
+$("abort").onclick = abortCurrent;
 $("newsess").onclick = () => { document.body.classList.remove("side-open"); start(); };
 function recallInput(direction) {
   const field = $("prompt");
@@ -809,6 +826,7 @@ $("prompt").addEventListener("keydown", (e) => {
   if (e.isComposing) return;
   if (slashPicker.key(e)) return;
   // Super/Cmd+A markiert den gesamten Eingabetext (Strg+A bleibt nativ).
+  if (e.key === "Escape" && !e.altKey && !e.ctrlKey && !e.metaKey && (busy || activeJob)) { e.preventDefault(); e.stopPropagation(); abortCurrent(); return; }
   if (isSelectAllShortcut(e)) {
     e.preventDefault(); e.target.setSelectionRange(0, e.target.value.length); return;
   }
@@ -961,6 +979,206 @@ $("editor").onkeydown = e => {
     e.preventDefault(); controls[(i + (e.shiftKey ? controls.length - 1 : 1)) % controls.length].focus();
   }
 };
+
+// ---------- Befehlseingabe wie im pi-Terminal ----------
+// "pi update" → pi-CLI, "!cmd"/"!!cmd" → Shell (RPC bash), eingebaute /Befehle → lokal; alles andere geht an das Modell.
+let lastCommands = [], activeJob = null;
+const bashBlocks = new Map(), cliBlocks = new Map();
+let cliSeq = 0;
+const stripAnsi = (text) => text.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "");
+function addShellBlock(title) {
+  const d = document.createElement("details"); d.className = "msg tool shell"; d.open = true;
+  const summary = document.createElement("summary"), name = document.createElement("span"), state = document.createElement("span");
+  name.textContent = title; state.className = "shellstate"; state.textContent = "läuft …";
+  summary.append(name, state);
+  const pre = document.createElement("pre"); d.append(summary, pre);
+  log.appendChild(d); scroll(true);
+  return {
+    el: d, pre,
+    append(text) { const stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8; pre.textContent += text; if (stick) pre.scrollTop = pre.scrollHeight; scroll(); },
+    finish(label, err) { state.textContent = label; d.classList.toggle("err", !!err); d.classList.add("done"); },
+  };
+}
+function noteBlock(text) {
+  const d = document.createElement("div"); d.className = "note block"; d.textContent = text;
+  log.appendChild(d); scroll(true);
+}
+async function runCli(args) {
+  if (activeJob) { toast("Es läuft bereits ein pi-Befehl oder eine Shell-Eingabe.", "error"); return; }
+  const id = "c" + (++cliSeq), block = addShellBlock("pi " + args.join(" "));
+  cliBlocks.set(id, block); activeJob = { cancel: () => invoke("pi_cli_cancel") };
+  try {
+    const code = await invoke("pi_cli", { id, cwd: $("cwd").value.trim(), args });
+    block.finish(code === 0 ? "fertig" : "Exit " + code, code !== 0);
+    if (code === 0 && ["update", "install", "remove", "uninstall"].includes(args[0])) note("Änderungen an pi und Erweiterungen wirken in einer neuen Session (Alt+N).");
+  } catch (e) { block.finish("Fehler", true); block.append(String(e) + "\n"); }
+  finally { activeJob = null; setTimeout(() => cliBlocks.delete(id), 1000); }
+}
+listen("pi-cli", (e) => { const b = cliBlocks.get(e.payload.id); if (b) b.append(stripAnsi(e.payload.line) + "\n"); });
+async function runBash(command, exclude) {
+  if (busy) { note("pi arbeitet noch – erst abbrechen.", true); return; }
+  if (activeJob) { toast("Es läuft bereits ein pi-Befehl oder eine Shell-Eingabe.", "error"); return; }
+  const id = "b" + (++reqSeq), block = addShellBlock((exclude ? "!! " : "! ") + command);
+  bashBlocks.set(id, block); activeJob = { cancel: () => send({ type: "abort_bash" }) };
+  try {
+    const r = await new Promise(resolve => { pending.set(id, resolve); send({ type: "bash", id, command, excludeFromContext: exclude }); });
+    if (!r.success) { block.finish("Fehler", true); block.append((r.error || "bash fehlgeschlagen") + "\n"); }
+    else {
+      const d = r.data || {};
+      if (!block.pre.textContent) block.append(stripAnsi(d.output || ""));
+      block.finish((d.cancelled ? "abgebrochen" : "Exit " + d.exitCode) + (d.truncated ? " · gekürzt" : "") + (exclude ? " · nicht im Kontext" : ""), d.cancelled || d.exitCode > 0);
+      if (d.fullOutputPath) note("Vollständige Ausgabe: " + d.fullOutputPath);
+    }
+  } catch (e) { block.finish("Fehler", true); block.append(String(e) + "\n"); }
+  finally { activeJob = null; setTimeout(() => bashBlocks.delete(id), 1000); }
+}
+async function runLocal(name, arg) {
+  const mutating = ["new", "compact", "clone", "fork", "name"].includes(name);
+  if (mutating && busy) { note("pi arbeitet noch – erst abbrechen.", true); return; }
+  const fail = (r) => note(`/${name}: ${r?.error || "Fehler"}`, true);
+  switch (name) {
+    case "model": {
+      if (!arg) { openModelPicker(); return; }
+      const q = arg.toLowerCase();
+      const hits = availableModels.filter(m => (m.provider + "/" + m.id).toLowerCase() === q || m.id.toLowerCase() === q);
+      const found = hits.length === 1 ? hits : availableModels.filter(m => (m.provider + "/" + m.id + " " + (m.name || "")).toLowerCase().includes(q));
+      if (found.length !== 1) { note(found.length ? `/model: „${arg}“ ist nicht eindeutig (${found.length} Treffer).` : `/model: Kein Modell „${arg}“.`, true); if (found.length) openModelPicker(); return; }
+      const r = await request({ type: "set_model", provider: found[0].provider, modelId: found[0].id });
+      if (!r.success) fail(r); else { await refreshState(); note("Modell: " + found[0].provider + "/" + found[0].id); }
+      return;
+    }
+    case "thinking": {
+      const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+      if (!arg) { note("Denkstufe: " + (state.thinkingLevel || "unbekannt")); return; }
+      if (!levels.includes(arg.toLowerCase())) { note("/thinking: Stufen sind " + levels.join(", "), true); return; }
+      const r = await request({ type: "set_thinking_level", level: arg.toLowerCase() });
+      if (!r.success) fail(r); else { await refreshState(); note("Denkstufe: " + (state.thinkingLevel || arg)); }
+      return;
+    }
+    case "new": $("newsess").click(); return;
+    case "name": {
+      if (!arg) { note("Sessionname: " + (state.sessionName || "(keiner)")); return; }
+      const r = await request({ type: "set_session_name", name: arg });
+      if (!r.success) fail(r); else { await refreshState(); loadSessions(); note("Sessionname: " + arg); }
+      return;
+    }
+    case "session": {
+      const r = await request({ type: "get_session_stats" });
+      if (!r.success) { fail(r); return; }
+      const d = r.data, c = d.contextUsage;
+      noteBlock(["Session " + (d.sessionId || ""), d.sessionFile || "", `Nachrichten: ${d.userMessages} Nutzer · ${d.assistantMessages} Assistent · ${d.toolCalls} Tool-Aufrufe`,
+        `Tokens: ${tokenShort(d.tokens?.total)} (Eingabe ${tokenShort(d.tokens?.input)}, Ausgabe ${tokenShort(d.tokens?.output)}, Cache ${tokenShort(d.tokens?.cacheRead)})`,
+        typeof d.cost === "number" ? "Kosten: $" + d.cost.toFixed(4) : "", c ? `Kontext: ${c.percent == null ? "—" : c.percent.toFixed(1) + " %"} von ${tokenShort(c.contextWindow)}` : ""].filter(Boolean).join("\n"));
+      return;
+    }
+    case "compact": {
+      note("Kontext wird komprimiert …");
+      const r = await request({ type: "compact", ...(arg ? { customInstructions: arg } : {}) }, 0);
+      if (!r.success) fail(r); else note(`Komprimiert: ${tokenShort(r.data?.tokensBefore)} → ca. ${tokenShort(r.data?.estimatedTokensAfter)} Tokens.`);
+      await refreshState(); return;
+    }
+    case "copy": {
+      const r = await request({ type: "get_last_assistant_text" });
+      const text = r.data?.text;
+      if (!r.success || !text) { note("/copy: Noch keine Assistentenantwort.", true); return; }
+      try { await navigator.clipboard.writeText(text); toast("Letzte Antwort kopiert."); } catch (e) { toast("Kopieren fehlgeschlagen: " + e, "error"); }
+      return;
+    }
+    case "export": {
+      const r = await request({ type: "export_html", ...(arg ? { outputPath: arg } : {}) }, 60000);
+      if (!r.success) fail(r); else note("Exportiert: " + r.data?.path);
+      return;
+    }
+    case "clone": {
+      const r = await request({ type: "clone" });
+      if (!r.success) { fail(r); return; }
+      if (r.data?.cancelled) { note("Klonen wurde von einer Extension abgebrochen.", true); return; }
+      const h = await request({ type: "get_messages" });
+      if (h.success) showHistory(h.data.messages || []);
+      await refreshState(); loadSessions(); note("Session dupliziert."); return;
+    }
+    case "fork": await forkFromHere(); return;
+    case "resume": focusSide(); return;
+    case "hotkeys": showKeyHelp(); return;
+    case "changelog": invoke("open_changelog").catch(e => toast(String(e), "error")); return;
+    case "quit": invoke("quit_app"); return;
+  }
+}
+async function runCommand(parsed) {
+  try {
+    if (parsed.kind === "cli") await runCli(parsed.args);
+    else if (parsed.kind === "bash") await runBash(parsed.command, parsed.exclude);
+    else if (parsed.kind === "local") await runLocal(parsed.name, parsed.arg);
+    else if (parsed.kind === "terminal") note(`/${parsed.name} gibt es nur im pi-Terminal. Dort ausführen oder in pi-lite über die Seitenleiste/Kopfzeile bedienen.`, true);
+  } catch (e) { toast(String(e), "error"); }
+}
+
+// ---------- Startkarte (Startinfos von pi, an die GUI angepasst) ----------
+const PI_LOGO = '<svg class="pilogo" viewBox="0 0 12 12.5" aria-hidden="true"><path fill="#e18878" d="M0 0h9v3H0z"/><path fill="#e18878" d="M6 3h3v3H6z"/><path fill="#4e8cb0" d="M0 3h3v9.5H0z"/><path fill="#4e8cb0" d="M3 6h3v3H3z"/><path fill="#e7b35c" d="M9 6h3v6.5H9z"/></svg>';
+let startSequence = 0;
+async function renderStartCard() {
+  const seq = ++startSequence;
+  const card = document.createElement("section"); card.className = "startcard"; card.setAttribute("aria-label", "pi Startinfos");
+  let info = { version: "", context: [], extensions: [] };
+  try { info = await invoke("startup_info", { cwd: $("cwd").value.trim() }); } catch (e) { console.warn("Startinfos:", e); }
+  if (seq !== startSequence || log.querySelector(".msg")) return;   // inzwischen neu gestartet oder schon Chat vorhanden
+  const head = document.createElement("div"); head.className = "starthead";
+  head.innerHTML = PI_LOGO;
+  const title = document.createElement("div");
+  const ver = document.createElement("div"); ver.className = "startver"; ver.textContent = "pi" + (info.version ? " v" + info.version.replace(/^v/, "") : "");
+  const hint = document.createElement("div"); hint.className = "starthint";
+  [["Esc", "unterbricht"], ["/", "Befehle"], ["!", "Shell"], ["pi update", "CLI"], ["F1", "Tastaturhilfe"]].forEach(([key, text], i) => {
+    if (i) hint.append(" · ");
+    const k = document.createElement("kbd"); k.textContent = key; hint.append(k, " " + text);
+  });
+  title.append(ver, hint); head.appendChild(title); card.appendChild(head);
+  const intro = document.createElement("p"); intro.className = "startintro";
+  intro.textContent = "pi kann seine eigenen Funktionen erklären und seine Doku nachschlagen – frag einfach, wie man pi benutzt oder erweitert.";
+  card.appendChild(intro);
+
+  const skills = lastCommands.filter(c => c.source === "skill").map(c => ({ label: c.name.replace(/^skill:/, ""), insert: "/" + c.name + " " })).sort((a, b) => a.label.localeCompare(b.label));
+  const prompts = lastCommands.filter(c => c.source === "prompt").map(c => ({ label: "/" + c.name, insert: "/" + c.name + " " })).sort((a, b) => a.label.localeCompare(b.label));
+  const groups = [
+    ["Kontext", "#b08cf0", info.context.map(f => ({ label: f.name, title: f.path, open: f.path }))],
+    ["Skills", "#e0b25a", skills], ["Prompts", "#e68f6e", prompts],
+    ["Erweiterungen", "#5ec2a0", info.extensions.map(label => ({ label }))],
+  ].filter(g => g[2].length);
+  if (groups.length) {
+    const details = document.createElement("details"); details.className = "startres"; details.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent = "Geladen: " + groups.map(g => g[2].length + " " + g[0]).join(" · ");
+    details.appendChild(summary);
+    for (const [name, color, items] of groups) {
+      const row = document.createElement("div"); row.className = "resrow"; row.style.setProperty("--c", color);
+      const label = document.createElement("b"); label.textContent = name; row.appendChild(label);
+      const chips = document.createElement("span");
+      items.forEach(item => {
+        const chip = document.createElement(item.insert || item.open ? "button" : "span"); chip.className = "chip"; chip.textContent = item.label;
+        if (item.title) chip.title = item.title;
+        if (item.insert) { chip.title = "In die Eingabe übernehmen"; chip.onclick = () => { const f = $("prompt"); f.value = item.insert; f.focus(); f.dispatchEvent(new Event("input", { bubbles: true })); }; }
+        if (item.open) { chip.title = "Im Editor öffnen: " + item.title; chip.onclick = () => openEditor({ path: item.open }, $("cwd").value); }
+        chips.appendChild(chip);
+      });
+      row.appendChild(chips); details.appendChild(row);
+    }
+    card.appendChild(details);
+  }
+  log.appendChild(card); scroll(true);
+  // Update-Hinweis wie pi: dieselbe Abfrage, respektiert PI_SKIP_VERSION_CHECK / PI_OFFLINE.
+  invoke("latest_version").then(latest => {
+    if (!latest || !info.version || !isNewerVersion(latest, info.version) || !card.isConnected) return;
+    const box = document.createElement("div"); box.className = "startupdate"; box.setAttribute("role", "status");
+    const text = document.createElement("div");
+    const strong = document.createElement("strong"); strong.textContent = "Update verfügbar";
+    text.append(strong, ` – pi ${latest} ist erschienen (installiert: ${info.version.replace(/^v/, "")}).`);
+    const run = document.createElement("button"); run.textContent = "pi update ausführen"; run.className = "primary";
+    run.onclick = () => { box.remove(); runCli(["update"]); };
+    const changelog = document.createElement("button"); changelog.textContent = "Changelog";
+    changelog.onclick = () => invoke("open_changelog").catch(e => toast(String(e), "error"));
+    const actions = document.createElement("div"); actions.append(run, changelog);
+    box.append(text, actions); card.appendChild(box); scroll();
+  }).catch(() => {});
+}
 
 // ---------- Cached sidebar previews ----------
 let previewTimer, previewHideTimer, previewSequence = 0, previewItem = null;
@@ -1237,7 +1455,8 @@ async function detectSpeech() {
   try {
     const r = await request({ type: "get_commands" });
     const commands = r.success ? r.data?.commands || [] : [];
-    slashPicker.setCommands([{ name: "model", source: "local", description: "Modell auswählen (pi-lite)" }, ...commands.filter(c => c.name !== "model")]);
+    lastCommands = commands;
+    slashPicker.setCommands([...LOCAL_COMMANDS, ...commands.filter(c => !LOCAL_COMMANDS.some(l => l.name === c.name))]);
     const available = r.success && r.data?.commands?.some(c => c.name === "vorlesen");
     $("speech").disabled = $("speechstop").disabled = !available;
     if (!available) $("speech").title = "Keine Vorlesen-Extension geladen";

@@ -19,6 +19,12 @@ fn resolve_target(cwd: &str, path: Option<&str>) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+/// Prüft, welche Chat-Pfadverweise tatsächlich existieren; nur diese bekommen einen Editor-Button.
+#[tauri::command]
+pub fn existing_paths(cwd: String, paths: Vec<String>) -> Vec<bool> {
+    paths.iter().take(200).map(|p| resolve_target(&cwd, Some(p)).is_ok()).collect()
+}
+
 /// Only explicit user clicks invoke this; arguments are passed without a shell.
 #[tauri::command]
 pub fn open_in_editor(cwd: String, path: Option<String>, line: Option<u32>, column: Option<u32>) -> Result<(), String> {
@@ -50,6 +56,7 @@ mod tests {
         assert_eq!(resolve_target(cwd, Some("-file with spaces;echo.md")).unwrap(), file.canonicalize().unwrap());
         assert!(resolve_target(cwd, Some("missing.md")).is_err());
         assert!(resolve_target(cwd, Some("https://example.com/a.md")).is_err());
+        assert_eq!(existing_paths(cwd.into(), vec!["-file with spaces;echo.md".into(), "ui/missing.js".into()]), [true, false]);
         std::fs::remove_dir_all(base).unwrap();
     }
 }

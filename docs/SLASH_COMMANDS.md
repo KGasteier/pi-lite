@@ -64,3 +64,11 @@ Wizard-select empfangen, abgebrochen, erfolgreiche Antwort. Keine Konfiguration
 verändert. Syntax, bestehende JS-Checks, Rust-Tests und Release-Build geprüft.
 Echte WebKit-Maus-/Tastaturinteraktion und vollständiger Endpoint-Wizard noch
 nicht live geprüft. Die laufende Nutzersession wurde nicht gesteuert/beendet.
+
+## Eingabe wie im pi-Terminal
+
+- `pi update`, `pi list`, `pi install|remove <quelle>`, `pi --version`: lokal als pi-CLI ausgeführt (kein Shell, feste Unterbefehlsliste, Abbruch mit Esc/Abbrechen). `pi config` bleibt dem Terminal vorbehalten.
+- `!cmd` führt eine Shell-Zeile über RPC `bash` aus (Ausgabe geht in den Kontext), `!!cmd` ohne Kontext.
+- Lokal behandelte Slash-Befehle: model, thinking, new, name, session, compact, copy, export, clone, fork, resume, hotkeys, changelog, quit. Terminal-only-Befehle (settings, login, tree …) zeigen einen Hinweis statt ans Modell zu gehen.
+- Startkarte: Version, Kontextdateien, Skills, Prompts, Erweiterungen (aus Konfiguration ermittelt) und Update-Hinweis (pi.dev/api/latest-version; `PI_OFFLINE`/`PI_SKIP_VERSION_CHECK` werden respektiert).
+- Nicht live in WebKit geprüft; Tests: `node scripts/test-commands.cjs`, `cargo test`.
