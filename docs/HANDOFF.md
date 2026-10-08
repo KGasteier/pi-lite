@@ -2,6 +2,11 @@
 
 ## Aktueller Stand
 
+Eingabebereich: links SVG-Spalte Material/History ↑/↓, rechts Editor/Senden/
+Abbrechen in gleicher Dreierteilung. Vorlesen/Stopp unten rechts als SVG statt
+Emoji. Footer-Strukturtest, alle JS-Tests, Rust/Release; installiert. WebKit-Optik
+nicht live geprüft.
+
 Kopfbereiche aufgeräumt: Editor nur noch kleines 26px-Symbol, im gemeinsamen
 Workspace-Rahmen direkt am Picker. Sidebar: Kategorieauswahl statt doppeltem
 Titel, einheitliche kompakte Aktionszeile (Neu/Sortierung/Cache); gleicher Aufbau

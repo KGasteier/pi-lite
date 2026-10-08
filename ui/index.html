@@ -138,9 +138,18 @@
   .toast { background:#323940; border-left:3px solid var(--ok); padding:8px 12px; border-radius:8px; font-size:13px; box-shadow:0 2px 8px #0008; word-break:break-word; }
   .toast.warning { border-color:#e0a030; } .toast.error { border-color:var(--err); }
   #sendcontrols { order:3; display:grid; flex:0 0 76px; grid-template-rows:repeat(3,1fr); gap:4px; }
-  #sendcontrols button { min-width:0; min-height:0; padding:2px 6px; font-size:12px; line-height:1.2; }
+  #sendcontrols button { min-width:0; min-height:0; padding:2px 6px; font-size:12px; line-height:1.2; display:flex; align-items:center; justify-content:center; gap:4px; }
+  #sendcontrols svg { width:12px; height:12px; }
+  .iconbutton svg, #sendcontrols svg { fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+  #inputtools { order:1; display:grid; flex:0 0 32px; grid-template-rows:repeat(3,1fr); gap:4px; }
+  #inputtools button { min-height:0; padding:0; display:flex; align-items:center; justify-content:center; }
+  #inputtools svg { width:15px; height:15px; }
+  #materialadd { color:var(--acc); }
   #speechcontrols { margin-left:auto; display:flex; gap:4px; }
-  #speechcontrols button, #usageinfo { padding:0 6px; line-height:20px; font-size:12px; }
+  #speechcontrols button { width:26px; height:22px; padding:0; display:flex; align-items:center; justify-content:center; }
+  #speechcontrols svg { width:15px; height:15px; }
+  #speech[aria-pressed=true] { color:var(--ok); }
+  #usageinfo { padding:0 6px; line-height:20px; font-size:12px; }
   #usagebar { display:flex; align-items:center; gap:8px; padding:4px 12px; background:var(--panel); font-size:12px; color:var(--dim); }
   #usageinfo { padding:1px 6px; }
   #usagepopup { position:fixed; bottom:38px; right:12px; z-index:65; width:min(440px,calc(100vw - 24px)); max-height:70vh; overflow:auto; padding:12px; background:var(--panel); border:1px solid var(--acc); border-radius:8px; font-size:13px; }
@@ -184,8 +193,6 @@
   #folderpath { width:100%; background:var(--bg); color:var(--fg); padding:8px; }
   #cwdoptions { max-width:160px; }
   :focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
-  #historycontrols { order:1; display:flex; flex-direction:column; gap:3px; }
-  #historycontrols button { padding:3px 8px; flex:1; }
   #keyhelp { position:fixed; inset:10vh 10vw; z-index:80; background:var(--panel); border:1px solid var(--acc); padding:20px; overflow:auto; border-radius:10px; box-shadow:0 0 0 100vmax #000a; }
   #keyhelp[hidden] { display:none; }
   #log:focus-visible { outline-offset:-3px; }
@@ -262,15 +269,18 @@
 <p>Auswahl lädt nichts hoch. Erst Senden übergibt Material an den Agenten/Provider. URLs werden hier nicht abgerufen. Audio/Video: separater Analysedienst nur über bestätigte Routen und nach Zustimmung. Dateiverweise sind keine Lokal-only-Garantie.</p>
 </details></div>
 <footer>
-  <button id="materialadd" title="Material hinzufügen" aria-label="Material hinzufügen">+</button>
+  <div id="inputtools" role="group" aria-label="Eingabewerkzeuge">
+  <button id="materialadd" class="iconbutton" title="Material hinzufügen" aria-label="Material hinzufügen"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button>
+  <button id="historyolder" class="iconbutton" title="Ältere Eingabe (Alt+↑)" aria-label="Ältere Eingabe"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg></button>
+  <button id="historynewer" class="iconbutton" title="Neuere Eingabe (Alt+↓)" aria-label="Neuere Eingabe"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></button>
+  </div>
   <div id="slashpopup" hidden><div id="slashlist" role="listbox" aria-label="pi-Befehle"></div><div id="slashhint">Tippen filtert Namen · ↑↓ / Hover wählen · Klick/Enter ausführen · Tab vervollständigen · Esc schließen</div></div>
   <textarea id="prompt" role="combobox" aria-autocomplete="list" aria-controls="slashlist" aria-expanded="false" placeholder="Nachricht oder /Befehl … (Enter = senden, Option/Alt+Enter = Zeilenumbruch)"></textarea>
-  <div id="historycontrols" aria-label="Eingabe-History"><button id="historyolder" title="Ältere Eingabe (Alt+↑)" aria-label="Ältere Eingabe">↑</button><button id="historynewer" title="Neuere Eingabe (Alt+↓)" aria-label="Neuere Eingabe">↓</button></div>
-  <div id="sendcontrols"><button id="promptexpand" title="Eingabe im großen Editor bearbeiten" aria-label="Eingabe im großen Editor öffnen">⤢</button><button id="send" class="primary">Senden</button><button id="abort">Abbrechen</button></div>
+  <div id="sendcontrols"><button id="promptexpand" title="Eingabe im großen Editor bearbeiten" aria-label="Eingabe im großen Editor öffnen"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3L9 7M7 13H3V9M3 13l4-4"/></svg> Editor</button><button id="send" class="primary">Senden</button><button id="abort">Abbrechen</button></div>
 </footer>
 <div id="widgets-below"></div>
 <div id="extstatus"></div>
-<div id="usagebar"><span id="usagetext">Tokenverbrauch: —</span><button id="usageinfo" aria-label="Tokenanzeige erklären" title="Tokenanzeige erklären">ⓘ</button><span id="speechcontrols"><button id="speech" disabled aria-label="Sprachausgabe" title="Sprachausgabe wird geprüft">🔇</button><button id="speechstop" disabled aria-label="Sprachausgabe stoppen" title="Sprachausgabe stoppen">■</button></span></div>
+<div id="usagebar"><span id="usagetext">Tokenverbrauch: —</span><button id="usageinfo" aria-label="Tokenanzeige erklären" title="Tokenanzeige erklären">ⓘ</button><span id="speechcontrols"><button id="speech" class="iconbutton" disabled aria-label="Sprachausgabe" title="Sprachausgabe wird geprüft"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6h2.2L8 3.5v9L4.7 10H2.5z"/><path d="M11 6l3 4M14 6l-3 4"/></svg></button><button id="speechstop" class="iconbutton" disabled aria-label="Sprachausgabe stoppen" title="Sprachausgabe stoppen"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="4.5" width="7" height="7" rx="1" fill="currentColor" stroke="none"/></svg></button></span></div>
 <div id="usagepopup" hidden role="dialog" aria-label="Tokenanzeige erklären"><strong>KI · Tokenanzeige erklären</strong><button id="usageclose" aria-label="Schließen">×</button><p id="usagesnapshot"></p><div id="usageconsent"><p>Die angezeigten Statistiken und Modellinformationen werden an das konfigurierte KI-Hilfsmodell gesendet (mögliche Modellkosten). Keine Chatinhalte.</p><button id="usageallow">Erklären lassen</button></div><div id="usageexplanation" class="md"></div></div>
 </div>
 </div>

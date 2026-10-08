@@ -1224,7 +1224,8 @@ $("foldercancel").onclick = closeFolders;
 let speechEnabled = false;
 function updateSpeech(text) {
   speechEnabled = !!text && !text.includes("aus");
-  $("speech").textContent = speechEnabled ? "🔊" : "🔇";
+  $("speech").innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6h2.2L8 3.5v9L4.7 10H2.5z"/>' +
+    (speechEnabled ? '<path d="M10.5 6a2.8 2.8 0 0 1 0 4M12.3 4.2a5.4 5.4 0 0 1 0 7.6"/>' : '<path d="M11 6l3 4M14 6l-3 4"/>') + '</svg>';
   $("speech").title = speechEnabled ? "Sprachausgabe ausschalten" : "Sprachausgabe einschalten";
   $("speech").setAttribute("aria-pressed", String(speechEnabled));
 }
