@@ -12,6 +12,8 @@
 - Alle Texte sind deutsch; keine i18n
 
 ## Ideen
+- Natives Rust-Frontend: evaluiert, zurückgestellt; Messungen/Todos in
+  [TODO_RUST_FRONTEND.md](TODO_RUST_FRONTEND.md)
 - Automatisierte Tests: Rust-Unit-Tests für `read_info`/`delete_session`; Smoke-Test mit Mock-`pi`
 - Plattformbuilds über GitHub Actions (Linux, macOS, Windows), AppImage/.dmg/.msi
 - Suche in der Sessionliste
