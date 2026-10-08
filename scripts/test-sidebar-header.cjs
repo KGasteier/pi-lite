@@ -1,0 +1,13 @@
+const fs = require('node:fs'), assert = require('node:assert/strict');
+const html = fs.readFileSync('ui/index.html','utf8');
+const head = html.slice(html.indexOf('<div id="sidehead">'), html.indexOf('<div id="sessions">'));
+assert(head.indexOf('id="sideview"') < head.indexOf('id="sidetools"'));
+for (const id of ['sideview','sidetools','newsess','sessionsort','cacheclear','sidehint']) assert(head.includes(`id="${id}"`));
+assert(!head.includes('<h3>'));
+const group = html.slice(html.indexOf('<div id="workspacegroup"'),html.indexOf('<div class="picker" id="modelpicker"'));
+assert(group.includes('id="cwdpicker"')); assert(group.includes('id="workspaceeditor"'));
+assert(group.includes('aria-label="Workspace in VSCodium öffnen"'));
+assert(!group.includes('↗ Editor'));
+const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);
+assert.equal(new Set(ids).size,ids.length,'No duplicate element IDs');
+console.log('Sidebar/header structure: compact common toolbar and grouped icon editor passed; no live layout test.');

@@ -6,6 +6,11 @@ die Markierung, ohne die Session zu öffnen. Per Tab erreichbar, Enter/Leertaste
 aktivieren den Button; `aria-pressed` bildet den Zustand ab. Das Kontextmenü der
 Session bietet die gleiche Aktion.
 
+Die Kategorieauswahl bildet den gemeinsamen Seitenleistenkopf; darunter eine
+kompakte Aktionszeile mit Neuer Session, Sortierung und Cache-Löschen. Keine
+doppelte sichtbare Kategorieüberschrift. Skills/Extensions/Agents/Harnesses nutzen
+denselben Kopf mit kurzem Hinweis und Cache-Aktion, ohne Sessionfunktionen.
+
 Die kompakte Auswahl in der Sidebar-Überschrift sortiert nach **Zeit ↓** (neueste
 Änderung zuerst) oder **Bookmarks** (markierte zuerst, innerhalb beider Gruppen
 neueste zuerst). Keine Filterung: Nicht markierte Sessions bleiben sichtbar.

@@ -2,6 +2,13 @@
 
 ## Aktueller Stand
 
+Kopfbereiche aufgeräumt: Editor nur noch kleines 26px-Symbol, im gemeinsamen
+Workspace-Rahmen direkt am Picker. Sidebar: Kategorieauswahl statt doppeltem
+Titel, einheitliche kompakte Aktionszeile (Neu/Sortierung/Cache); gleicher Aufbau
+für Skills/Extensions/Agents/Harnesses. Inventarhinweis gekürzt, volle Erklärung
+im Tooltip. Strukturtest test-sidebar-header.cjs und bestehende Regressionstests,
+Rust/Release geprüft; installiert. Keine echte WebKit/Layout-Liveprüfung.
+
 Session-Bookmarks: dauerhaft sichtbares Umriss-/gefülltes Symbol unten rechts;
 Klick ohne Sessionöffnung, Kontextmenüaktion, lokaler persistenter Status.
 Kompakte Sortierung Zeit/Bookmarks in Überschrift, nur Sessions-Ansicht.

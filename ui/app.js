@@ -855,11 +855,14 @@ async function changeSideView() {
   $("inventory").hidden = view === "sessions";
   $("newsess").hidden = view !== "sessions";
   $("sessionsort").hidden = view !== "sessions";
+  $("sidehint").hidden = view === "sessions";
   $("sidetitle").textContent = $("sideview").selectedOptions[0].textContent;
   if (view === "sessions") return;
   const container = $("inventory"); container.replaceChildren();
   const info = document.createElement("small");
-  info.textContent = "Entdeckte Dateien, nicht zwingend geladen. Markdown per Klick bearbeiten. Keine vollständige Systemsuche.";
+  info.className = "inventoryhint";
+  info.textContent = "Entdeckt ≠ geladen · Markdown zum Bearbeiten öffnen";
+  info.title = "Entdeckte lokale Dateien, nicht zwingend geladen. Keine vollständige Systemsuche.";
   container.appendChild(info);
   try {
     const entries = await invoke("inventory", { cwd: $("cwd").value });

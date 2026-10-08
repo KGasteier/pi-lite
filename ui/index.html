@@ -12,10 +12,18 @@
   * { box-sizing:border-box; }
   #app { flex:1; display:flex; min-height:0; }
   #side { width:240px; flex:none; background:var(--panel); border-right:1px solid #3a4046; display:flex; flex-direction:column; }
-  #side h3 { margin:0; padding:10px 12px; font-size:13px; color:var(--dim); display:flex; justify-content:space-between; align-items:center; }
+  #sidehead { padding:10px 8px 8px; border-bottom:1px solid #3a4046; display:flex; flex-direction:column; gap:6px; }
+  #sidetitle { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+  #sidetools { display:flex; align-items:center; gap:5px; min-height:28px; }
+  #sidetools button, #sidetools select { height:28px; font-size:12px; border-radius:6px; }
+  #sidetools #newsess { padding:3px 9px; }
+  #sidetools #cacheclear { margin-left:auto; width:28px; padding:3px; color:var(--dim); }
+  #sidehint { font-size:11px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #sessions { flex:1; overflow:auto; padding:4px 8px; }
   #inventory { flex:1; overflow:auto; padding:8px; }
-  #sideview { margin:8px; max-width:none; border:1px solid var(--cat); }
+  #sideview { margin:0; max-width:none; width:100%; height:30px; font-size:13px; border:1px solid #3a4046; background:#38424d; }
+  #sideview:hover, #sideview:focus-visible, #sessionsort:hover, #sessionsort:focus-visible { border-color:var(--cat); background-color:#526781; }
+  .inventoryhint { display:block; font-size:11px; line-height:1.4; color:var(--dim); padding:2px 4px 5px; }
   .resource, .sess { border-radius:8px; background:color-mix(in srgb, var(--cat) 9%, #2b3137); border:1px solid color-mix(in srgb, var(--cat) 32%, transparent); }
   .resource:hover, .sess:hover { background:#38424d; background:color-mix(in srgb, var(--cat) 17%, #2b3137); }
   .resource { display:block; width:100%; text-align:left; margin:5px 0; padding:8px; color:var(--fg); }
@@ -50,7 +58,12 @@
   .picker .pickbtn:hover, .picker .pickbtn:focus-visible { background-color:#667b96; box-shadow:inset 0 0 0 1px var(--cat); }
   .picker .pickbtn[aria-expanded=true] { background-color:#526781; }
   .picker #thinkbutton { max-width:24vw; }
-  #cwdpicker { flex:1 1 160px; max-width:42vw; } #cwdpicker #cwdbutton { max-width:100%; width:100%; text-align:left; }
+  #workspacegroup { display:flex; align-items:center; gap:2px; flex:1 1 160px; max-width:42vw; min-width:0; padding:2px; border:1px solid #3a4046; border-radius:7px; background:var(--panel); }
+  #workspacegroup #cwdpicker { flex:1; min-width:0; }
+  #cwdpicker #cwdbutton { max-width:100%; width:100%; text-align:left; }
+  #workspaceeditor { flex:0 0 26px; width:26px; height:26px; padding:4px; display:flex; align-items:center; justify-content:center; background:transparent; color:var(--dim); }
+  #workspaceeditor:hover { color:var(--fg); background:#526781; }
+  #workspaceeditor svg { width:14px; height:14px; }
   .picklist { position:absolute; top:100%; left:0; z-index:70; width:min(560px,80vw); max-height:55vh; overflow-y:auto; background:var(--panel); border:1px solid var(--cat); border-radius:6px; padding:4px; }
   .picklist[hidden] { display:none; }
   .picklist [role=option] { padding:8px; cursor:pointer; overflow-wrap:anywhere; }
@@ -60,7 +73,8 @@
   #editlock[hidden] { display:none; }
   #editlock { margin-left:auto; order:3; font-size:16px; padding:2px 8px; }
   #editor textarea[readonly] { opacity:.8; }
-  #sessionsort { font-size:11px; padding:2px; min-width:0; max-width:92px; }
+  #sidetools #sessionsort { padding:3px 5px; min-width:0; max-width:99px; margin-left:auto; }
+  #sidetools #sessionsort:not([hidden]) ~ #cacheclear { margin-left:0; }
   .sess .bookmark { position:absolute; right:6px; bottom:5px; padding:3px; width:23px; height:23px; display:flex; align-items:center; justify-content:center; background:transparent; color:var(--dim); }
   .sess .bookmark[aria-pressed=true] { color:var(--cat); }
   .sess .bookmark svg { width:13px; height:16px; }
@@ -202,12 +216,20 @@
 <body data-cat="sessions">
 <div id="app">
 <aside id="side">
-  <h3><span id="sidetitle">Sessions</span> <select id="sessionsort" aria-label="Sessions sortieren" title="Sessions sortieren"><option value="time">Zeit ↓</option><option value="bookmarks">Bookmarks</option></select> <button id="cacheclear" title="Alle Vorschau-Caches und Archive löschen" aria-label="Vorschau-Cache löschen">⌫</button> <button id="newsess">+ Neu</button></h3>
+  <div id="sidehead">
+  <span id="sidetitle">Sessions</span>
   <select id="sideview" aria-label="Seitenleistenansicht">
     <option value="sessions">Sessions</option><option value="extensions">Extensions / Plugins</option>
     <option value="skills">Skills</option><option value="agents">pi · Agent- und Kontextdateien</option>
     <option value="harnesses">Andere Agent Harnesses</option>
   </select>
+  <div id="sidetools" role="group" aria-label="Seitenleistenaktionen">
+    <button id="newsess" title="Neue Session (Alt+N)">+ Neu</button>
+    <span id="sidehint" hidden>Lokale Einträge</span>
+    <select id="sessionsort" aria-label="Sessions sortieren" title="Sessions sortieren"><option value="time">Zeit ↓</option><option value="bookmarks">Bookmarks</option></select>
+    <button id="cacheclear" title="Alle Vorschau-Caches und Archive löschen" aria-label="Vorschau-Cache löschen">⌫</button>
+  </div>
+  </div>
   <div id="sessions"></div>
   <div id="inventory" hidden></div>
 </aside>
@@ -215,8 +237,10 @@
 <header>
   <button id="toggle" title="Seitenleiste ein-/ausblenden" aria-label="Seitenleiste">☰</button>
   <input id="cwd" type="hidden" aria-label="Arbeitsordner">
+  <div id="workspacegroup" role="group" aria-label="Workspace und Editor">
   <div class="picker" id="cwdpicker"><button class="pickbtn" id="cwdbutton" aria-haspopup="listbox" aria-expanded="false" title="Arbeitsordner wählen">Workspace:</button><div class="picklist" id="cwdlist" role="listbox" aria-label="Workspaces" tabindex="0" hidden></div><select id="cwdoptions" hidden aria-hidden="true" tabindex="-1"><option value="">Workspace:</option></select></div>
-  <button id="workspaceeditor" title="Ausgewählten Workspace in VSCodium öffnen">↗ Editor</button>
+  <button id="workspaceeditor" title="Workspace in VSCodium öffnen" aria-label="Workspace in VSCodium öffnen"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 2h5v5M14 2L7 9M6 3H2v11h11v-4"/></svg></button>
+  </div>
   <div class="picker" id="modelpicker"><button class="pickbtn" id="modelbutton" aria-haspopup="listbox" aria-expanded="false" title="Modell auswählen">Modell …</button><div class="picklist" id="modellist" role="listbox" aria-label="Modelle" tabindex="0" hidden></div><select id="model" hidden aria-hidden="true" tabindex="-1"></select></div>
   <div class="picker" id="thinkpicker"><button class="pickbtn" id="thinkbutton" aria-haspopup="listbox" aria-expanded="false" title="Thinking-Level wählen">Denken</button><div class="picklist" id="thinklist" role="listbox" aria-label="Thinking-Level" tabindex="0" hidden></div><select id="think" hidden aria-hidden="true" tabindex="-1"></select></div>
   <button id="fork" title="Ab einer früheren Nachricht abzweigen">⑂ Fork</button>
