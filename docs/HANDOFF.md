@@ -2,6 +2,14 @@
 
 ## Aktueller Stand
 
+Material erster Ausbau: + mit Portal-Mehrfachauswahl/URL-Liste, entfernbare Chips,
+explizites Senden, automatische Bildübergabe und begrenzte lokale PDF-Extraktion.
+Details: nur Verweise / manuelles Modell; Bildfallback gleicher Anbieter mit
+Bestätigung. Keine automatische Audio/Video-Verarbeitung oder parallelen Jobs;
+keine Lokal-only-Garantie/Kostenlimits. Vollständiger Stand: MATERIAL.md.
+Rust-Materialtests, Syntax/bestehende Regressionstests und Release geprüft;
+neu installiert. Native Dateiauswahl/echte Provideranalyse/WebKit bleiben offen.
+
 Slash-Korrektur nach Nutzerscreenshots: /model als lokale Modellauswahl ergänzt;
 /mo und /model filtern nur Befehlsnamen-Präfixe statt Beschreibungen (keine falschen
 /llama-Treffer). Skills auch ohne skill:-Präfix suchbar. Alphabetische Sortierung.

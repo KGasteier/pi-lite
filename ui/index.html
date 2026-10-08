@@ -170,6 +170,12 @@
   #keyhelp { position:fixed; inset:10vh 10vw; z-index:80; background:var(--panel); border:1px solid var(--acc); padding:20px; overflow:auto; border-radius:10px; box-shadow:0 0 0 100vmax #000a; }
   #keyhelp[hidden] { display:none; }
   #log:focus-visible { outline-offset:-3px; }
+  #materialbar { background:var(--panel); padding:0 12px; }
+  #materialchips { display:flex; flex-wrap:wrap; gap:5px; }
+  #materialchips button { font-size:12px; padding:4px 7px; }
+  #materialdetails { padding:6px 0; font-size:12px; }
+  #materialmodel { max-width:400px; }
+  #materialstatus { color:var(--dim); font-size:12px; }
   footer { position:relative; display:flex; align-items:stretch; gap:8px; padding:10px 12px; background:var(--panel); border-top:1px solid #3a4046; }
   .chataction { display:block; font-size:11px; padding:3px 7px; margin:5px 0; }
   .copyanswer { margin-left:auto; }
@@ -219,7 +225,14 @@
 </header>
 <div id="log" tabindex="0" role="region" aria-label="Chatverlauf"></div>
 <div id="widgets-above"></div>
+<div id="materialbar"><div id="materialchips"></div><div id="materialstatus" role="status"></div>
+<details id="materialdetails"><summary>Material · Details / manuelle Auswahl</summary>
+<label>Verarbeitung <select id="materialmode"><option value="auto">Automatisch: Bilder senden, PDF-Text lokal extrahieren</option><option value="references">Nur Dateiverweise / URLs (keine Vorverarbeitung)</option></select></label>
+<label>Modell <select id="materialmodel"><option value="">Aktuelles Modell beibehalten</option></select></label>
+<p>Auswahl lädt nichts hoch. Erst Senden übergibt Material an den Agenten/Provider. URLs werden hier nicht abgerufen. Audio/Video: noch kein Analysedienst eingerichtet. Dateiverweise sind keine Lokal-only-Garantie.</p>
+</details></div>
 <footer>
+  <button id="materialadd" title="Material hinzufügen" aria-label="Material hinzufügen">+</button>
   <div id="slashpopup" hidden><div id="slashlist" role="listbox" aria-label="pi-Befehle"></div><div id="slashhint">Tippen filtert Namen · ↑↓ / Hover wählen · Klick/Enter ausführen · Tab vervollständigen · Esc schließen</div></div>
   <textarea id="prompt" role="combobox" aria-autocomplete="list" aria-controls="slashlist" aria-expanded="false" placeholder="Nachricht oder /Befehl … (Enter = senden, Option/Alt+Enter = Zeilenumbruch)"></textarea>
   <div id="historycontrols" aria-label="Eingabe-History"><button id="historyolder" title="Ältere Eingabe (Alt+↑)" aria-label="Ältere Eingabe">↑</button><button id="historynewer" title="Neuere Eingabe (Alt+↓)" aria-label="Neuere Eingabe">↓</button></div>

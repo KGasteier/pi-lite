@@ -36,6 +36,9 @@ Markdown copying, prompt recall, token statistics and optional AI explanations.
 hover/arrows to select, Tab to complete, Enter/click to execute directly.
 VSCodium integration opens workspaces and referenced files with explicit clicks,
 without a second agent (see [editor integration](docs/EDITOR_INTEGRATION.md), German).
+[Material attachments](docs/MATERIAL.md) (German): files/URLs for the next prompt,
+image input, bounded local PDF text extraction and manual processing/model choice.
+Automatic audio/video analysis and parallel specialist jobs are not implemented.
 
 Optional explanations require `PI_LITE_HELP_PROVIDER` and `PI_LITE_HELP_MODEL` in
 the app environment, matching your existing pi model configuration. No provider

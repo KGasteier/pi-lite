@@ -46,6 +46,9 @@ Tastaturhilfe (F1); [Slash-Befehlsauswahl im Eingabefeld](docs/SLASH_COMMANDS.md
 Tokenanzeige und optionale KI-Erklärungen. VSCodium-Anbindung:
 Workspace und referenzierte Dateien per Klick im externen Editor öffnen, ohne
 zweiten Agenten (siehe [Editor-Anbindung](docs/EDITOR_INTEGRATION.md)).
+[Material hinzufügen](docs/MATERIAL.md): Dateien/URLs für die nächste Anfrage,
+Bildübergabe, lokaler PDF-Auszug und manuelle Verarbeitung-/Modellauswahl.
+Audio-/Video-Automatik und parallele Spezialjobs sind noch nicht implementiert.
 
 ## Optionale KI-Hilfe
 
