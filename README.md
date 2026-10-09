@@ -46,8 +46,9 @@ Tastaturhilfe (F1); [Slash-Befehlsauswahl im Eingabefeld](docs/SLASH_COMMANDS.md
 Tokenanzeige und optionale KI-Erklärungen. VSCodium-Anbindung:
 Workspace und referenzierte Dateien per Klick im externen Editor öffnen, ohne
 zweiten Agenten (siehe [Editor-Anbindung](docs/EDITOR_INTEGRATION.md)).
-[Session-Bookmarks](docs/SESSION_BOOKMARKS.md): kleine persistente Markierungen
-und kompakte Sortierung nach Zeit oder Bookmarks in der Seitenleiste.
+[Session-Bookmarks](docs/SESSION_BOOKMARKS.md): kleine persistente Markierungen,
+Sortierung nach Zeit oder Bookmarks und Filter „nur Bookmarks“ in der Seitenleiste.
+Arbeitsanzeige oben rechts mit animierter Pixel-Schlange vor „arbeitet …“.
 [Material hinzufügen](docs/MATERIAL.md): Dateien/URLs für die nächste Anfrage,
 Bildübergabe, lokaler PDF-Auszug und manuelle Verarbeitung-/Modellauswahl.
 [Audio-/Videoanalyse](docs/MEDIA_ANALYSIS.md): isolierter OpenRouter-Aufruf über
@@ -72,7 +73,7 @@ Launcher lädt diese Datei, wenn vorhanden.
 Ohne Konfiguration bleibt der Chat nutzbar; KI-Hilfe zeigt einen erklärenden Fehler.
 Daten werden nur nach Zustimmung übertragen. Datei-Erklärungen können Auszüge
 und Pfade enthalten; lokale Cache-Dateien enthalten möglicherweise vertrauliche
-Texte. Cache-Löschung über die Seitenleiste. Keine Credentials im Repo ablegen.
+Texte. Cache-Löschung über den Textlink unten in der Vorschau. Keine Credentials im Repo ablegen.
 
 ## Optionale Sprache
 

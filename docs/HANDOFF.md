@@ -10,6 +10,9 @@ Textlink in der Vorschau; alle nativen Selects flach wie Header-Picker
 Overlay (#logwrap::after), Scrolltext überlagert ihn nicht mehr. Hilfsmodell lokal
 auf udk cc/claude-haiku-5-5 (env.sh, nicht im Git). Strukturtests + Headless-
 Chromium-Screenshot mit Stub; echte WebKit-Optik nicht live geprüft.
+Veröffentlicht auf origin/main (inkl. Rust-Frontend-Evaluierung
+docs/TODO_RUST_FRONTEND.md). Offen: WebKit-Livefeedback zu diesen Punkten, Material/
+Medien live mit Provider, Medienrouten-Einrichtung (OpenRouter-IDs unverifiziert).
 
 Eingabebereich: links SVG-Spalte Material/History ↑/↓, rechts Editor/Senden/
 Abbrechen in gleicher Dreierteilung. Vorlesen/Stopp unten rechts als SVG statt

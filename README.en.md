@@ -37,7 +37,8 @@ hover/arrows to select, Tab to complete, Enter/click to execute directly.
 VSCodium integration opens workspaces and referenced files with explicit clicks,
 without a second agent (see [editor integration](docs/EDITOR_INTEGRATION.md), German).
 [Session bookmarks](docs/SESSION_BOOKMARKS.md) (German): persistent small bookmark
-buttons and compact time/bookmark sorting in the sidebar.
+buttons, time/bookmark sorting and a bookmarks-only filter in the sidebar.
+A small animated pixel snake precedes the busy status in the header.
 [Material attachments](docs/MATERIAL.md) (German): files/URLs for the next prompt,
 image input, bounded local PDF text extraction and manual processing/model choice.
 [Audio/video analysis](docs/MEDIA_ANALYSIS.md): isolated OpenRouter call through
@@ -45,9 +46,10 @@ explicitly verified routes with confirmation; keeps the main model unchanged.
 Requires configuration; parallel specialist jobs and fixed cost budgets remain unimplemented.
 
 Optional explanations require `PI_LITE_HELP_PROVIDER` and `PI_LITE_HELP_MODEL` in
-the app environment, matching your existing pi model configuration. No provider
+the app environment, matching your existing pi model configuration (the newest available Haiku
+version is recommended). No provider
 or credentials are bundled. Transmission requires confirmation. File previews
-may include confidential excerpts and paths; local caches can be deleted in-app.
+may include confidential excerpts and paths; local caches can be deleted via the link at the bottom of a preview.
 
 Optional speech reuses an existing compatible Linux Piper `vorlesen` pi extension.
 The installer backs it up before adapting it for pi-lite RPC. No TTS packages or

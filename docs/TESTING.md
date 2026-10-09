@@ -1,7 +1,20 @@
 # Tests
 
-Es gibt **keine automatisierten Tests**. Alles wurde von Hand gegen ein echtes `pi` geprüft
-(echte Sessions in `~/.pi/agent/sessions`, echte Modellaufrufe).
+Automatisierte Struktur-/Logiktests (ohne echtes WebKit, ohne Netzwerk):
+
+```bash
+node --check ui/app.js
+for t in scripts/test-*.cjs; do node "$t"; done
+python3 scripts/test-media.py
+(cd src-tauri && cargo test --locked)
+```
+
+Sie prüfen DOM-Struktur, CSS-Regeln, Hilfslogik und Rust-Funktionen, **nicht** die
+reale Bedienung/Optik im WebKit-Fenster. Optionaler Optik-Vorabcheck: `ui/` nach
+`/tmp` kopieren, `window.__TAURI__` per Stub-Skript ersetzen und mit
+`chromium --headless=new --screenshot=… file:///…/index.html` rendern (Chromium ≠
+WebKitGTK; ersetzt keinen Livetest). Die übrigen Ergebnisse unten wurden von Hand
+gegen ein echtes `pi` geprüft.
 
 ## Testaufbau (Hyprland/Wayland)
 
@@ -37,3 +50,5 @@ Es gibt **keine automatisierten Tests**. Alles wurde von Hand gegen ein echtes `
 | Lange Sessions, Bilder, Retries, pi-Absturz | ungetestet |
 | `confirm` durch eine Extension (statt durch die App) | ungetestet |
 | Launcher (`gtk-launch pi-lite`) | getestet, Prozess endet sauber |
+| Pixel-Schlange, Bookmark-Filter, SVG-Session-Aktionen, flache Selects, Fokus-Overlay des Chatverlaufs (2026-10-09) | Strukturtests + Headless-Chromium-Screenshot; **WebKit live offen** |
+| Material (Bilder/PDF), Medienanalyse, nativer Dateidialog | Strukturtests/Rust-Tests; **live mit Provider ungetestet** |
