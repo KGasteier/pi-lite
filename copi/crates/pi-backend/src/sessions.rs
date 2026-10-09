@@ -1,5 +1,5 @@
 //! Sessiondateien von pi auflisten und löschen.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
@@ -46,14 +46,15 @@ pub fn read_info(path: &Path, modified: u64) -> Option<SessionInfo> {
     Some(SessionInfo { path: path.to_string_lossy().into(), cwd, title, name, modified })
 }
 
-/// Cache nach Pfad; neu gelesen wird nur bei geänderter mtime.
+/// Cache mit präziser Änderungszeit und Dateigröße (mehrere Änderungen pro Sekunde).
 #[derive(Default)]
-pub struct InfoCache(HashMap<String, SessionInfo>);
+pub struct InfoCache(HashMap<String, (SessionInfo, std::time::SystemTime, u64)>);
 
 impl InfoCache {
     /// Neueste 200 Sessions, absteigend nach Änderungszeit.
     pub fn list(&mut self) -> Vec<SessionInfo> {
         let mut out = Vec::new();
+        let mut seen = HashSet::new();
         let Some(root) = sessions_root() else { return out };
         let Ok(dirs) = std::fs::read_dir(root) else { return out };
         for d in dirs.flatten() {
@@ -63,24 +64,21 @@ impl InfoCache {
                 if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                     continue;
                 }
-                let Some(modified) = p
-                    .metadata()
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                else {
-                    continue;
-                };
+                let Ok(meta) = p.metadata() else { continue };
+                let Ok(stamp) = meta.modified() else { continue };
+                let Ok(age) = stamp.duration_since(std::time::UNIX_EPOCH) else { continue };
+                let modified = age.as_secs();
                 let key = p.to_string_lossy().to_string();
-                if let Some(i) = self.0.get(&key).filter(|i| i.modified == modified) {
+                seen.insert(key.clone());
+                if let Some((i, _, _)) = self.0.get(&key).filter(|(_, t, len)| *t == stamp && *len == meta.len()) {
                     out.push(i.clone());
                 } else if let Some(i) = read_info(&p, modified) {
-                    self.0.insert(key, i.clone());
+                    self.0.insert(key, (i.clone(), stamp, meta.len()));
                     out.push(i);
                 }
             }
         }
+        self.0.retain(|key, _| seen.contains(key));
         out.sort_by(|a, b| b.modified.cmp(&a.modified));
         out.truncate(200);
         out

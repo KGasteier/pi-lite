@@ -6,6 +6,8 @@ mod icons;
 mod store;
 mod theme;
 mod view;
+#[cfg(test)]
+mod tests;
 
 use std::sync::Arc;
 
@@ -25,8 +27,9 @@ fn load_font(defs: &mut FontDefinitions, name: &str, path: &str) -> bool {
 pub fn setup_ctx(ctx: &egui::Context) {
     let mut defs = FontDefinitions::default();
     let base = "/usr/share/fonts";
-    let sans = load_font(&mut defs, "sans", &format!("{base}/liberation/LiberationSans-Regular.ttf"));
-    let bold = load_font(&mut defs, "sans-bold", &format!("{base}/liberation/LiberationSans-Bold.ttf"));
+    defs.font_data.insert("sans".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Figtree-Regular.ttf"))));
+    defs.font_data.insert("sans-bold".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Figtree-Bold.ttf"))));
+    let (sans, bold) = (true, true);
     let mono = load_font(&mut defs, "mono", &format!("{base}/Adwaita/AdwaitaMono-Regular.ttf"));
     let sym = load_font(&mut defs, "sym2", &format!("{base}/noto/NotoSansSymbols2-Regular.ttf"));
     let sym1 = load_font(&mut defs, "sym1", &format!("{base}/noto/NotoSansSymbols-Regular.ttf"));

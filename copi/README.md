@@ -27,12 +27,17 @@ COPI_SCENE=slash ./target/release/copi --shot /tmp/c.png   # slash|picker|dialog
 ## Stand (Stufe 1 + 2)
 
 Vorhanden:
+- Eingebettete Figtree-Schrift (SIL OFL); proportionale UI-Größen und umbrechende Kopfzeile am Original orientiert
 - RPC mit pi, Streaming-Markdown, Thinking-, Tool- und Shell-Blöcke, Abbrechen
 - Sessions-Seitenleiste (Sortierung, Bookmarks, Umbenennen, Löschen, Kontextmenü)
 - Kopfzeile: Workspace, VSCodium, Modell, Denkstufe, Fork, Schriftgröße
 - Slash-Liste mit lokalen Befehlen, History, `!cmd`/`!!cmd`, `pi <sub>`, Fork/Clone
 - Extension-Dialoge (select/confirm/input/editor), Statuszeilen, Widgets, Toasts
 - Tokenzeile, Vorlesen-Umschalter, großer Eingabe-Editor, Tastenhilfe (F1)
+
+## Codeprüfung
+
+Korrekturen, verbleibende Optimierungen und Grenzen der Tests: [REVIEW.md](REVIEW.md).
 
 ## Paritäts-Checkliste (Stufe 3)
 

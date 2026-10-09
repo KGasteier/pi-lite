@@ -126,10 +126,14 @@ impl App {
                 .show(ui, |ui| self.sidebar(ui));
         }
         egui::Panel::top("head")
-            .exact_size(46.0)
+            .resizable(false)
             .show_separator_line(false)
             .frame(Frame::new().fill(PANEL).inner_margin(Margin::symmetric(12, 8)))
-            .show(ui, |ui| self.header(ui));
+            .show(ui, |ui| {
+                let r = ui.max_rect();
+                ui.painter().hline(r.x_range(), r.bottom() + 7.0, Stroke::new(1.0, BORDER));
+                self.header(ui);
+            });
         egui::Panel::bottom("usage")
             .exact_size(30.0)
             .show_separator_line(false)
@@ -225,8 +229,12 @@ impl App {
                     }
                 }
                 DialogKind::Confirm => {
+                    if plain(ctx, Key::ArrowLeft) || plain(ctx, Key::ArrowRight) || plain(ctx, Key::ArrowUp) || plain(ctx, Key::ArrowDown) {
+                        d.cursor = 1 - d.cursor.min(1);
+                    }
                     if plain(ctx, Key::Enter) {
-                        self.close_dialog(Some(json!({"confirmed": true})));
+                        let confirmed = d.cursor == 0;
+                        self.close_dialog(Some(json!({"confirmed": confirmed})));
                     }
                 }
                 DialogKind::Input => {
@@ -353,7 +361,7 @@ impl App {
         } else if k(ctx, Key::Num1, true, false, false) {
             self.focus_prompt = true;
         } else if k(ctx, Key::Num2, true, false, false) || k(ctx, Key::B, false, true, false) {
-            self.store.side_visible = true;
+            self.store.side_visible = !self.store.side_visible;
             self.save_store();
         } else if k(ctx, Key::N, true, false, false) {
             self.new_session();
@@ -403,6 +411,10 @@ impl App {
                 self.pick_button(ui, PickerKind::Sort, label, 104.0, "Sortierung");
             });
         });
+        ui.add_space(4.0);
+        let sep = ui.available_rect_before_wrap();
+        ui.painter().hline(sep.x_range(), sep.top(), Stroke::new(1.0, BORDER));
+        ui.add_space(4.0);
         let list = self.visible_sessions();
         let active = self.session_file();
         ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -486,7 +498,7 @@ impl App {
         let mut job = LayoutJob::simple_singleline(label.to_string(), FontId::proportional(13.0), FG);
         job.wrap = TextWrapping::truncate_at_width((max_w - 34.0).max(20.0));
         let galley = ui.painter().layout_job(job);
-        let size = vec2(galley.size().x + 34.0, 28.0);
+        let size = vec2(if matches!(kind, PickerKind::SideView | PickerKind::Workspace) { max_w } else { (galley.size().x + 34.0).min(max_w) }, if kind == PickerKind::SideView { 30.0 } else { 28.0 });
         let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
         let open = self.picker.as_ref().is_some_and(|p| p.kind == kind);
         let bg = if open {
@@ -511,18 +523,22 @@ impl App {
 
     fn header(&mut self, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.x = 8.0;
-        ui.horizontal_centered(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.set_min_height(30.0);
             if btn(ui, "☰", 14.0, vec2(9.0, 4.0), vec2(30.0, 28.0), false, true).on_hover_text("Seitenleiste ein-/ausblenden").clicked() {
                 self.store.side_visible = !self.store.side_visible;
                 self.save_store();
             }
-            let full = ui.available_width();
             let ws = format!("Workspace: {}", if self.cwd.is_empty() { "—".into() } else { pi_backend::tilde(&self.cwd) });
-            self.pick_button(ui, PickerKind::Workspace, &ws, (full * 0.42).max(120.0), "Arbeitsordner wählen");
-            let st = IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 15.0, radius: 6 };
-            if icons::icon_button(ui, vec2(28.0, 28.0), true, st, "Workspace in VSCodium öffnen", icons::external).clicked() {
-                self.open_editor(None);
-            }
+            let w = (ui.available_width() - 32.0) * 0.30;
+            Frame::new().stroke(Stroke::new(1.0, BORDER)).corner_radius(7).inner_margin(Margin::same(2)).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                self.pick_button(ui, PickerKind::Workspace, &ws, w.max(100.0), "Arbeitsordner wählen");
+                let st = IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 14.0, radius: 5 };
+                if icons::icon_button(ui, vec2(26.0, 26.0), true, st, "Workspace in VSCodium öffnen", icons::external).clicked() {
+                    self.open_editor(None);
+                }
+            });
             let ml = self.model_label();
             self.pick_button(ui, PickerKind::Model, &ml, 260.0, "Modell wählen (Alt+M)");
             let tl = self.thinking_level();
@@ -963,10 +979,10 @@ impl App {
                     }
                     DialogKind::Confirm => {
                         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                            if btn(ui, "Ja", 13.0, vec2(14.0, 6.0), vec2(64.0, 0.0), true, true).clicked() {
+                            if btn(ui, "Ja", 13.0, vec2(14.0, 6.0), vec2(64.0, 0.0), d.cursor == 0, true).clicked() {
                                 answer = Some(json!({"confirmed": true}));
                             }
-                            if btn(ui, "Nein", 13.0, vec2(14.0, 6.0), vec2(64.0, 0.0), false, true).clicked() {
+                            if btn(ui, "Nein", 13.0, vec2(14.0, 6.0), vec2(64.0, 0.0), d.cursor == 1, true).clicked() {
                                 answer = Some(json!({"confirmed": false}));
                             }
                         });
@@ -1003,9 +1019,8 @@ impl App {
                     }
                 }
             });
-        if answer.is_none() && modal.backdrop_response.clicked() {
-            answer = Some(json!({"cancelled": true}));
-        }
+        // Hintergrundklick ist absichtlich kein Abbruch (versehentliche Datenverluste vermeiden).
+        let _ = modal;
         if let Some(a) = answer {
             self.close_dialog(Some(a));
         }

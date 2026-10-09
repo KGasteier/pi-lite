@@ -795,11 +795,10 @@ impl App {
         let Some(d) = self.dialogs.pop_front() else { return };
         match d.origin {
             Origin::Ext(id) => {
-                if let Some(mut r) = resp {
-                    r["type"] = json!("extension_ui_response");
-                    r["id"] = json!(id);
-                    self.send(r);
-                }
+                let mut r = resp.unwrap_or_else(|| json!({"cancelled": true}));
+                r["type"] = json!("extension_ui_response");
+                r["id"] = json!(id);
+                self.send(r);
             }
             Origin::Local(f) => f(self, resp.filter(|r| r["cancelled"] != true)),
         }
@@ -830,6 +829,10 @@ impl App {
     // ---------- Start, Zustand, Modelle ----------
 
     pub fn start(&mut self, session: Option<String>, then: Cont) {
+        if matches!(self.active_job, Some(Job::Cli(_))) {
+            self.toast("Bitte den laufenden pi-Befehl erst beenden oder abbrechen.", ToastKind::Warn);
+            return;
+        }
         self.start_seq += 1;
         self.commands = local_commands();
         self.remote_commands.clear();
@@ -1287,6 +1290,10 @@ impl App {
             return;
         }
         let parsed = parse_input(&t);
+        if matches!(parsed, Parsed::Prompt) && self.active_job.is_some() {
+            self.toast("Es läuft bereits ein pi-Befehl oder eine Shell-Eingabe.", ToastKind::Warn);
+            return;
+        }
         self.history.add(&t);
         self.prompt.clear();
         self.slash_dismissed = None;

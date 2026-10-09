@@ -71,9 +71,19 @@ impl Cli {
     }
 
     pub fn cancel(&self) {
-        if let Some(child) = self.child.lock().unwrap().as_mut() {
-            let _ = Command::new("kill").args(["-TERM", "--", &format!("-{}", child.id())]).status();
-            let _ = child.kill();
+        let pid = self.child.lock().unwrap().as_ref().map(Child::id);
+        if let Some(pid) = pid {
+            let _ = Command::new("kill").args(["-TERM", "--", &format!("-{pid}")]).status();
+            let me = self.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                let mut slot = me.child.lock().unwrap();
+                if let Some(child) = slot.as_mut().filter(|c| c.id() == pid) {
+                    // Prozessgruppe treffen: auch Nachkommen können stdout offen halten.
+                    let _ = Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]).status();
+                    let _ = child.kill();
+                }
+            });
         }
     }
 }

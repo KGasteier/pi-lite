@@ -90,10 +90,15 @@ impl Pi {
         self.inner.stdin.lock().unwrap().is_some()
     }
 
-    /// Beendet den Prozess (stdin schließen, dann kill + wait).
+    /// stdin schließen; kurze Schonfrist, danach sicher beenden und aufräumen.
+    /// Vor einem Neustart muss der alte Prozess tatsächlich beendet sein.
     pub fn stop(&self) {
         self.inner.stdin.lock().unwrap().take();
         if let Some(mut c) = self.inner.child.lock().unwrap().take() {
+            for _ in 0..10 {
+                if matches!(c.try_wait(), Ok(Some(_))) { return; }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
             let _ = c.kill();
             let _ = c.wait();
         }
