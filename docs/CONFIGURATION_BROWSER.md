@@ -44,7 +44,7 @@ atomarer Dateilock. Es gibt derzeit keine automatische Sicherung vor dem Speiche
 
 ## Prompt-Editor
 
-„Editor“ rechts neben der Eingabe öffnet den bisherigen Prompt im großen Editor, ohne Schloss
+Das kleine Pfeilsymbol oben rechts im Eingabefeld öffnet den bisherigen Prompt im großen Editor, ohne Schloss
 und sofort bearbeitbar. Speichern/Strg+S übernimmt den gesamten Text zurück ins
 Eingabefeld, ohne ihn zu senden. Erst Senden/Enter im Eingabefeld führt ihn aus.
 Schließen/Esc fragt bei ungespeicherten Änderungen nach.

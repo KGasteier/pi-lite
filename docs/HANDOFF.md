@@ -2,6 +2,10 @@
 
 ## Aktueller Stand
 
+Eingabe: Editor-Öffner als kleines Pfeilsymbol oben rechts im Eingabefeld
+(#promptbox, wie Workspace-Editor-Symbol); Senden/Abbrechen 96px breit, Senden
+größer (3fr/2fr). Struktur-Test + Chromium-Screenshot; WebKit live offen.
+
 UI-Feinschliff 2026-10-09: Pixel-Schlange (8 Pixel, 2×4, CSS) vor dem Status
 „arbeitet …“ oben rechts; Bookmark-Filter-Toggle in der Seitenleiste; Session-
 Löschen/Umbenennen als dezente SVG-Symbole neben dem Bookmark; Cache-Löschen als

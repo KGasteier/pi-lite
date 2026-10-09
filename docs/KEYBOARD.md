@@ -60,7 +60,8 @@ sind noch nicht live unter WebKit oder auf macOS/Windows geprüft.
 ↑/↓ im fokussierten Eingabefeld rufen wieder History auf, wenn der Cursor in der
  ersten/letzten Textzeile steht und keine Auswahl aktiv ist. Innerhalb mehrzeiliger
  Texte bewegen sie den Cursor. Alt+↑/↓ und die Pfeilknöpfe bleiben verfügbar.
-Tab-Reihenfolge: Material → History ↑/↓ → Eingabe → Editor → Senden → Abbrechen.
+Tab-Reihenfolge: Material → History ↑/↓ → Eingabe → Editor-Symbol (Ecke der
+Eingabe) → Senden → Abbrechen.
 
 An der letzten eigenen Chatnachricht steht „Anfrage wiederholen“. Er sendet exakt
  deren Text erneut (keine Bilder/Anhänge), ohne den aktuellen Eingabeentwurf zu

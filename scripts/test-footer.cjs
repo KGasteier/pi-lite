@@ -14,7 +14,10 @@ assert.equal(status.textContent,'Other extension'); assert.equal(status.style.di
 assert.equal(statuses.get('vorlesen'),'🔊 vorlesen');
 const html = fs.readFileSync('ui/index.html','utf8');
 const controls = html.match(/<div id="sendcontrols">(.*?)<\/div>/s)[1];
-for (const id of ['promptexpand','send','abort']) assert(controls.includes(`id="${id}"`));
+for (const id of ['send','abort']) assert(controls.includes(`id="${id}"`)); assert(!controls.includes('promptexpand'));
+const box = html.match(/<div id="promptbox">(.*?)<\/div>/s)[1];
+assert(box.indexOf('id="prompt"') < box.indexOf('id="promptexpand"') && box.includes('<svg') && !box.includes('Editor</button>'));
+assert(html.includes('#promptexpand { position:absolute; top:4px; right:4px;') && html.includes('grid-template-rows:3fr 2fr'));
 const tools = html.match(/<div id="inputtools"[^>]*>(.*?)<\/div>/s)[1];
 for (const id of ['materialadd','historyolder','historynewer']) assert(tools.includes(`id="${id}"`) && tools.includes('<svg'));
 assert(html.includes('#inputtools { order:1; display:grid; flex:0 0 32px; grid-template-rows:repeat(3,1fr); gap:4px; }'));
@@ -22,4 +25,4 @@ const speech = html.match(/<span id="speechcontrols">(.*?)<\/span>/s)[1];
 assert(speech.includes('<svg')); assert(!/[🔊🔇■]/u.test(speech));
 assert(app.includes('speechEnabled ? \'<path d="M10.5'));
 assert(html.includes('grid-template-rows:repeat(3,1fr); gap:4px;'));
-console.log('Footer: speech status hidden, other statuses preserved; three tool and three action buttons in matching columns; SVG speech icons');
+console.log('Footer: speech status hidden, other statuses preserved; three tool buttons, corner editor icon in prompt, larger Send/Abort column; SVG speech icons');

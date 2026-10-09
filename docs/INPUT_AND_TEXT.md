@@ -35,8 +35,10 @@ Die tatsächliche Pfeilbedienung in WebKit und die Größenknöpfe sind noch nic
  ersten/letzten Textzeile steht und keine Auswahl aktiv ist. Innerhalb mehrzeiliger
  Texte bewegen sie den Cursor. Alt+↑/↓ und die Pfeilknöpfe bleiben verfügbar.
 Links neben der Eingabe stehen drei gleich große SVG-Werkzeugknöpfe: Material +,
-ältere und neuere History. Rechts entsprechen ihnen Editor, Senden, Abbrechen in
-gleicher Dreierteilung. Tab-Reihenfolge: Material → History ↑/↓ → Eingabe → rechts.
+ältere und neuere History. Oben rechts im Eingabefeld öffnet ein kleines
+Pfeilsymbol den großen Editor. Rechts: großes Senden (3/5 Höhe) über Abbrechen
+(2/5). Tab-Reihenfolge: Material → History ↑/↓ → Eingabe → Editor-Symbol → Senden
+→ Abbrechen.
 
 An der letzten eigenen Chatnachricht steht „Anfrage wiederholen“. Er sendet exakt
  deren Text erneut (keine Bilder/Anhänge), ohne den aktuellen Eingabeentwurf zu
