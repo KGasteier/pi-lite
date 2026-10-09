@@ -2,6 +2,15 @@
 
 ## Aktueller Stand
 
+UI-Feinschliff 2026-10-09: Pixel-Schlange (8 Pixel, 2×4, CSS) vor dem Status
+„arbeitet …“ oben rechts; Bookmark-Filter-Toggle in der Seitenleiste; Session-
+Löschen/Umbenennen als dezente SVG-Symbole neben dem Bookmark; Cache-Löschen als
+Textlink in der Vorschau; alle nativen Selects flach wie Header-Picker
+(appearance:none); Material-Details kompakter; Fokusrahmen des Chatverlaufs als
+Overlay (#logwrap::after), Scrolltext überlagert ihn nicht mehr. Hilfsmodell lokal
+auf udk cc/claude-haiku-5-5 (env.sh, nicht im Git). Strukturtests + Headless-
+Chromium-Screenshot mit Stub; echte WebKit-Optik nicht live geprüft.
+
 Eingabebereich: links SVG-Spalte Material/History ↑/↓, rechts Editor/Senden/
 Abbrechen in gleicher Dreierteilung. Vorlesen/Stopp unten rechts als SVG statt
 Emoji. Footer-Strukturtest, alle JS-Tests, Rust/Release; installiert. WebKit-Optik

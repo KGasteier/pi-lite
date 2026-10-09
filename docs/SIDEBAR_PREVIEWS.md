@@ -34,7 +34,8 @@ im Schlüssel. Erneuter Klick verwendet ihn, sofern die Quelle unverändert ist.
 Beim normalen Hover bleibt der lokale Auszug der Standard. settings.json erhält
 weiterhin nur die generische Kurzinfo, wird nicht an das Modell geschickt.
 
-Das kleine ⌫ in der Seitenleisten-Kopfzeile löscht nach Rückfrage den gesamten
+Der dezente Textlink „Gespeicherte Kurzinfos löschen …“ unten in jeder Vorschau
+(selten benötigt, daher nicht mehr in der Seitenleisten-Kopfzeile) löscht nach Rückfrage den gesamten
 Vorschau-Cache einschließlich der archivierten lokalen und KI-Erklärungen.
 Quelldateien bleiben unverändert. Während eines laufenden Modellaufrufs wartet die
 Löschung auf dessen Abschluss, damit er nicht nachträglich wieder einen Cache schreibt.

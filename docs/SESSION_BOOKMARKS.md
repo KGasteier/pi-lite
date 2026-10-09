@@ -7,17 +7,22 @@ aktivieren den Button; `aria-pressed` bildet den Zustand ab. Das Kontextmenü de
 Session bietet die gleiche Aktion.
 
 Die Kategorieauswahl bildet den gemeinsamen Seitenleistenkopf; darunter eine
-kompakte Aktionszeile mit Neuer Session, Sortierung und Cache-Löschen. Keine
+kompakte Aktionszeile mit Neuer Session, Sortierung und Bookmark-Filter. Keine
 doppelte sichtbare Kategorieüberschrift. Skills/Extensions/Agents/Harnesses nutzen
-denselben Kopf mit kurzem Hinweis und Cache-Aktion, ohne Sessionfunktionen.
+denselben Kopf mit kurzem Hinweis, ohne Sessionfunktionen.
 
 Die kompakte Auswahl in der Sidebar-Überschrift sortiert nach **Zeit ↓** (neueste
 Änderung zuerst) oder **Bookmarks** (markierte zuerst, innerhalb beider Gruppen
-neueste zuerst). Keine Filterung: Nicht markierte Sessions bleiben sichtbar.
+neueste zuerst). Der Lesezeichen-Toggle rechts daneben blendet alle nicht
+markierten Sessions aus; erneuter Klick zeigt wieder alle (`aria-pressed`, Zustand
+lokal gespeichert). Ohne Bookmarks erscheint ein kurzer Hinweis statt leerer Liste.
+
+Auf Hover/Fokus zeigt die Karte links neben dem Bookmark ein dezentes SVG-Symbol:
+Papierkorb (Löschen, rot beim Hover) bzw. Stift (Umbenennen) bei der aktiven Session.
 Der Sortierknopf ist nur in der Sessions-Ansicht sichtbar. Beim Toggle bleibt
 Fokus auf dem Bookmark-Button der betroffenen Session, auch nach Umsortieren.
 
-Markierungen und Sortiermodus werden lokal in WebKit-localStorage gespeichert,
+Markierungen, Sortiermodus und Filter werden lokal in WebKit-localStorage gespeichert,
 nicht in Sessiondateien oder beim Anbieter. Zuordnung über den Session-Dateipfad:
 Umbenennen des Sessiontitels behält den Bookmark; Verschieben/Dateiumbenennen oder
 Forken übernimmt ihn nicht. Keine Synchronisation zwischen Geräten. Beim Löschen

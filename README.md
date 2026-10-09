@@ -62,7 +62,7 @@ konfigurierter Haiku-Provider und die dort gültige Modell-ID:
 
 ```bash
 export PI_LITE_HELP_PROVIDER='dein-provider'
-export PI_LITE_HELP_MODEL='deine-haiku-modell-id'
+export PI_LITE_HELP_MODEL='deine-haiku-modell-id'   # neueste verfügbare Haiku-Version empfohlen
 pi-lite
 ```
 

@@ -15,10 +15,14 @@ assert.equal(bookmarks.mode,'bookmarks'); assert.equal(bookmarks.has('old'),true
 assert.equal(bookmarks.toggle('old'),false);
 assert.deepEqual(order(),['new','middle','old']);
 assert.deepEqual(sessions.map(s=>s.path),['old','new','middle']);
+assert.equal(bookmarks.onlyBookmarks,false); bookmarks.toggle('middle');
+bookmarks.setOnlyBookmarks(true); assert.deepEqual(Array.from(bookmarks.visible(sessions),s=>s.path),['middle']);
+assert.equal(context.createSessionBookmarks(storage).onlyBookmarks,true);
+bookmarks.setOnlyBookmarks(false); assert.equal(bookmarks.visible(sessions).length,3); bookmarks.toggle('middle');
 const broken = context.createSessionBookmarks({getItem:()=>'{broken',setItem:()=>{throw Error('disk');}});
 assert.equal(broken.mode,'time'); assert.throws(()=>broken.toggle('old')); assert.equal(broken.has('old'),false);
 const html = fs.readFileSync('ui/index.html','utf8'), app = fs.readFileSync('ui/app.js','utf8');
 assert(html.includes('aria-label="Sessions sortieren"'));
 assert(app.includes('bookmark.setAttribute("aria-pressed", String(marked))'));
 assert(app.includes('e.stopPropagation(); fn();'));
-console.log('Session bookmarks: persistence, time/bookmark sorting, toggle, corrupt storage and error rollback passed. No live WebKit test.');
+console.log('Session bookmarks: persistence, time/bookmark sorting, toggle, bookmark-only filter, corrupt storage and error rollback passed. No live WebKit test.');

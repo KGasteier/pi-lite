@@ -61,7 +61,7 @@ function scheduleRender(b) {
 }
 
 // ---------- Hilfen ----------
-function setStatus(t, busy_ = busy) { statusEl.textContent = t; busy = busy_; }
+function setStatus(t, busy_ = busy) { $("statustext").textContent = t; busy = busy_; statusEl.classList.toggle("busy", busy); }
 function nearBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
 function scroll(force) { if (force || nearBottom()) log.scrollTop = log.scrollHeight; }
 function add(cls, text = "") {
@@ -484,6 +484,10 @@ const sessionBookmarks = createSessionBookmarks({
   setItem: (key, value) => window.localStorage.setItem(key, value)
 });
 $("sessionsort").value = sessionBookmarks.mode;
+$("bookmarkfilter").onclick = () => {
+  try { sessionBookmarks.setOnlyBookmarks(!sessionBookmarks.onlyBookmarks); renderSessions(); }
+  catch(e) { toast("Filter konnte nicht gespeichert werden.", "error"); }
+};
 $("sessionsort").onchange = () => {
   try { sessionBookmarks.setMode($("sessionsort").value); renderSessions(); }
   catch(e) { $("sessionsort").value = sessionBookmarks.mode; toast("Sortierung konnte nicht gespeichert werden.", "error"); }
@@ -493,7 +497,7 @@ function toggleSessionBookmark(s) {
     sessionBookmarks.toggle(s.path);
     renderSessions();
     const row = [...$("sessions").children].find(el => el.dataset.path === s.path);
-    row?.querySelector(".bookmark")?.focus();
+    (row?.querySelector(".bookmark") || $("bookmarkfilter")).focus();
   } catch(e) { toast("Bookmark konnte nicht gespeichert werden.", "error"); }
 }
 function fmtDate(sec) {
@@ -512,7 +516,14 @@ async function loadSessions() {
 }
 function renderSessions() {
   const box = $("sessions"); box.innerHTML = "";
-  for (const s of sessionBookmarks.sort(sessionList)) {
+  const filtered = sessionBookmarks.visible(sessionList);
+  $("bookmarkfilter").setAttribute("aria-pressed", String(sessionBookmarks.onlyBookmarks));
+  $("bookmarkfilter").title = sessionBookmarks.onlyBookmarks ? "Alle Sessions anzeigen" : "Nur Bookmarks anzeigen";
+  if (!filtered.length && sessionList.length) {
+    const e = document.createElement("div"); e.className = "sessempty";
+    e.textContent = "Keine Bookmarks. Lesezeichen-Knopf oben zeigt wieder alle Sessions."; box.appendChild(e);
+  }
+  for (const s of sessionBookmarks.sort(filtered)) {
     const d = document.createElement("div");
     d.className = "sess"; d.dataset.path = s.path;
     const t = document.createElement("div"); t.className = "t"; t.textContent = s.name || s.title || "(leer)";
@@ -521,8 +532,9 @@ function renderSessions() {
     const act = document.createElement("span"); act.className = "act";
     const mk = (txt, tip, fn) => { const b = document.createElement("button"); b.textContent = txt; b.title = tip;
       b.onclick = (e) => { e.stopPropagation(); fn(); }; b.onkeydown = (e) => e.stopPropagation(); return b; };
-    if (s.path === state.sessionFile) act.append(mk("✎", "Umbenennen", renameCurrent));
-    else act.append(mk("🗑", "Löschen", () => removeSession(s)));
+    const icon = (b, cls, label, svg) => { b.className = cls; b.setAttribute("aria-label", label); b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${svg}</svg>`; return b; };
+    if (s.path === state.sessionFile) act.append(icon(mk("", "Umbenennen (F2)", renameCurrent), "rename", "Session umbenennen", '<path d="M3 13l1-3.5L10.5 3 13 5.5 6.5 12z M9.5 4l2.5 2.5"/>'));
+    else act.append(icon(mk("", "Löschen (Entf)", () => removeSession(s)), "delete", "Session löschen", '<path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.6 8.5h4.8l.6-8.5"/>'));
     const bookmark = mk("", "Bookmark", () => toggleSessionBookmark(s));
     bookmark.className = "bookmark";
     const marked = sessionBookmarks.has(s.path);
@@ -578,7 +590,7 @@ addEventListener("blur", () => closeMenu(false));
 
 function sessKey(e, s, el) {
   if (e.target !== el || e.metaKey && e.key !== "Backspace" || e.altKey) return;
-  const rows = [...$("sessions").children], i = rows.indexOf(el);
+  const rows = [...$("sessions").querySelectorAll(".sess")], i = rows.indexOf(el);
   const active = s.path === state.sessionFile;
   switch (e.key) {
     case "Enter": case " ": e.preventDefault(); openSession(s); break;
@@ -604,7 +616,7 @@ document.addEventListener("keydown", (e) => {
     document.body.classList.remove("side-hidden");
     document.body.classList.add("side-open");
     $("sideview").value = "sessions"; changeSideView();
-    const rows = [...$("sessions").children];
+    const rows = [...$("sessions").querySelectorAll(".sess")];
     (rows.find((r) => r.classList.contains("active")) || rows[0])?.focus();
   }
 });
@@ -872,7 +884,7 @@ async function changeSideView() {
   $("sessions").hidden = view !== "sessions";
   $("inventory").hidden = view === "sessions";
   $("newsess").hidden = view !== "sessions";
-  $("sessionsort").hidden = view !== "sessions";
+  $("sessionsort").hidden = $("bookmarkfilter").hidden = view !== "sessions";
   $("sidehint").hidden = view === "sessions";
   $("sidetitle").textContent = $("sideview").selectedOptions[0].textContent;
   if (view === "sessions") return;
