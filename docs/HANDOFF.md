@@ -8,7 +8,7 @@ Löschen/Umbenennen als dezente SVG-Symbole neben dem Bookmark; Cache-Löschen a
 Textlink in der Vorschau; alle nativen Selects flach wie Header-Picker
 (appearance:none); Material-Details kompakter; Fokusrahmen des Chatverlaufs als
 Overlay (#logwrap::after), Scrolltext überlagert ihn nicht mehr. Hilfsmodell lokal
-auf udk cc/claude-haiku-5-5 (env.sh, nicht im Git). Strukturtests + Headless-
+auf neueste Haiku-Version oder vergleichbar (lokale env.sh, nicht im Git). Strukturtests + Headless-
 Chromium-Screenshot mit Stub; echte WebKit-Optik nicht live geprüft.
 Veröffentlicht auf origin/main (inkl. Rust-Frontend-Evaluierung
 docs/TODO_RUST_FRONTEND.md). Offen: WebKit-Livefeedback zu diesen Punkten, Material/
