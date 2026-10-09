@@ -1,0 +1,17 @@
+[package]
+name = "copi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Natives egui-Frontend für pi (Nachfolger-Prototyp von pi-lite)"
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+pi-backend = { path = "../crates/pi-backend" }
+md-egui = { path = "../crates/md-egui" }
+md-core = { path = "../crates/md-core" }
+png = "0.17.16"
+libc = "0.2"

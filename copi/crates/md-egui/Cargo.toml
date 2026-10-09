@@ -1,0 +1,10 @@
+[package]
+name = "md-egui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Rendert die md-core-IR mit egui (auswählbarer Text, Links, Code mit Highlighting, Tabellen)"
+
+[dependencies]
+egui.workspace = true
+md-core = { path = "../md-core" }
