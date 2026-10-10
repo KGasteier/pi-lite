@@ -36,7 +36,19 @@ marked.setOptions({ gfm: true, breaks: false });
 function renderMd(el, text) {
   const html = DOMPurify.sanitize(marked.parse(text), { USE_PROFILES: { html: true } });
   el.innerHTML = html;
-  el.querySelectorAll("pre code").forEach((c) => { try { hljs.highlightElement(c); } catch {} });
+  el.querySelectorAll("pre code").forEach((c) => {
+    try { hljs.highlightElement(c); } catch {}
+    const button = document.createElement("button");
+    button.className = "codecopy";
+    button.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="8" height="10" rx="1"/><rect x="6" y="5" width="8" height="10" rx="1"/></svg>';
+    button.title = "Code / Terminalbefehl kopieren";
+    button.setAttribute("aria-label", button.title);
+    button.onclick = async () => {
+      try { await copyText(c.textContent); toast("Code kopiert."); }
+      catch (e) { toast("Kopieren fehlgeschlagen: " + e, "error"); }
+    };
+    c.parentElement.appendChild(button);
+  });
   el.querySelectorAll("a").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; });
   // Only chat outputs, not AI previews: never navigate local links in the webview.
   if (el.classList.contains("assistant") && el.classList.contains("md")) {
@@ -61,7 +73,31 @@ function scheduleRender(b) {
 }
 
 // ---------- Hilfen ----------
-function setStatus(t, busy_ = busy) { $("statustext").textContent = t; busy = busy_; statusEl.classList.toggle("busy", busy); }
+let workStarted = 0, workTimer = null;
+function setStatus(t, busy_ = busy) {
+  $("statustext").textContent = t;
+  if (busy_ && !busy) workStarted = performance.now();
+  busy = busy_; statusEl.classList.toggle("busy", busy);
+  const progress = $("workprogress");
+  if (!busy) {
+    clearInterval(workTimer); workTimer = null; progress.hidden = true;
+    return;
+  }
+  const update = () => {
+    progress.hidden = false;
+    progress.textContent = "≈" + Math.floor(95 * (1 - Math.exp(-(performance.now() - workStarted) / 90000))) + "%";
+  };
+  update();
+  if (!workTimer) workTimer = setInterval(update, 1000);
+}
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  const field = document.createElement("textarea"); field.value = text;
+  const focused = document.activeElement;
+  document.body.appendChild(field); field.select();
+  try { if (!document.execCommand("copy")) throw new Error("Zwischenablage nicht verfügbar"); }
+  finally { field.remove(); focused?.focus(); }
+}
 function nearBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
 function scroll(force) { if (force || nearBottom()) log.scrollTop = log.scrollHeight; }
 function add(cls, text = "") {
