@@ -11,7 +11,7 @@ pub fn resolve_target(cwd: &str, path: Option<&str>) -> Result<PathBuf, String> 
         None => base,
         Some(p) if !p.is_empty() && !p.contains('\0') => {
             let p = if let Some(rest) = p.strip_prefix("~/") {
-                PathBuf::from(std::env::var("HOME").map_err(|_| "HOME fehlt")?).join(rest)
+                crate::home().ok_or("HOME/USERPROFILE fehlt")?.join(rest)
             } else {
                 PathBuf::from(p)
             };
@@ -34,9 +34,29 @@ pub fn path_exists(cwd: &str, path: &str) -> bool {
     resolve_target(cwd, Some(path)).is_ok()
 }
 
+/// Editor-Befehl: `COPI_EDITOR_CMD` überschreibt den Plattform-Standard (z. B. `code`
+/// unter Windows/macOS, wo `vscodium-electron` normalerweise nicht im PATH liegt).
+fn editor_command() -> String {
+    std::env::var("COPI_EDITOR_CMD").unwrap_or_else(|_| default_editor_command().to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn default_editor_command() -> &'static str {
+    "code"
+}
+#[cfg(target_os = "macos")]
+fn default_editor_command() -> &'static str {
+    "code"
+}
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn default_editor_command() -> &'static str {
+    "vscodium-electron"
+}
+
 pub fn open_in_editor(cwd: &str, path: Option<&str>, line: Option<u32>) -> Result<(), String> {
     let target = resolve_target(cwd, path)?;
-    let mut cmd = Command::new("vscodium-electron");
+    let editor = editor_command();
+    let mut cmd = Command::new(&editor);
     cmd.arg("--reuse-window");
     match line {
         Some(l) if target.is_file() => {
@@ -51,7 +71,7 @@ pub fn open_in_editor(cwd: &str, path: Option<&str>, line: Option<u32>) -> Resul
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("VSCodium konnte nicht gestartet werden: {e}"))?;
+        .map_err(|e| format!("Editor ({editor}) konnte nicht gestartet werden: {e}"))?;
     std::thread::spawn(move || {
         let _ = child.wait();
     });

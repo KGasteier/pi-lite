@@ -29,7 +29,7 @@ pub fn run(app: &mut App, c: Cont) {
     }
 }
 
-fn cont(f: impl FnOnce(&mut App) + 'static) -> Cont {
+pub(crate) fn cont(f: impl FnOnce(&mut App) + 'static) -> Cont {
     Some(Box::new(f))
 }
 
@@ -44,6 +44,17 @@ pub fn err_or(r: &Value, d: &str) -> String {
 pub const THINKING: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 pub const SIDE_VIEWS: [&str; 5] = ["Sessions", "Extensions / Plugins", "Skills", "pi · Agent- und Kontextdateien", "Andere Agent Harnesses"];
 
+/// Inventar-Kategorie für `SIDE_VIEWS[idx]`; `None` für „Sessions“ (idx 0, eigene Liste statt Inventar).
+pub fn side_view_category(idx: usize) -> Option<&'static str> {
+    match idx {
+        1 => Some("extensions"),
+        2 => Some("skills"),
+        3 => Some("agents"),
+        4 => Some("harnesses"),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum PickerKind {
     Workspace,
@@ -51,6 +62,30 @@ pub enum PickerKind {
     Thinking,
     SideView,
     Sort,
+}
+
+/// Ziel des großen Editors (`editor_open`): Eingabefeld-Text oder eine Inventar-Markdown-Datei.
+#[derive(Clone, Debug, Default)]
+pub enum EditorTarget {
+    #[default]
+    Prompt,
+    InventoryFile { cwd: String, path: String, original: String },
+}
+
+/// Zustand der Vorschau-Spalte für eine Inventar-/Sessiondatei (Stufe 3).
+pub struct PreviewState {
+    pub path: String,
+    pub name: String,
+    pub text: String,
+    pub method: String,
+    pub loading: bool,
+    pub ai_text: String,
+    pub ai_method: String,
+    pub ai_loading: bool,
+    pub ai_visible: bool,
+    pub ask_consent: bool,
+    pub ask_consent_refresh: bool,
+    pub seq: u64,
 }
 
 pub struct Picker {
@@ -114,6 +149,11 @@ pub enum DialogKind {
     Confirm,
     Input,
     Editor,
+    /// Ordner-Browser (Stufe 3): editierbarer Pfad, Liste der Unterordner, Elternordner.
+    Folder,
+    /// Datei-/Ordnerbrowser für Material (Stufe 3): wie `Folder`, aber mit Dateien und
+    /// Mehrfachauswahl statt Einzelordnerwahl.
+    Material,
 }
 
 pub enum Origin {
@@ -133,6 +173,16 @@ pub struct Dialog {
     pub origin: Origin,
     pub focus: bool,
     pub scroll: bool,
+    /// Nur für `DialogKind::Folder`: entdeckte Unterordner des aktuellen Pfads.
+    pub folders: Vec<Location>,
+    /// Nur für `DialogKind::Folder`: Elternordner (für „Hoch“), falls vorhanden.
+    pub parent: Option<String>,
+    /// Nur für `DialogKind::Folder`: läuft bereits ein Browse-Vorgang (Anti-Veraltung).
+    pub folder_seq: u64,
+    /// Nur für `DialogKind::Material`: aktuelle Verzeichniseinträge (Ordner + Dateien).
+    pub entries: Vec<pi_backend::material::Entry>,
+    /// Nur für `DialogKind::Material`: bereits ausgewählte Dateipfade (Mehrfachauswahl).
+    pub selected: Vec<String>,
 }
 
 struct Pending {
@@ -178,10 +228,32 @@ pub struct App {
     session_cwd: String,
     pub(crate) locations: Vec<Location>,
 
+    // Inventar/Seitenansicht (Extensions/Skills/Agents/Harnesses) und Vorschau
+    pub(crate) side_view: usize,
+    pub(crate) inventory: Vec<pi_backend::inventory::Entry>,
+    inventory_seq: u64,
+    pub(crate) inventory_loading: bool,
+    pub(crate) preview: Option<PreviewState>,
+    pub(crate) preview_anchor: Rect,
+    pub(crate) preview_rect: Rect,
+    pub(crate) preview_hover_until: Instant,
+    preview_cache_lock: pi_backend::preview::CacheLock,
+    pub(crate) editor_target: EditorTarget,
+    /// Tastaturcursor über die Sessionliste bzw. Inventarliste in der Seitenleiste (Stufe 3).
+    pub(crate) list_cursor: Option<usize>,
+    pub(crate) list_scroll: bool,
+    /// Kontextmenü für den per Tastatur markierten Eintrag (M / Umschalt+F10), vereinfachtes
+    /// fest positioniertes Overlay statt per-Zeilen-Menü.
+    pub(crate) list_menu: bool,
+
     // Status
     pub(crate) busy: bool,
+    pub(crate) busy_since: Option<Instant>,
+    pub(crate) prompt_ime_active: bool,
+    pub(crate) editor_unlocked: bool,
     pub(crate) status: String,
     pub(crate) usage_text: String,
+    pub(crate) usage_details: String,
     pub(crate) speech_available: bool,
     pub(crate) speech_on: bool,
     pub(crate) ext_status: Vec<(String, String)>,
@@ -218,6 +290,9 @@ pub struct App {
     usage_seq: u64,
     cli_seq: u64,
     req_seq: u64,
+
+    // Material (Stufe 3)
+    pub(crate) material: crate::material_ui::MaterialState,
 }
 
 impl Drop for App {
@@ -276,9 +351,26 @@ impl App {
             cwd,
             session_cwd: String::new(),
             locations,
+            side_view: 0,
+            inventory: Vec::new(),
+            inventory_seq: 0,
+            inventory_loading: false,
+            preview: None,
+            preview_anchor: Rect::NOTHING,
+            preview_rect: Rect::NOTHING,
+            preview_hover_until: Instant::now(),
+            preview_cache_lock: Default::default(),
+            editor_target: EditorTarget::Prompt,
+            list_cursor: None,
+            list_scroll: false,
+            list_menu: false,
             busy: false,
+            busy_since: None,
+            prompt_ime_active: false,
+            editor_unlocked: false,
             status: "startet…".into(),
             usage_text: "Tokenverbrauch: —".into(),
+            usage_details: "Noch keine Verbrauchsdaten vom Agenten erhalten.".into(),
             speech_available: false,
             speech_on: false,
             ext_status: Vec::new(),
@@ -310,9 +402,11 @@ impl App {
             usage_seq: 0,
             cli_seq: 0,
             req_seq: 0,
+            material: crate::material_ui::MaterialState::default(),
         };
         let resume = if demo { None } else { pi_backend::folders::resume_session() };
         app.start(resume, None);
+        app.load_media_routes();
         app
     }
 
@@ -324,7 +418,7 @@ impl App {
         self.request_with_id(id, v, timeout_s, cb);
     }
 
-    fn req(&mut self, v: Value, cb: impl FnOnce(&mut App, Value) + 'static) {
+    pub(crate) fn req(&mut self, v: Value, cb: impl FnOnce(&mut App, Value) + 'static) {
         self.request(v, Some(15), Box::new(cb));
     }
 
@@ -403,8 +497,13 @@ impl App {
 
     /// Einmal pro Frame: Ereignisse, Hintergrundergebnisse, Zeitüberschreitungen.
     pub fn pump(&mut self) {
-        while let Ok(ev) = self.rx.try_recv() {
+        // Pro Frame begrenzen: ein stetiger RPC-Strom darf die Wayland-Ping/Pong-
+        // Verarbeitung nicht durch eine unendliche Drain-Schleife verdrängen.
+        let deadline = Instant::now() + Duration::from_millis(8);
+        for _ in 0..256 {
+            let Ok(ev) = self.rx.try_recv() else { break };
             self.on_backend(ev);
+            if Instant::now() >= deadline { self.ctx.request_repaint(); break; }
         }
         self.drain();
         let now = Instant::now();
@@ -500,6 +599,8 @@ impl App {
 
     pub fn set_status(&mut self, s: &str, busy: bool) {
         self.status = s.into();
+        if busy && !self.busy { self.busy_since = Some(Instant::now()); }
+        if !busy { self.busy_since = None; }
         self.busy = busy;
     }
 
@@ -724,6 +825,11 @@ impl App {
                     origin: Origin::Ext(s("id")),
                     focus: true,
                     scroll: true,
+                    folders: Vec::new(),
+                    parent: None,
+                    folder_seq: 0,
+                    entries: Vec::new(),
+                    selected: Vec::new(),
                 });
             }
             "notify" => {
@@ -823,6 +929,11 @@ impl App {
             origin: Origin::Local(Box::new(cb)),
             focus: true,
             scroll: true,
+            folders: Vec::new(),
+            parent: None,
+            folder_seq: 0,
+            entries: Vec::new(),
+            selected: Vec::new(),
         });
     }
 
@@ -927,6 +1038,11 @@ impl App {
                 "—".into()
             };
             let auto = if a.state["autoCompactionEnabled"] == true { " (auto)" } else { "" };
+            a.usage_details = format!(
+                "Verbrauch dieser Session (über alle Modellaufrufe aufsummiert)\n\nNeue Eingabe: {} Tokens\nDas Modell hat diese Eingabetokens neu verarbeitet. Dazu gehören deine Texte, Anweisungen, Tool-Ergebnisse und bisherige Unterhaltung.\n\nErzeugte Ausgabe: {} Tokens\nVom Modell erzeugter Text; je nach Anbieter können auch interne Denktokens enthalten sein.\n\nCache gelesen: {} Tokens\nBereits verarbeitete Eingabe wurde wiederverwendet. Das ist zusätzliche Verarbeitung in dieser Session, aber kein zusätzlicher Platz im Kontext.\n\nCache geschrieben: {} Tokens\nEingabe, die für mögliche Wiederverwendung im Cache gespeichert wurde.\n\nCache-Trefferquote: {hit}\nAnteil der gesamten Eingabeverarbeitung, der aus dem Cache gelesen wurde.\n\nAktueller Kontext: {context}\nDie Prozentzahl beschreibt, wie voll das Modellfenster jetzt ist – nicht den gesamten Session-Verbrauch. Dieselbe Unterhaltung kann bei mehreren Aufrufen erneut verarbeitet werden; daher können kumulierte Tokens viel größer als das Kontextfenster sein.\n\nEin Token ist ein kleines Textstück, nicht exakt ein Wort. k = Tausend, M = Million. Tokens sind nicht direkt Euro: Preise unterscheiden sich nach Modell, Ein-/Ausgabe und Cache.\n\nAutomatische Komprimierung: {}. Bei Bedarf wird älterer Kontext zusammengefasst; die kumulierten Verbrauchswerte werden dadurch nicht zurückgesetzt.",
+                token_short(n(&t["input"])), token_short(n(&t["output"])), token_short(n(&t["cacheRead"])), token_short(n(&t["cacheWrite"])),
+                if a.state["autoCompactionEnabled"] == true { "aktiviert" } else { "deaktiviert" }
+            );
             a.usage_text = format!(
                 "↑{} ↓{} R{} CH{hit} {context}{auto}",
                 token_short(n(&t["input"])),
@@ -1171,20 +1287,339 @@ impl App {
         self.toast("Arbeitsordner für die nächste neue Session ausgewählt.", ToastKind::Info);
     }
 
+    /// `~/...` öffnet vor dem Zugriff auf absolute Pfade (wie in `choose_folder`/`list_folders`).
+    pub(crate) fn resolve_tilde(path: &str) -> String {
+        match path.strip_prefix('~') {
+            Some(rest) => pi_backend::home().map(|h| h.to_string_lossy().to_string()).unwrap_or_default() + rest,
+            None => path.to_string(),
+        }
+    }
+
+    /// Ordner-Browser-Dialog (Stufe 3): editierbarer Pfad, Hoch-Navigation, Listenauswahl.
     pub fn choose_folder(&mut self) {
         let prefill = pi_backend::tilde(&self.cwd);
-        self.ask(DialogKind::Input, "Arbeitsordner wählen", "", vec![], &prefill, |a, r| {
-            let Some(v) = r.and_then(|r| r["value"].as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()) else { return };
-            let p = match v.strip_prefix('~') {
-                Some(rest) => pi_backend::home().map(|h| h.to_string_lossy().to_string()).unwrap_or_default() + rest,
-                None => v,
-            };
-            if std::path::Path::new(&p).is_dir() {
-                a.set_work_folder(p);
-            } else {
-                a.toast(format!("Kein Ordner: {p}"), ToastKind::Error);
+        self.ask(DialogKind::Folder, "Arbeitsordner wählen", "", vec![], &prefill, |a, r| {
+            let Some(p) = r.and_then(|r| r["path"].as_str().map(String::from)) else { return };
+            a.set_work_folder(p);
+        });
+        self.browse_folder(prefill);
+    }
+
+    /// Listet Unterordner von `path` neu und aktualisiert den vordersten Folder-Dialog, falls
+    /// er noch offen und derselbe Browse-Vorgang ist (verwirft veraltete Antworten).
+    pub fn browse_folder(&mut self, path: String) {
+        let Some(d) = self.dialogs.front_mut() else { return };
+        if d.kind != DialogKind::Folder {
+            return;
+        }
+        d.folder_seq += 1;
+        let seq = d.folder_seq;
+        let resolved = Self::resolve_tilde(&path);
+        self.spawn(
+            move || pi_backend::folders::list_folders(&resolved),
+            move |a, res: Result<(String, Option<String>, Vec<Location>), String>| {
+                let Some(d) = a.dialogs.front_mut() else { return };
+                if d.kind != DialogKind::Folder || d.folder_seq != seq {
+                    return;
+                }
+                match res {
+                    Ok((canon, parent, folders)) => {
+                        d.text = canon;
+                        d.parent = parent;
+                        d.folders = folders;
+                        d.cursor = 0;
+                        d.scroll = true;
+                    }
+                    Err(e) => a.toast(e, ToastKind::Error),
+                }
+            },
+        );
+    }
+
+    // ---------- Inventar/Seitenansicht (Extensions/Skills/Agents/Harnesses) ----------
+
+    /// Wechselt die Seitenansicht (0 = Sessions, sonst Inventar-Kategorie) und lädt bei Bedarf.
+    pub fn set_side_view(&mut self, idx: usize) {
+        self.side_view = idx;
+        self.preview = None;
+        if side_view_category(idx).is_some() {
+            self.load_inventory();
+        }
+    }
+
+    /// Lädt das Inventar (Extensions/Skills/Agents/Harnesses) neu für `self.cwd`.
+    pub fn load_inventory(&mut self) {
+        if self.demo {
+            self.inventory.clear();
+            return;
+        }
+        self.inventory_seq += 1;
+        let seq = self.inventory_seq;
+        let cwd = self.cwd.clone();
+        self.inventory_loading = true;
+        self.spawn(move || pi_backend::inventory::inventory(cwd), move |a, res: Result<Vec<pi_backend::inventory::Entry>, String>| {
+            if seq != a.inventory_seq {
+                return;
+            }
+            a.inventory_loading = false;
+            match res {
+                Ok(v) => a.inventory = v,
+                Err(e) => a.toast(e, ToastKind::Error),
             }
         });
+    }
+
+    /// Einträge der aktuell gewählten Seitenansicht (leer bei Sessions oder unbekannt).
+    pub fn visible_inventory(&self) -> Vec<&pi_backend::inventory::Entry> {
+        let Some(cat) = side_view_category(self.side_view) else { return Vec::new() };
+        self.inventory.iter().filter(|e| e.category == cat || (cat == "extensions" && e.category == "packages")).collect()
+    }
+
+    /// Öffnet eine Markdown-Inventardatei im großen Editor (lesen via Backend, Konfliktprüfung beim Speichern).
+    pub fn open_inventory_file(&mut self, path: &str) {
+        let cwd = self.cwd.clone();
+        let path = path.to_string();
+        self.spawn(
+            {
+                let cwd = cwd.clone();
+                let path = path.clone();
+                move || pi_backend::inventory::read_config(cwd, path)
+            },
+            move |a, res: Result<String, String>| match res {
+                Ok(text) => {
+                    a.editor_unlocked = false;
+                    a.editor_target = EditorTarget::InventoryFile { cwd, path, original: text.clone() };
+                    a.editor_text = text;
+                    a.editor_open = true;
+                    a.editor_focus = true;
+                }
+                Err(e) => a.toast(e, ToastKind::Error),
+            },
+        );
+    }
+
+    /// Speichert die aktuell im großen Editor bearbeitete Inventardatei (Konfliktprüfung im Backend).
+    fn save_inventory_file(&mut self, cwd: String, path: String, original: String, text: String) {
+        self.spawn(
+            move || pi_backend::inventory::save_config(cwd, path, original, text),
+            |a, res: Result<(), String>| match res {
+                Ok(()) => {
+                    a.toast("Datei gespeichert.", ToastKind::Info);
+                    a.editor_target = EditorTarget::Prompt;
+                    a.load_inventory();
+                }
+                Err(e) => a.toast(e, ToastKind::Error),
+            },
+        );
+    }
+
+    /// Löst den „Editor übernehmen“-Knopf/Shortcut passend zum aktuellen `editor_target` aus.
+    pub fn apply_editor(&mut self) {
+        if matches!(self.editor_target, EditorTarget::InventoryFile { .. }) && !self.editor_unlocked { return; }
+        self.editor_open = false;
+        match std::mem::take(&mut self.editor_target) {
+            EditorTarget::Prompt => {
+                let t = std::mem::take(&mut self.editor_text);
+                self.set_prompt(t);
+            }
+            EditorTarget::InventoryFile { cwd, path, original } => {
+                let text = std::mem::take(&mut self.editor_text);
+                self.save_inventory_file(cwd, path, original, text);
+            }
+        }
+    }
+
+    /// Startet/aktualisiert die lokale Kurzvorschau für `path`/`name` (ohne KI; `refresh`
+    /// erzwingt Neuberechnung trotz Cache). Setzt `self.preview`.
+    pub fn show_preview(&mut self, path: &str, name: &str, refresh: bool) {
+        let same = self.preview.as_ref().is_some_and(|p| p.path == path);
+        let seq = self.preview.as_ref().map(|p| p.seq).unwrap_or(0) + 1;
+        if !same {
+            self.preview = Some(PreviewState {
+                path: path.into(),
+                name: name.into(),
+                text: "Kurzinfo wird geladen…".into(),
+                method: String::new(),
+                loading: true,
+                ai_text: String::new(),
+                ai_method: String::new(),
+                ai_loading: false,
+                ai_visible: false,
+                ask_consent: false,
+                ask_consent_refresh: false,
+                seq,
+            });
+        } else if let Some(p) = &mut self.preview {
+            p.seq = seq;
+            p.loading = true;
+        }
+        if self.demo {
+            if let Some(p) = &mut self.preview {
+                p.text = "Demo-Modus: keine Vorschau.".into();
+                p.method = "demo".into();
+                p.loading = false;
+            }
+            return;
+        }
+        let cwd = self.cwd.clone();
+        let path2 = path.to_string();
+        let lock = self.preview_cache_lock.clone();
+        self.spawn(
+            move || pi_backend::preview::preview(cwd, path2, refresh, false, lock),
+            move |a, res: Result<pi_backend::preview::Preview, String>| {
+                let Some(p) = &mut a.preview else { return };
+                if p.seq != seq {
+                    return;
+                }
+                p.loading = false;
+                match res {
+                    Ok(info) => {
+                        p.text = info.text;
+                        p.method = info.method;
+                    }
+                    Err(e) => p.text = e,
+                }
+            },
+        );
+        // Bereits zwischengespeicherte Zweckerklärung passiv mitanzeigen (ohne neue KI-Anfrage;
+        // kein zusätzliches Konsens-Dialog nötig, da nur bereits vorhandene Ergebnisse rein lokal
+        // aus dem Cache gelesen werden, nichts übertragen wird). `Store` speichert keine
+        // dauerhafte KI-Zustimmung mehr; jede neue Übertragung fragt stets über
+        // `request_ai_explain`/`allow_ai_explain` erneut nach (siehe dort).
+        let cwd = self.cwd.clone();
+        let path3 = path.to_string();
+        let lock = self.preview_cache_lock.clone();
+        self.spawn(
+            move || pi_backend::preview::cached_purpose(cwd, path3, lock),
+            move |a, res: Result<Option<pi_backend::preview::Preview>, String>| {
+                let Some(p) = &mut a.preview else { return };
+                if p.seq != seq {
+                    return;
+                }
+                if let Ok(Some(info)) = res {
+                    p.ai_text = info.text;
+                    p.ai_method = format!("{} · Cache", info.method);
+                    p.ai_visible = true;
+                }
+            },
+        );
+    }
+
+    pub fn configure_preview_helper(&mut self) {
+        let models = self.models.clone();
+        if models.is_empty() { self.toast("Keine Modelle geladen. Zuerst einen Agenten verbinden.", ToastKind::Error); return; }
+        let rows: Vec<String> = models.iter().map(model_text).collect();
+        let labels = rows.clone();
+        self.ask(DialogKind::Select, "KI-Hilfsmodell auswählen", "Nur für ausdrücklich bestätigte Vorschau-Erklärungen; Hauptmodell bleibt unverändert. Auswahl wird lokal gespeichert.", rows, "", move |a, r| {
+            let Some(label) = r.and_then(|v| v["value"].as_str().map(str::to_owned)) else { return };
+            let Some(i) = labels.iter().position(|s| s == &label) else { return };
+            if let (Some(provider), Some(model)) = (models[i]["provider"].as_str(), models[i]["id"].as_str()) {
+                a.store.helper_provider = provider.to_string();
+                a.store.helper_model = model.to_string();
+                a.save_store();
+                a.toast("KI-Hilfsmodell gespeichert. Erklärung erneut anfordern; Übertragung wird separat bestätigt.", ToastKind::Info);
+            }
+        });
+    }
+
+    pub fn hide_preview(&mut self) {
+        self.preview = None;
+    }
+
+    /// Fragt vor dem Löschen des gesamten Vorschau-Caches (`<copi_data_dir>/previews`) nach
+    /// Bestätigung; betrifft sowohl lokale Kurzinfos als auch zwischengespeicherte
+    /// KI-Zweckerklärungen alter Anfragen.
+    pub fn confirm_clear_preview_cache(&mut self) {
+        self.ask(DialogKind::Confirm, "Vorschau-Cache leeren?", "Löscht alle zwischengespeicherten Kurzinfos und KI-Zweckerklärungen. Dateien selbst bleiben unverändert.", vec![], "", |a, r| {
+            if r.map(|r| r["confirmed"] == true) != Some(true) {
+                return;
+            }
+            a.clear_preview_cache();
+        });
+    }
+
+    /// Löscht das Vorschau-Cache-Verzeichnis sofort (ohne Bestätigung; siehe
+    /// [`confirm_clear_preview_cache`](Self::confirm_clear_preview_cache) für die UI-Variante).
+    fn clear_preview_cache(&mut self) {
+        if self.demo {
+            self.toast("Demo-Modus: kein Cache zu leeren.", ToastKind::Info);
+            return;
+        }
+        let lock = self.preview_cache_lock.clone();
+        self.spawn(move || pi_backend::preview::clear_previews(lock), |a, res: Result<(), String>| match res {
+            Ok(()) => {
+                a.toast("Vorschau-Cache geleert.", ToastKind::Info);
+                if let Some(p) = &mut a.preview {
+                    p.ai_text.clear();
+                    p.ai_method.clear();
+                    p.ai_visible = false;
+                }
+            }
+            Err(e) => a.toast(e, ToastKind::Error),
+        });
+    }
+
+    /// Jede neue Übertragung erfordert eigene Zustimmung; niemals dauerhaft speichern.
+    /// Gespeicherte Hilfsmodellwahl; jede Übertragung wird weiter einzeln bestätigt.
+    pub fn request_ai_explain(&mut self, refresh: bool) {
+        if !self.store.helper_provider.is_empty() && !self.store.helper_model.is_empty() {
+            std::env::set_var("PI_LITE_HELP_PROVIDER", &self.store.helper_provider);
+            std::env::set_var("PI_LITE_HELP_MODEL", &self.store.helper_model);
+        }
+        let Some(p) = &mut self.preview else { return };
+        p.ask_consent = true;
+        p.ask_consent_refresh = refresh;
+    }
+
+    fn run_ai_explain(&mut self, refresh: bool) {
+        let Some(p) = &mut self.preview else { return };
+        p.ask_consent = false;
+        p.ai_visible = true;
+        p.ai_loading = true;
+        p.ai_text = "Zweck wird erklärt (das konfigurierte KI-Hilfsmodell)…".into();
+        p.ai_method = String::new();
+        let seq = p.seq;
+        let path = p.path.clone();
+        if self.demo {
+            if let Some(p) = &mut self.preview {
+                p.ai_text = "Demo-Modus: keine KI-Erklärung.".into();
+                p.ai_loading = false;
+            }
+            return;
+        }
+        let cwd = self.cwd.clone();
+        let lock = self.preview_cache_lock.clone();
+        self.spawn(
+            move || pi_backend::preview::preview(cwd, path, refresh, true, lock),
+            move |a, res: Result<pi_backend::preview::Preview, String>| {
+                let Some(p) = &mut a.preview else { return };
+                if p.seq != seq {
+                    return;
+                }
+                p.ai_loading = false;
+                match res {
+                    Ok(info) => {
+                        p.ai_text = info.text;
+                        p.ai_method = info.method;
+                    }
+                    Err(e) => p.ai_text = e,
+                }
+            },
+        );
+    }
+
+    /// Zustimmung gilt ausschließlich für die gerade angezeigte Anfrage.
+    pub fn allow_ai_explain(&mut self) {
+        let Some(p) = &mut self.preview else { return };
+        let refresh = p.ask_consent_refresh;
+        p.ask_consent = false;
+        self.run_ai_explain(refresh);
+    }
+
+    pub fn deny_ai_explain(&mut self) {
+        if let Some(p) = &mut self.preview {
+            p.ask_consent = false;
+        }
     }
 
     // ---------- Picker ----------
@@ -1206,7 +1641,7 @@ impl App {
                 let t = self.thinking_level();
                 (THINKING.iter().map(|l| format!("Denken: {l}")).collect(), THINKING.iter().position(|l| *l == t).unwrap_or(0))
             }
-            PickerKind::SideView => (SIDE_VIEWS.iter().map(|s| s.to_string()).collect(), 0),
+            PickerKind::SideView => (SIDE_VIEWS.iter().map(|s| s.to_string()).collect(), self.side_view),
             PickerKind::Sort => (vec!["Zeit ↓".into(), "Bookmarks".into()], usize::from(self.store.sort == "bookmarks")),
         }
     }
@@ -1259,11 +1694,7 @@ impl App {
                     self.state["thinkingLevel"] = json!(level);
                 }
             }
-            PickerKind::SideView => {
-                if idx != 0 {
-                    self.toast(format!("„{}“ kommt in Stufe 3.", SIDE_VIEWS[idx.min(4)]), ToastKind::Info);
-                }
-            }
+            PickerKind::SideView => self.set_side_view(idx.min(SIDE_VIEWS.len() - 1)),
             PickerKind::Sort => {
                 self.store.sort = if idx == 1 { "bookmarks".into() } else { "time".into() };
                 self.save_store();
@@ -1286,12 +1717,24 @@ impl App {
 
     pub fn submit(&mut self) {
         let t = self.prompt.trim().to_string();
-        if t.is_empty() {
+        if t.is_empty() || self.material.preparing {
             return;
         }
         let parsed = parse_input(&t);
-        if matches!(parsed, Parsed::Prompt) && self.active_job.is_some() {
+        if !self.material.items.is_empty() && (t.starts_with('/') || !matches!(parsed, Parsed::Prompt)) {
+            self.toast("Material mit einer normalen Frage senden, nicht mit einem Befehl.", ToastKind::Error);
+            return;
+        }
+        if matches!(parsed, Parsed::Prompt) && self.active_job.is_some() && self.material.items.is_empty() {
             self.toast("Es läuft bereits ein pi-Befehl oder eine Shell-Eingabe.", ToastKind::Warn);
+            return;
+        }
+        if !self.material.items.is_empty() && matches!(parsed, Parsed::Prompt) {
+            if self.busy {
+                self.toast("Material bitte erst senden, wenn der Agent bereit ist.", ToastKind::Error);
+                return;
+            }
+            self.submit_material(t);
             return;
         }
         self.history.add(&t);
@@ -1650,13 +2093,34 @@ impl App {
     }
 
     pub fn open_editor(&mut self, path: Option<&str>) {
+        self.open_editor_at(path, None);
+    }
+
+    /// Wie [`App::open_editor`], aber mit optionaler Zeilennummer (z. B. aus `editor_reference`
+    /// portierten Markdown-Verweisen wie `datei.rs:42`).
+    pub fn open_editor_at(&mut self, path: Option<&str>, line: Option<u32>) {
         let cwd = if self.session_cwd.is_empty() { self.cwd.clone() } else { self.session_cwd.clone() };
         if self.demo {
             self.toast("Demo-Modus: Editor wird nicht geöffnet.", ToastKind::Info);
             return;
         }
-        if let Err(e) = pi_backend::editor::open_in_editor(&cwd, path, None) {
+        if let Err(e) = pi_backend::editor::open_in_editor(&cwd, path, line) {
             self.toast(e, ToastKind::Error);
+        }
+    }
+
+    /// Markdown-Links/Verweise routen: externe URLs im Browser, Datei-/Zeilenverweise im Editor,
+    /// alles andere als unverbindlicher Hinweis (Portierung von `ui/editor.js:editorReference`).
+    pub fn handle_markdown_link(&mut self, link: &str) {
+        if is_url(link) {
+            if let Err(e) = pi_backend::cli::open_url(link) {
+                self.toast(e, ToastKind::Error);
+            }
+            return;
+        }
+        match editor_reference(link) {
+            Some((path, line)) => self.open_editor_at(Some(&path), line),
+            None => self.toast(format!("Verweis: {link}"), ToastKind::Info),
         }
     }
 
@@ -1735,8 +2199,60 @@ impl App {
                 self.render_start_card();
             }
             "toast" => self.toast("Arbeitsordner für die nächste neue Session ausgewählt.", ToastKind::Info),
+            "inventory" => self.demo_scene_inventory(),
+            "longlog" => self.demo_scene_longlog(10_000),
             _ => {}
         }
+    }
+
+    /// Synthetische Vorschau-/Ordner-/Material-Konfiguration für den Inventar-Seitenbereich
+    /// (Extensions/Skills/Agent-/Harness-Dateien), ohne echte Dateisystemzugriffe oder
+    /// private Pfade – ausschließlich erfundene `/demo/...`-Pfade. Nützlich zum manuellen
+    /// Durchklicken der Inventaransicht (`COPI_SCENE=inventory`) und als Grundlage für
+    /// Regressionstests, die eine realistische Menge an Einträgen brauchen.
+    fn demo_scene_inventory(&mut self) {
+        self.side_view = 1; // „Extensions / Plugins“ – direkt setzen, nicht über `set_side_view`,
+        // da dieses im Demo-Modus `load_inventory` aufruft, welches das Inventar sofort wieder leert.
+        self.preview = None;
+        self.inventory = (0..40)
+            .map(|i| pi_backend::inventory::Entry {
+                category: if i % 2 == 0 { "extensions".into() } else { "packages".into() },
+                harness: "demo-harness".into(),
+                name: format!("demo-extension-{i:02}"),
+                path: format!("/demo/extensions/demo-extension-{i:02}"),
+            })
+            .collect();
+        self.locations = vec![
+            Location { name: "Demo-Ordner".into(), path: "/demo/projekt".into() },
+            Location { name: "Demo-Unterordner".into(), path: "/demo/projekt/unter".into() },
+        ];
+        self.material.items = (0..3)
+            .map(|i| crate::material_ui::MaterialItem { value: format!("/demo/material/beispiel-{i}.png"), url: false })
+            .collect();
+        self.toast("Demo: Inventar/Ordner/Material mit synthetischen Pfaden befüllt.", ToastKind::Info);
+    }
+
+    /// Erzeugt `count` synthetische Log-Einträge (abwechselnd Nutzer-/Assistenten-Nachrichten),
+    /// um die Höhen-Cache-Virtualisierung (`virtual_log`) unter einer langen, realistischen
+    /// Sitzung zu prüfen – ohne echte pi-Sitzung oder private Daten. Siehe auch
+    /// `virtual_log::tests` für reine (fensterlose) Unit-Tests der Planungslogik selbst;
+    /// diese Methode liefert zusätzlich eine Szene zum manuellen Durchscrollen
+    /// (`COPI_SCENE=longlog`) sowie eine Grundlage für den Integrationstest
+    /// `demo_scene_longlog_stays_responsive_under_many_entries`.
+    pub fn demo_scene_longlog(&mut self, count: usize) {
+        self.clear_log();
+        for i in 0..count {
+            if i % 2 == 0 {
+                self.push(Item::User(format!("Synthetische Testnachricht Nr. {i}.")));
+            } else {
+                self.push(Item::Assistant {
+                    doc: DocCache::default(),
+                    text: format!("Synthetische Antwort Nr. {i} mit etwas **Markdown** und `code`."),
+                    done: true,
+                });
+            }
+        }
+        self.toast(format!("Demo: {count} synthetische Log-Einträge erzeugt."), ToastKind::Info);
     }
 }
 

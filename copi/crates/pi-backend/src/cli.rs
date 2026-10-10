@@ -2,10 +2,11 @@
 //! Nie über eine Shell; nur eine feste Liste von Unterbefehlen ist erlaubt.
 use crate::{Event, Sink};
 use std::io::{BufRead, BufReader, Read};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 /// Nicht-interaktive pi-Unterbefehle. `config` ist eine Terminal-Oberfläche und fehlt bewusst.
 pub const SUBCOMMANDS: [&str; 7] = ["update", "install", "remove", "uninstall", "list", "auth", "mcp"];
@@ -49,17 +50,18 @@ impl Cli {
         if self.child.lock().unwrap().is_some() {
             return Err("Es läuft bereits ein pi-Befehl.".into());
         }
-        let mut child = Command::new("pi")
-            .args(&args)
-            .current_dir(if cwd.is_empty() { ".".into() } else { cwd })
+        let mut cmd = crate::winshim::pi_command(&args);
+        cmd.current_dir(if cwd.is_empty() { ".".into() } else { cwd })
             .env("NO_COLOR", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            // Eigene Prozessgruppe, damit Abbrechen auch den mise-/Node-Unterprozess trifft.
-            .process_group(0)
-            .spawn()
-            .map_err(|e| format!("pi konnte nicht gestartet werden: {e}"))?;
+            .stderr(Stdio::piped());
+        // Eigene Prozessgruppe, damit Abbrechen auch den mise-/Node-Unterprozess trifft.
+        // Nur auf unix verfügbar; auf anderen Plattformen bleibt `cancel()` auf das
+        // direkte Kindelement beschränkt (siehe dort).
+        #[cfg(unix)]
+        cmd.process_group(0);
+        let mut child = cmd.spawn().map_err(|e| format!("pi konnte nicht gestartet werden: {e}"))?;
         let out = pump(sink.clone(), id.clone(), false, child.stdout.take().unwrap());
         let err = pump(sink, id, true, child.stderr.take().unwrap());
         *self.child.lock().unwrap() = Some(child);
@@ -70,6 +72,7 @@ impl Cli {
         Ok(status.code().unwrap_or(-1))
     }
 
+    #[cfg(unix)]
     pub fn cancel(&self) {
         let pid = self.child.lock().unwrap().as_ref().map(Child::id);
         if let Some(pid) = pid {
@@ -84,6 +87,17 @@ impl Cli {
                     let _ = child.kill();
                 }
             });
+        }
+    }
+
+    /// Portabler Rückfall ohne Prozessgruppen-Semantik: beendet nur den direkten
+    /// pi-Kindprozess (keine POSIX-Prozessgruppe verfügbar). Bekannte Lücke: ein von pi
+    /// gestarteter Unterprozess (z. B. mise/Node) kann dadurch weiterlaufen.
+    #[cfg(not(unix))]
+    pub fn cancel(&self) {
+        let mut slot = self.child.lock().unwrap();
+        if let Some(child) = slot.as_mut() {
+            let _ = child.kill();
         }
     }
 }
@@ -172,8 +186,7 @@ static VERSION: OnceLock<String> = OnceLock::new();
 pub fn pi_version() -> String {
     VERSION
         .get_or_init(|| {
-            Command::new("pi")
-                .arg("--version")
+            crate::winshim::pi_command(&["--version".to_string()])
                 .stdin(Stdio::null())
                 .output()
                 .ok()
@@ -226,10 +239,50 @@ pub fn is_newer_version(latest: &str, current: &str) -> bool {
     bpre && !apre
 }
 
-/// Öffnet eine Adresse im Standardbrowser (ohne Shell).
+/// Betriebssystem-Befehl, der eine Adresse im Standardbrowser öffnet (ohne Shell).
+#[cfg(target_os = "macos")]
+fn open_command(url: &str) -> Command {
+    let mut c = Command::new("open");
+    c.arg(url);
+    c
+}
+#[cfg(target_os = "windows")]
+fn open_command(url: &str) -> Command {
+    // Bewusst `explorer.exe` statt `cmd /c start`: `cmd.exe` interpretiert seine
+    // Kommandozeile selbst noch einmal (Metazeichen wie `&`, `|`, `^`, Umleitungen) –
+    // auch wenn die URL hier als einzelnes `Command`-Argument übergeben wird und nie durch
+    // eine Shell *dieses* Prozesses läuft, liest `cmd /c` die volle Zeile erneut als
+    // Batch-Befehl ein. `explorer.exe <url>` übergibt die URL dagegen nur an den
+    // registrierten Standardbrowser, ohne sie als Befehlszeile zu interpretieren.
+    // **Dieser Zweig ist nicht in dieser Linux-Umgebung lauffähig getestet**, siehe
+    // `docs/portability.md`. Scheme-Prüfung erfolgt vorab in [`open_url`], da `explorer.exe`
+    // bei einem lokalen Pfad statt einer URL die Datei direkt ausführen/öffnen würde.
+    let mut c = Command::new("explorer.exe");
+    c.arg(url);
+    c
+}
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn open_command(url: &str) -> Command {
+    let mut c = Command::new("xdg-open");
+    c.arg(url);
+    c
+}
+
+/// Nur `http://`/`https://`-Adressen dürfen geöffnet werden. Das ist auf allen Plattformen
+/// relevant, aber besonders unter Windows kritisch: `explorer.exe <pfad>` öffnet bei einem
+/// lokalen Dateipfad (statt einer URL) direkt diese Datei bzw. führt sie aus, statt einen
+/// Fehler zu liefern – ohne diese Prüfung könnte ein von außen beeinflussbarer "Link"
+/// (z. B. aus KI-generiertem Inhalt) beliebige lokale Dateien öffnen/ausführen.
+fn is_http_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
+/// Öffnet eine Adresse im Standardbrowser (ohne Shell). Lehnt alles außer `http(s)://` ab.
 pub fn open_url(url: &str) -> Result<(), String> {
-    Command::new("xdg-open")
-        .arg(url)
+    if !is_http_url(url) {
+        return Err("nur http(s)-Adressen dürfen geöffnet werden".into());
+    }
+    open_command(url)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -239,7 +292,7 @@ pub fn open_url(url: &str) -> Result<(), String> {
                 let _ = c.wait();
             });
         })
-        .map_err(|e| format!("xdg-open fehlgeschlagen: {e}"))
+        .map_err(|e| format!("Standardbrowser konnte nicht geöffnet werden: {e}"))
 }
 
 #[cfg(test)]
@@ -261,5 +314,19 @@ mod tests {
         assert!(!is_newer_version("1.0.4", "v1.0.4"));
         assert!(is_newer_version("1.0.4", "1.0.4-beta"));
         assert!(!is_newer_version("1.0.3", "1.0.4"));
+    }
+
+    #[test]
+    fn open_url_rejects_non_http_schemes() {
+        assert!(is_http_url("https://pi.dev/changelog"));
+        assert!(is_http_url("http://example.com"));
+        assert!(!is_http_url("file:///etc/passwd"));
+        assert!(!is_http_url("javascript:alert(1)"));
+        assert!(!is_http_url("C:\\Windows\\System32\\evil.exe"));
+        assert!(!is_http_url("/etc/passwd"));
+        assert!(!is_http_url(""));
+
+        assert!(open_url("file:///etc/passwd").is_err());
+        assert!(open_url("javascript:alert(1)").is_err());
     }
 }

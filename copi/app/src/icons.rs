@@ -2,6 +2,14 @@
 use crate::theme::*;
 use egui::{epaint::PathShape, pos2, Color32, Painter, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Vec2};
 
+pub fn lock(p: &Painter, rect: Rect, color: Color32, open: bool) {
+    let m = Map::new(rect, 16.0, 16.0);
+    p.rect_stroke(Rect::from_min_max(m.p(3.0, 7.0), m.p(13.0, 15.0)), 2, Stroke::new(1.4, color), egui::StrokeKind::Inside);
+    let x = if open { 10.0 } else { 4.5 };
+    line(p, &m, &[(x,7.0),(x,4.0),(x+1.0,2.0),(x+4.0,2.0),(x+5.0,4.0),(x+5.0,7.0)], color, 1.4);
+    line(p, &m, &[(8.0,10.0),(8.0,12.0)], color, 1.4);
+}
+
 /// Abbildung von viewBox-Koordinaten in ein Rechteck.
 pub struct Map {
     rect: Rect,

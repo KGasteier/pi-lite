@@ -168,6 +168,21 @@ fn block(ui: &mut Ui, theme: &Theme, b: &Block, out: &mut Output, depth: usize) 
     }
 }
 
+/// Fallback-Hervorhebung für Fettdruck, wenn `BOLD_FAMILY` nicht registriert ist.
+///
+/// Statt die Textfarbe hart auf Weiß zu setzen (was auf hellen Themes unlesbar
+/// wäre), wird die ursprüngliche Farbe Richtung Weiß aufgehellt – so bleibt der
+/// Farbton erhalten (z. B. Link-Blau wird helleres Blau statt reinem Weiß) und
+/// der Kontrast ist auf dunklen wie hellen Hintergründen zumindest grob richtig.
+/// Reines Schwarz/sehr dunkle Farben werden am stärksten angehoben, damit ein
+/// sichtbarer Unterschied zu nicht-fettem Text entsteht.
+fn brighten(c: Color32) -> Color32 {
+    // Einfache, portable Mischung Richtung Weiß (kein Gamma-korrektes
+    // Color-Management nötig – reicht für einen UI-Fallback).
+    let mix = |v: u8| -> u8 { (v as f32 + (255.0 - v as f32) * 0.55).round() as u8 };
+    Color32::from_rgba_unmultiplied(mix(c.r()), mix(c.g()), mix(c.b()), c.a())
+}
+
 /// Erzeugt einen LayoutJob aus Inline-Spans. Gibt auch die Linkbereiche (Zeichenindex) zurück.
 pub fn inline_job(theme: &Theme, spans: &[Span], size: f32, color: Color32, all_bold: bool, ui: &Ui) -> (LayoutJob, Vec<(std::ops::Range<usize>, String)>) {
     let mut job = LayoutJob::default();
@@ -194,7 +209,7 @@ pub fn inline_job(theme: &Theme, spans: &[Span], size: f32, color: Color32, all_
             fmt.strikethrough = Stroke::new(1.0, color);
         }
         if (st.bold || all_bold) && !has_bold {
-            fmt.color = Color32::WHITE;
+            fmt.color = brighten(color);
         }
         let n = s.text.chars().count();
         if let Some(url) = &st.link {
@@ -257,31 +272,28 @@ pub fn code_block(ui: &mut Ui, theme: &Theme, lang: &str, text: &str) {
     let size = theme.code_size();
     egui::Frame::NONE.fill(theme.code_bg).corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(10)).show(ui, |ui| {
         ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let (rect, response) = ui.allocate_exact_size(egui::vec2(22.0, 20.0), Sense::click());
+                let response = response.on_hover_text("Code / Terminalbefehl kopieren");
+                let color = if response.hovered() { theme.fg } else { theme.dim };
+                let stroke = egui::Stroke::new(1.1, color);
+                let center = rect.center();
+                ui.painter().rect_stroke(egui::Rect::from_min_size(center + egui::vec2(-5.0, -6.0), egui::vec2(7.0, 9.0)), 1, stroke, egui::StrokeKind::Inside);
+                ui.painter().rect_stroke(egui::Rect::from_min_size(center + egui::vec2(-2.0, -3.0), egui::vec2(7.0, 9.0)), 1, stroke, egui::StrokeKind::Inside);
+                if response.clicked() {
+                    ui.ctx().copy_text(text.to_string());
+                }
+                if !lang.is_empty() { ui.label(egui::RichText::new(lang).size(11.0).color(theme.dim)); }
+            });
+        });
         let job = code_job(lang, text, size);
         let galley = ui.fonts_mut(|f| f.layout_job(job));
         let w = galley.size().x;
-        let top = ui.cursor().min;
         egui::ScrollArea::horizontal().id_salt("code").auto_shrink([false, true]).show(ui, |ui| {
             ui.add(egui::Label::new(galley).selectable(true).wrap_mode(egui::TextWrapMode::Extend));
             ui.set_min_width(w);
         });
-        // Sprache + Kopieren oben rechts (nur beim Überfahren deutlich)
-        let hovered = ui.rect_contains_pointer(ui.min_rect());
-        let label = if lang.is_empty() { "Kopieren".to_string() } else { format!("{lang} · Kopieren") };
-        let col = if hovered { theme.fg } else { theme.dim.gamma_multiply(0.6) };
-        let galley = ui.painter().layout_no_wrap(label, FontId::proportional(11.0), col);
-        let r = egui::Rect::from_min_size(egui::pos2(ui.max_rect().right() - galley.size().x, top.y - 6.0), galley.size());
-        let resp = ui.interact(r, ui.id().with("copy"), Sense::click());
-        if resp.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        if hovered || !lang.is_empty() {
-            ui.painter().rect_filled(r.expand(3.0), 4.0, theme.code_bg);
-            ui.painter().galley(r.min, galley, col);
-        }
-        if resp.clicked() {
-            ui.ctx().copy_text(text.to_string());
-        }
     });
 }
 
@@ -342,29 +354,101 @@ fn table(ui: &mut Ui, theme: &Theme, align: &[Align], head: &[md_core::Inlines],
 }
 
 /// Zwischenspeicher für geparste Dokumente (z. B. eine Nachricht je Eintrag).
-/// Neu geparst wird nur, wenn sich der Text geändert hat (Länge + Hash).
+///
+/// Wird z. B. pro Chat-Nachricht einmal gehalten und bei jedem Redraw mit
+/// [`DocCache::get`] abgefragt. Neu geparst wird nur, wenn sich der Quelltext
+/// tatsächlich geändert hat – unverändertes Material (der häufigste Fall: eine
+/// bereits fertige Nachricht wird jeden Frame erneut gezeichnet) kostet dann
+/// nur noch einen Längenvergleich plus – falls die Länge zufällig gleich blieb –
+/// einen einzigen Byte-Vergleich, statt bei jedem Frame den kompletten Text neu
+/// zu hashen und zu parsen.
+///
+/// Bewusst **kein** Hashing: Ein eigener Hash wäre mit Kollisionsrisiko
+/// behaftet und spart gegenüber einem (von `memcmp` beschleunigten)
+/// direkten Gleichheitsvergleich nichts ein. Stattdessen:
+/// 1. Längen unterschiedlich? → garantiert geändert, sofort neu parsen
+///    (kein Vergleich nötig – das deckt den häufigsten Fall beim Streamen
+///    ab, wo Text per `push_str` wächst).
+/// 2. Länge gleich? → vollständiger Gleichheitsvergleich (für den seltenen
+///    Fall einer Bearbeitung an gleicher Länge, z. B. nachträgliche
+///    Korrektur). Nur bei tatsächlichem Unterschied wird neu geparst.
 #[derive(Default)]
 pub struct DocCache {
-    key: (usize, u64),
+    src: String,
     doc: Doc,
+    /// `false` vor dem ersten `get`-Aufruf – erzwingt den initialen Parse
+    /// auch dann, wenn der erste `src` zufällig leer ist (sonst wäre er von
+    /// der ebenfalls leeren Default-`src` nicht zu unterscheiden).
+    parsed: bool,
+    /// Zähler erfolgter Neu-Parses – nur für Tests/Diagnose gedacht.
+    parses: u64,
 }
 
 impl DocCache {
+    /// Aktuelles Dokument liefern, bei Bedarf neu parsen.
+    ///
+    /// Günstig für wiederholte Aufrufe mit unverändertem `src` (z. B. einmal
+    /// pro UI-Frame für dieselbe Nachricht).
     pub fn get(&mut self, src: &str) -> &Doc {
-        let key = (src.len(), fnv(src));
-        if key != self.key {
+        if !self.parsed || self.src.len() != src.len() || self.src != src {
             self.doc = md_core::parse(src);
-            self.key = key;
+            self.src.clear();
+            self.src.push_str(src);
+            self.parsed = true;
+            self.parses += 1;
         }
         &self.doc
     }
+
+    /// Anzahl bisher durchgeführter Neu-Parses (für Tests/Diagnose).
+    pub fn parses(&self) -> u64 {
+        self.parses
+    }
 }
 
-fn fnv(s: &str) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in s.bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x100000001b3);
+#[cfg(test)]
+mod doc_cache_tests {
+    use super::*;
+
+    #[test]
+    fn unveraenderter_text_parst_nicht_erneut() {
+        let mut c = DocCache::default();
+        c.get("# Hallo");
+        assert_eq!(c.parses(), 1);
+        c.get("# Hallo");
+        c.get("# Hallo");
+        assert_eq!(c.parses(), 1, "gleicher Text darf nicht erneut geparst werden");
     }
-    h
+
+    #[test]
+    fn wachsender_text_parst_bei_jeder_aenderung() {
+        let mut c = DocCache::default();
+        c.get("Hallo");
+        c.get("Hallo W");
+        c.get("Hallo Welt");
+        assert_eq!(c.parses(), 3);
+        assert_eq!(c.get("Hallo Welt").blocks.len(), 1);
+    }
+
+    #[test]
+    fn gleich_lange_bearbeitung_wird_erkannt() {
+        // Gleiche Länge, aber anderer Inhalt (z. B. nachträgliche Korrektur) –
+        // muss trotzdem als Änderung erkannt werden (keine falsche Cache-Treffer).
+        let mut c = DocCache::default();
+        c.get("# Hallo");
+        assert_eq!(c.parses(), 1);
+        c.get("# Hillo");
+        assert_eq!(c.parses(), 2, "inhaltliche Änderung bei gleicher Länge muss erkannt werden");
+        let md_core::Block::Heading { text, .. } = &c.get("# Hillo").blocks[0] else { panic!() };
+        assert_eq!(md_core::inline_text(text), "Hillo");
+    }
+
+    #[test]
+    fn leerer_text() {
+        let mut c = DocCache::default();
+        assert!(c.get("").blocks.is_empty());
+        assert_eq!(c.parses(), 1);
+        c.get("");
+        assert_eq!(c.parses(), 1);
+    }
 }

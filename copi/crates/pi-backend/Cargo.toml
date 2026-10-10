@@ -8,3 +8,10 @@ description = "GUI-freie Anbindung an `pi --mode rpc` (Prozess, Sessions, CLI, O
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+base64 = "0.22"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+# Portable Konfigurations-/Datenverzeichnisse (XDG auf Linux, Known Folders auf Windows,
+# Standardverzeichnisse auf macOS). Fällt in `pi_backend::{config_dir,data_dir}` bei
+# Abwesenheit (z. B. kein Home-Verzeichnis ermittelbar) auf einen HOME/USERPROFILE-basierten
+# Pfad zurück; siehe docs/portability.md für den genauen Verifikationsstatus je Plattform.
+dirs = "6"

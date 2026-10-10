@@ -11,6 +11,7 @@ use crate::app::*;
 use crate::commands::*;
 use crate::icons::{self, IconStyle};
 use crate::theme::*;
+use crate::virtual_log;
 
 type Act = Box<dyn FnOnce(&mut App)>;
 
@@ -42,9 +43,12 @@ fn take(ctx: &Context, f: impl Fn(Key, &Modifiers) -> bool) -> bool {
     })
 }
 
-/// Exakter Modifikator-Vergleich (alt, ctrl, shift).
+/// Exakter Modifikator-Vergleich (alt, strg/cmd, shift). Der `ctrl`-Parameter bedeutet
+/// „Strg bzw. Cmd gedrückt“ und vergleicht gegen `Modifiers::command`, das egui unter Windows/
+/// Linux auf `ctrl` und unter macOS auf `mac_cmd` (⌘) setzt – dadurch funktionieren dieselben
+/// Tastenkürzel (z. B. Strg/Cmd+S) auf allen drei Plattformen ohne separate Mac-Zweige.
 fn k(ctx: &Context, key: Key, alt: bool, ctrl: bool, shift: bool) -> bool {
-    take(ctx, |kk, m| kk == key && m.alt == alt && m.ctrl == ctrl && m.shift == shift && !m.mac_cmd)
+    take(ctx, |kk, m| kk == key && m.alt == alt && m.command == ctrl && m.shift == shift)
 }
 
 fn plain(ctx: &Context, key: Key) -> bool {
@@ -149,6 +153,12 @@ impl App {
                 });
         }
         self.widget_panel(ui, "belowEditor");
+        if !self.material.items.is_empty() || !self.material.status.is_empty() {
+            egui::Panel::bottom("material")
+                .show_separator_line(false)
+                .frame(Frame::new().fill(PANEL).inner_margin(Margin::symmetric(12, 6)))
+                .show(ui, |ui| self.material_bar(ui));
+        }
         egui::Panel::bottom("footer")
             .exact_size(92.0)
             .show_separator_line(false)
@@ -156,12 +166,36 @@ impl App {
             .show(ui, |ui| self.footer(ui));
         self.widget_panel(ui, "aboveEditor");
         egui::CentralPanel::default().frame(Frame::new().fill(BG)).show(ui, |ui| self.log(ui));
+        let pointer = ctx.input(|i| i.pointer.hover_pos());
+        let over_preview = pointer.is_some_and(|p| self.preview_rect.contains(p) || self.preview_anchor.contains(p));
+        if over_preview { self.preview_hover_until = std::time::Instant::now() + Duration::from_millis(300); }
+        if self.preview.is_some() && !over_preview && self.dialogs.is_empty() && !self.editor_open && std::time::Instant::now() > self.preview_hover_until {
+            self.hide_preview();
+        }
+        if self.preview.is_some() {
+            let preview_area = egui::Area::new(Id::new("floating-preview"))
+                .order(Order::Foreground).fade_in(false)
+                .fixed_pos(Pos2::new(if self.preview_anchor.is_finite() { self.preview_anchor.right() + 10.0 } else { 248.0 }, if self.preview_anchor.is_finite() { self.preview_anchor.top() } else { 64.0 }))
+                .constrain(true)
+                .show(&ctx, |ui| {
+                    Frame::new().fill(PANEL).corner_radius(12)
+                        .stroke(Stroke::new(1.0, match self.side_view { 1 => CAT_EXT, 2 => CAT_SKILLS, 3 => CAT_AGENTS, 4 => CAT_HARNESS, _ => CAT })).inner_margin(Margin::same(12))
+                        .show(ui, |ui| {
+                            ui.set_width(350.0f32.min(ctx.content_rect().width() - 40.0));
+                            ui.set_max_height((ctx.content_rect().height() - 150.0).max(150.0));
+                            self.preview_panel(ui);
+                        });
+                });
+            self.preview_rect = preview_area.response.rect;
+            ctx.request_repaint_after(Duration::from_millis(300));
+        }
 
         self.picker_overlay(&ctx);
         self.slash_overlay(&ctx);
         self.dialog_overlay(&ctx);
         self.keyhelp_overlay(&ctx);
         self.editor_overlay(&ctx);
+        self.list_menu_overlay(&ctx);
         self.toast_overlay(&ctx);
 
         self.drain();
@@ -175,7 +209,7 @@ impl App {
     }
 
     fn widget_panel(&mut self, ui: &mut Ui, place: &str) {
-        let lines: Vec<String> = self.widgets.iter().filter(|w| w.2 == place).flat_map(|w| w.1.clone()).collect();
+        let lines: Vec<String> = self.widgets.iter().filter(|w| w.2 == place && w.0 != "vorlesen").flat_map(|w| w.1.clone()).collect();
         if lines.is_empty() {
             return;
         }
@@ -249,6 +283,70 @@ impl App {
                         self.close_dialog(Some(json!({"value": v})));
                     }
                 }
+                DialogKind::Folder => {
+                    let n = d.folders.len();
+                    let mut moved = true;
+                    if plain(ctx, Key::ArrowDown) {
+                        d.cursor = (d.cursor + 1).min(n.saturating_sub(1));
+                    } else if plain(ctx, Key::ArrowUp) {
+                        d.cursor = d.cursor.saturating_sub(1);
+                    } else if plain(ctx, Key::Home) {
+                        d.cursor = 0;
+                    } else if plain(ctx, Key::End) {
+                        d.cursor = n.saturating_sub(1);
+                    } else {
+                        moved = false;
+                    }
+                    if moved {
+                        d.scroll = true;
+                    }
+                    if k(ctx, Key::Enter, false, true, false) {
+                        // Strg+Enter: aktuellen Pfad bestätigen.
+                        let v = d.text.clone();
+                        self.close_dialog(Some(json!({"path": v})));
+                    } else if plain(ctx, Key::Enter) {
+                        // Enter: zum ausgewählten Unterordner wechseln (oder, falls keine
+                        // Auswahl, den eingegebenen Pfad neu durchsuchen).
+                        if let Some(l) = d.folders.get(d.cursor).cloned() {
+                            let p = l.path;
+                            self.browse_folder(p);
+                        } else {
+                            let p = d.text.clone();
+                            self.browse_folder(p);
+                        }
+                    } else if k(ctx, Key::Backspace, false, false, false) {
+                        if let Some(parent) = d.parent.clone() {
+                            self.browse_folder(parent);
+                        }
+                    }
+                }
+                DialogKind::Material => {
+                    let n = d.entries.len();
+                    let mut moved = true;
+                    if plain(ctx, Key::ArrowDown) {
+                        d.cursor = (d.cursor + 1).min(n.saturating_sub(1));
+                    } else if plain(ctx, Key::ArrowUp) {
+                        d.cursor = d.cursor.saturating_sub(1);
+                    } else {
+                        moved = false;
+                    }
+                    if moved {
+                        d.scroll = true;
+                    }
+                    if k(ctx, Key::Enter, false, true, false) {
+                        // Strg+Enter: Auswahl bestätigen.
+                        let v = d.selected.clone();
+                        self.close_dialog(Some(json!({"paths": v})));
+                    } else if plain(ctx, Key::Enter) {
+                        if let Some(e) = d.entries.get(d.cursor).cloned() {
+                            self.toggle_material_entry(e.path, e.is_dir);
+                        }
+                    } else if k(ctx, Key::Backspace, false, false, false) {
+                        if let Some(parent) = d.parent.clone() {
+                            self.browse_material(parent);
+                        }
+                    }
+                }
             }
             return;
         }
@@ -264,11 +362,10 @@ impl App {
         if self.editor_open {
             if plain(ctx, Key::Escape) {
                 self.editor_open = false;
+                self.editor_target = EditorTarget::Prompt;
                 self.focus_prompt = true;
             } else if k(ctx, Key::S, false, true, false) {
-                self.editor_open = false;
-                let t = std::mem::take(&mut self.editor_text);
-                self.set_prompt(t);
+                self.apply_editor();
             }
             return;
         }
@@ -305,9 +402,83 @@ impl App {
             }
             return;
         }
+        // 4b. Sessions-/Inventarliste in der Seitenleiste (Tastaturnavigation, nur wenn die
+        // Eingabe nicht fokussiert ist und keine Auswahlliste/Hilfe offen ist).
+        let prompt_focused_now = ctx.memory(|m| m.has_focus(prompt_id()));
+        if self.store.side_visible && !prompt_focused_now {
+            if self.list_menu {
+                if plain(ctx, Key::Escape) {
+                    self.list_menu = false;
+                }
+                return;
+            }
+            let n = if self.side_view == 0 { self.visible_sessions().len() } else { self.visible_inventory().len() };
+            if n > 0 {
+                let mut moved = true;
+                let cur = self.list_cursor.unwrap_or(0).min(n - 1);
+                let mut cur = cur;
+                if plain(ctx, Key::ArrowDown) {
+                    cur = (cur + 1).min(n - 1);
+                } else if plain(ctx, Key::ArrowUp) {
+                    cur = cur.saturating_sub(1);
+                } else if plain(ctx, Key::Home) {
+                    cur = 0;
+                } else if plain(ctx, Key::End) {
+                    cur = n - 1;
+                } else {
+                    moved = false;
+                }
+                if moved {
+                    self.list_cursor = Some(cur);
+                    self.list_scroll = true;
+                    return;
+                }
+                if self.side_view == 0 {
+                    if plain(ctx, Key::Enter) {
+                        if let Some(s) = self.visible_sessions().get(cur).cloned() {
+                            self.open_session(&s, None);
+                        }
+                        return;
+                    }
+                    if plain(ctx, Key::R) || plain(ctx, Key::F2) {
+                        if let Some(s) = self.visible_sessions().get(cur).cloned() {
+                            self.rename_session(&s);
+                        }
+                        return;
+                    }
+                    if plain(ctx, Key::Backspace) || plain(ctx, Key::Delete) {
+                        if let Some(s) = self.visible_sessions().get(cur).cloned() {
+                            self.remove_session(&s);
+                        }
+                        return;
+                    }
+                    if plain(ctx, Key::M) || take(ctx, |kk, m| kk == Key::F10 && m.shift) {
+                        self.list_cursor = Some(cur);
+                        self.list_menu = true;
+                        return;
+                    }
+                } else if plain(ctx, Key::Enter) {
+                    if let Some(e) = self.visible_inventory().get(cur).map(|e| e.path.clone()) {
+                        self.open_inventory_file(&e);
+                    }
+                    return;
+                }
+            }
+        }
         // 5. Eingabefeld
         let focused = ctx.memory(|m| m.has_focus(prompt_id()));
-        let ime = ctx.input(|i| i.events.iter().any(|e| matches!(e, Event::Ime(_))));
+        ctx.input(|i| {
+            for event in &i.events {
+                match event {
+                    Event::Ime(egui::ImeEvent::Preedit { text, .. }) => self.prompt_ime_active = !text.is_empty(),
+                    Event::Ime(egui::ImeEvent::Commit(_)) => self.prompt_ime_active = false,
+                    #[allow(deprecated)]
+                    Event::Ime(egui::ImeEvent::Disabled) => self.prompt_ime_active = false,
+                    _ => {}
+                }
+            }
+        });
+        let ime = self.prompt_ime_active;
         if focused && !ime {
             if let Some(list) = self.slash_list() {
                 let n = list.len();
@@ -373,6 +544,20 @@ impl App {
             self.open_picker(PickerKind::Model);
         } else if k(ctx, Key::T, true, false, false) {
             self.open_picker(PickerKind::Thinking);
+        } else if k(ctx, Key::Num5, true, false, false) {
+            if self.preview.is_some() {
+                self.hide_preview();
+            } else if self.side_view == 0 {
+                let picked = self.list_cursor.and_then(|i| self.visible_sessions().get(i).cloned());
+                if let Some(s) = picked {
+                    self.show_preview(&s.path, &s.name, false);
+                }
+            } else {
+                let picked = self.list_cursor.and_then(|i| self.visible_inventory().get(i).map(|e| (*e).clone()));
+                if let Some(e) = picked {
+                    self.show_preview(&e.path, &e.name, false);
+                }
+            }
         } else if take(ctx, |kk, m| matches!(kk, Key::Plus | Key::Equals) && m.alt && !m.ctrl) {
             self.resize_output(1);
         } else if take(ctx, |kk, m| kk == Key::Minus && m.alt && !m.ctrl) {
@@ -393,50 +578,247 @@ impl App {
     fn sidebar(&mut self, ui: &mut Ui) {
         ui.spacing_mut().item_spacing = vec2(5.0, 6.0);
         let w = ui.available_width();
-        self.pick_button(ui, PickerKind::SideView, SIDE_VIEWS[0], w, "Ansicht wählen");
-        ui.horizontal(|ui| {
-            ui.set_height(28.0);
-            if btn(ui, "+ Neu", 12.0, vec2(9.0, 3.0), vec2(0.0, 28.0), false, true).on_hover_text("Neue Session (Alt+N)").clicked() {
-                self.new_session();
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let only = self.store.only_bookmarks;
-                let st = IconStyle { bg: if only { Some(PICK_OPEN) } else { None }, fg: if only { FG } else { DIM }, ..Default::default() };
-                let tip = if only { "Alle Sessions anzeigen" } else { "Nur Bookmarks anzeigen" };
-                if icons::icon_button(ui, vec2(28.0, 28.0), true, st, tip, |p, r, c| icons::bookmark_small(p, r, c, only)).clicked() {
-                    self.store.only_bookmarks = !only;
-                    self.save_store();
+        let side_label = SIDE_VIEWS[self.side_view.min(SIDE_VIEWS.len() - 1)];
+        self.pick_button(ui, PickerKind::SideView, side_label, w, "Ansicht wählen");
+        if self.side_view == 0 {
+            ui.horizontal(|ui| {
+                ui.set_height(28.0);
+                if btn(ui, "+ Neu", 12.0, vec2(9.0, 3.0), vec2(0.0, 28.0), false, true).on_hover_text("Neue Session (Alt+N)").clicked() {
+                    self.new_session();
                 }
-                let label = if self.store.sort == "bookmarks" { "Bookmarks" } else { "Zeit ↓" };
-                self.pick_button(ui, PickerKind::Sort, label, 104.0, "Sortierung");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let only = self.store.only_bookmarks;
+                    let st = IconStyle { bg: if only { Some(PICK_OPEN) } else { None }, fg: if only { FG } else { DIM }, ..Default::default() };
+                    let tip = if only { "Alle Sessions anzeigen" } else { "Nur Bookmarks anzeigen" };
+                    if icons::icon_button(ui, vec2(28.0, 28.0), true, st, tip, |p, r, c| icons::bookmark_small(p, r, c, only)).clicked() {
+                        self.store.only_bookmarks = !only;
+                        self.save_store();
+                    }
+                    let label = if self.store.sort == "bookmarks" { "Bookmarks" } else { "Zeit ↓" };
+                    self.pick_button(ui, PickerKind::Sort, label, 104.0, "Sortierung");
+                });
             });
-        });
+        } else if self.inventory_loading {
+            ui.add(Label::new(txt("Lädt…", 12.0, DIM)));
+        }
         ui.add_space(4.0);
         let sep = ui.available_rect_before_wrap();
         ui.painter().hline(sep.x_range(), sep.top(), Stroke::new(1.0, BORDER));
         ui.add_space(4.0);
-        let list = self.visible_sessions();
-        let active = self.session_file();
-        ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 5.0;
-            if list.is_empty() && self.store.only_bookmarks {
-                ui.add(Label::new(txt("Keine Bookmarks. Lesezeichen-Knopf oben zeigt wieder alle Sessions.", 12.0, DIM)).wrap());
+        if self.side_view == 0 {
+            let list = self.visible_sessions();
+            let active = self.session_file();
+            let cursor = self.list_cursor;
+            let scroll = std::mem::take(&mut self.list_scroll);
+            ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 5.0;
+                if list.is_empty() && self.store.only_bookmarks {
+                    ui.add(Label::new(txt("Keine Bookmarks. Lesezeichen-Knopf oben zeigt wieder alle Sessions.", 12.0, DIM)).wrap());
+                }
+                for (i, s) in list.iter().enumerate() {
+                    let r = self.session_card(ui, s, s.path == active, cursor == Some(i));
+                    if cursor == Some(i) && scroll {
+                        r.scroll_to_me(None);
+                    }
+                }
+            });
+        } else {
+            let entries: Vec<pi_backend::inventory::Entry> = self.visible_inventory().into_iter().cloned().collect();
+            let cursor = self.list_cursor;
+            let scroll = std::mem::take(&mut self.list_scroll);
+            let cat_color = match self.side_view {
+                1 => CAT_EXT,
+                2 => CAT_SKILLS,
+                3 => CAT_AGENTS,
+                _ => CAT_HARNESS,
+            };
+            ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 5.0;
+                if entries.is_empty() && !self.inventory_loading {
+                    ui.add(Label::new(txt("Keine Einträge gefunden.", 12.0, DIM)).wrap());
+                }
+                for (i, e) in entries.iter().enumerate() {
+                    let r = self.inventory_card(ui, e, cursor == Some(i), cat_color);
+                    if cursor == Some(i) && scroll {
+                        r.scroll_to_me(None);
+                    }
+                }
+            });
+        }
+    }
+
+    fn inventory_card(&mut self, ui: &mut Ui, e: &pi_backend::inventory::Entry, selected: bool, cat_color: Color32) -> Response {
+        let w = ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(vec2(w, 44.0), Sense::hover());
+        let resp = ui.interact(rect, Id::new(("invcard", &e.path)), Sense::click());
+        let t = if selected { 0.22 } else if resp.hovered() { 0.17 } else { 0.09 };
+        let p = ui.painter();
+        p.rect_filled(rect, 8, mix(cat_color, t, CARD));
+        let border = if selected { cat_color } else { mix(cat_color, 0.32, CARD) };
+        p.rect_stroke(rect, 8, Stroke::new(1.0, border), StrokeKind::Inside);
+        let tw = rect.width() - 20.0;
+        let mut job = LayoutJob::simple_singleline(e.name.clone(), FontId::proportional(13.0), FG);
+        job.wrap = TextWrapping::truncate_at_width(tw);
+        p.galley(rect.min + vec2(10.0, 6.0), p.layout_job(job), FG);
+        let meta = if e.harness.is_empty() { pi_backend::tilde(&e.path) } else { format!("{} · {}", e.harness, pi_backend::tilde(&e.path)) };
+        let mut job = LayoutJob::simple_singleline(meta, FontId::proportional(11.0), DIM);
+        job.wrap = TextWrapping::truncate_at_width(tw);
+        p.galley(rect.min + vec2(10.0, 24.0), p.layout_job(job), DIM);
+        if resp.hovered() {
+            self.preview_anchor = rect;
+            self.preview_hover_until = std::time::Instant::now() + Duration::from_millis(300);
+        }
+        if resp.clicked() || (resp.hovered() && resp.hover_pos().is_some() && self.preview.as_ref().is_none_or(|p| p.path != e.path)) {
+            self.show_preview(&e.path, &e.name, false);
+        }
+        if resp.double_clicked() {
+            self.open_inventory_file(&e.path);
+        }
+        resp.context_menu(|ui| {
+            ui.set_min_width(170.0);
+            if ui.button("Vorschau").clicked() {
+                self.show_preview(&e.path, &e.name, false);
+                ui.close();
             }
-            for s in &list {
-                self.session_card(ui, s, s.path == active);
+            if ui.button("Bearbeiten").clicked() {
+                self.open_inventory_file(&e.path);
+                ui.close();
+            }
+        });
+        resp
+    }
+
+    /// Vorschau-Spalte (Stufe 3, Alt+5): lokale Kurzinfo immer; KI-Zweckerklärung nur nach
+    /// ausdrücklicher Zustimmung (Datenschutz/Kosten), vereinfacht als feste Spalte statt
+    /// Hover-Tooltip wie im Original.
+    fn preview_panel(&mut self, ui: &mut Ui) {
+        let Some(p) = &self.preview else { return };
+        let (name, path, text, method, loading) = (p.name.clone(), p.path.clone(), p.text.clone(), p.method.clone(), p.loading);
+        let (ai_text, ai_method, ai_loading, ai_visible, ask_consent) = (p.ai_text.clone(), p.ai_method.clone(), p.ai_loading, p.ai_visible, p.ask_consent);
+        ui.horizontal(|ui| {
+            ui.add(Label::new(RichText::new("Vorschau").size(14.0).color(FG).family(egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()))));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if btn(ui, "×", 13.0, vec2(8.0, 2.0), Vec2::ZERO, false, true).on_hover_text("Vorschau schließen (Alt+5)").clicked() {
+                    self.hide_preview();
+                }
+                if btn(ui, "Cache leeren", 10.5, vec2(6.0, 2.0), Vec2::ZERO, false, true).on_hover_text("Zwischengespeicherte Kurzinfos und KI-Zweckerklärungen löschen (fragt vorher nach)").clicked() {
+                    self.confirm_clear_preview_cache();
+                }
+            });
+        });
+        ui.add_space(4.0);
+        if ui.small_button("KI-Hilfsmodell auswählen…").clicked() { self.configure_preview_helper(); }
+        ui.add(Label::new(txt(name, 13.0, FG)).wrap());
+        ui.add(Label::new(txt(pi_backend::tilde(&path), 11.0, DIM)).truncate());
+        ui.add_space(8.0);
+        if !path.ends_with(".jsonl") {
+            ui.horizontal(|ui| {
+                if ui.button("Intern bearbeiten…").clicked() { self.open_inventory_file(&path); }
+                if ui.button("VSCodium ↗").clicked() { self.open_editor(Some(&path)); }
+            });
+        }
+        ScrollArea::vertical().max_height(440.0).auto_shrink([false, true]).show(ui, |ui| {
+            if loading {
+                spinner(ui);
+            }
+            ui.add(Label::new(txt(text, 12.5, FG)).wrap());
+            if !method.is_empty() {
+                ui.add(Label::new(txt(format!("Quelle: {method}"), 10.5, DIM)).wrap());
+            }
+            ui.add_space(10.0);
+            let sep = ui.available_rect_before_wrap();
+            ui.painter().hline(sep.x_range(), sep.top(), Stroke::new(1.0, BORDER));
+            ui.add_space(8.0);
+            if ask_consent {
+                ui.add(Label::new(txt(
+                    "KI-Zweckerklärung nutzt ein Hilfsmodell und sendet dazu einen Dateiausschnitt. Fortfahren?",
+                    12.0,
+                    FG,
+                )).wrap());
+                ui.horizontal(|ui| {
+                    if btn(ui, "Zustimmen & erklären", 12.0, vec2(10.0, 5.0), Vec2::ZERO, true, true).clicked() {
+                        self.allow_ai_explain();
+                    }
+                    if btn(ui, "Abbrechen", 12.0, vec2(10.0, 5.0), Vec2::ZERO, false, true).clicked() {
+                        self.deny_ai_explain();
+                    }
+                });
+            } else if ai_visible {
+                ui.add(Label::new(RichText::new("KI-Zweck").size(12.0).color(FG).family(egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()))));
+                if ai_loading {
+                    spinner(ui);
+                }
+                Frame::new().fill(mix(ACC, 0.10, PANEL)).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
+                    ui.add(Label::new(txt(ai_text, 12.5, FG)).wrap());
+                    if !ai_method.is_empty() { ui.add(Label::new(txt(format!("LLM: {ai_method}"), 9.0, DIM)).wrap()); }
+                });
+                if btn(ui, "Neu erklären", 11.0, vec2(8.0, 4.0), Vec2::ZERO, false, !ai_loading).clicked() {
+                    self.request_ai_explain(true);
+                }
+            } else if btn(ui, "Zweck mit KI erklären…", 12.0, vec2(10.0, 5.0), Vec2::ZERO, false, true).clicked() {
+                self.request_ai_explain(false);
             }
         });
     }
 
-    fn session_card(&mut self, ui: &mut Ui, s: &pi_backend::sessions::SessionInfo, active: bool) {
+    /// Vereinfachtes, fest positioniertes Kontextmenü für den per Tastatur markierten
+    /// Sessioneintrag (M / Umschalt+F10) – anstelle eines pro-Zeile positionierten Menüs.
+    fn list_menu_overlay(&mut self, ctx: &Context) {
+        if !self.list_menu {
+            return;
+        }
+        let Some(idx) = self.list_cursor else {
+            self.list_menu = false;
+            return;
+        };
+        let Some(s) = self.visible_sessions().get(idx).cloned() else {
+            self.list_menu = false;
+            return;
+        };
+        let active = s.path == self.session_file();
+        let bm = self.store.is_bookmark(&s.path);
+        let mut close = true;
+        egui::Modal::new(Id::new("list-menu"))
+            .backdrop_color(Color32::from_black_alpha(0x55))
+            .frame(Frame::new().fill(PANEL).stroke(Stroke::new(1.0, BORDER)).corner_radius(10).inner_margin(Margin::same(10)))
+            .show(ctx, |ui| {
+                ui.set_width(220.0);
+                ui.add(Label::new(RichText::new("Session-Menü").size(13.0).color(FG).family(egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()))));
+                ui.add_space(4.0);
+                close = false;
+                if !active && ui.button("Öffnen").clicked() {
+                    self.open_session(&s, None);
+                    close = true;
+                }
+                if ui.button(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" }).clicked() {
+                    self.toggle_bookmark(&s.path);
+                }
+                if ui.button("Umbenennen").clicked() {
+                    self.rename_session(&s);
+                    close = true;
+                }
+                if !active && ui.button("Löschen …").clicked() {
+                    self.remove_session(&s);
+                    close = true;
+                }
+                if ui.button("Abbrechen").clicked() {
+                    close = true;
+                }
+            });
+        if close {
+            self.list_menu = false;
+        }
+    }
+
+    fn session_card(&mut self, ui: &mut Ui, s: &pi_backend::sessions::SessionInfo, active: bool, selected: bool) -> Response {
         let w = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(vec2(w, 52.0), Sense::hover());
         let resp = ui.interact(rect, Id::new(("card", &s.path)), Sense::click());
         let bm = self.store.is_bookmark(&s.path);
-        let t = if active { 0.22 } else if resp.hovered() { 0.17 } else { 0.09 };
+        let t = if active || selected { 0.22 } else if resp.hovered() { 0.17 } else { 0.09 };
         let p = ui.painter();
         p.rect_filled(rect, 8, mix(CAT, t, CARD));
-        let border = if active { CAT } else { mix(CAT, 0.32, CARD) };
+        let border = if active || selected { CAT } else { mix(CAT, 0.32, CARD) };
         p.rect_stroke(rect, 8, Stroke::new(1.0, border), StrokeKind::Inside);
         let title = [&s.name, &s.title].into_iter().find(|t| !t.is_empty()).cloned().unwrap_or("(leer)".into());
         let tw = rect.width() - 24.0;
@@ -448,6 +830,13 @@ impl App {
         job.wrap = TextWrapping::truncate_at_width(tw - 52.0);
         p.galley(rect.min + vec2(12.0, 29.0), p.layout_job(job), DIM);
 
+        if resp.hovered() {
+            self.preview_anchor = rect;
+            self.preview_hover_until = std::time::Instant::now() + Duration::from_millis(300);
+        }
+        if resp.hovered() && self.preview.as_ref().is_none_or(|p| p.path != s.path) {
+            self.show_preview(&s.path, &title, false);
+        }
         let bm_rect = Rect::from_min_size(rect.right_bottom() - vec2(6.0 + 23.0, 5.0 + 23.0), vec2(23.0, 23.0));
         let act_rect = bm_rect.translate(vec2(-25.0, 0.0));
         let bm_resp = ui.interact(bm_rect, Id::new(("cardbm", &s.path)), Sense::click()).on_hover_text(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" });
@@ -490,6 +879,7 @@ impl App {
                 ui.close();
             }
         });
+        resp
     }
 
     // ---------- Kopfzeile ----------
@@ -550,9 +940,9 @@ impl App {
             if btn(ui, "A−", 13.0, vec2(7.0, 4.0), vec2(0.0, 28.0), false, true).on_hover_text("Ausgabeschrift kleiner (Alt+−)").clicked() {
                 self.resize_output(-1);
             }
-            if ui.add(Label::new(txt(format!("{} px", self.store.output_size as i32), 12.0, DIM)).sense(Sense::click())).on_hover_text("Zurücksetzen").clicked() {
-                self.resize_output(0);
-            }
+            let font_size = btn(ui, &format!("{} px", self.store.output_size as i32), 12.0, vec2(7.0, 4.0), vec2(0.0, 28.0), false, true).on_hover_text("Schriftgröße zurücksetzen");
+            ui.painter().rect_stroke(font_size.rect, 6, Stroke::new(1.0, BORDER), StrokeKind::Inside);
+            if font_size.clicked() { self.resize_output(0); }
             if btn(ui, "A+", 13.0, vec2(7.0, 4.0), vec2(0.0, 28.0), false, true).on_hover_text("Ausgabeschrift größer (Alt++)").clicked() {
                 self.resize_output(1);
             }
@@ -564,7 +954,15 @@ impl App {
                 if self.busy || self.active_job.is_some() {
                     spinner(ui);
                 }
-                ui.add(Label::new(txt(self.status.clone(), 13.0, DIM)).truncate());
+                if self.busy {
+                    let sec = self.busy_since.map(|t| t.elapsed().as_secs_f32()).unwrap_or(0.0);
+                    Frame::new().fill(mix(ACC, 0.10, PANEL)).stroke(Stroke::new(1.0, ACC))
+                        .corner_radius(6).inner_margin(Margin::symmetric(7, 3)).show(ui, |ui| {
+                            ui.add(Label::new(txt(format!("≈{:.0}%", 95.0 * (1.0 - (-sec / 90.0).exp())), 12.0, ACC)))
+                                .on_hover_text("Zeitbasierte Schätzung, kein gemessener Agent-Fortschritt. Bleibt während der Arbeit unter 95 %.");
+                        });
+                }
+                ui.add(Label::new(txt(self.status.clone(), 13.0, if self.busy { ACC } else { DIM })).truncate());
             });
         });
     }
@@ -573,10 +971,22 @@ impl App {
 
     fn usage_bar(&mut self, ui: &mut Ui) {
         ui.horizontal_centered(|ui| {
-            ui.add(Label::new(txt(self.usage_text.clone(), 12.0, DIM)).truncate());
+            let usage = ui.add(Label::new(txt(self.usage_text.clone(), 12.0, DIM)).truncate());
+            usage.on_hover_ui(|ui| {
+                ui.set_width(390.0);
+                ui.heading("Tokens & Kontext");
+                ui.label(RichText::new(&self.usage_text).size(15.0).color(FG));
+                ui.separator();
+                egui::Grid::new("usage-details").spacing(vec2(18.0, 10.0)).show(ui, |ui| {
+                    for (key, desc) in [("↑ Eingabe", "An das Modell gesendete Tokens"), ("↓ Ausgabe", "Vom Modell erzeugte Tokens"), ("R Cache", "Bereits verarbeitete, erneut gelesene Tokens"), ("CH Treffer", "Anteil aus dem Prompt-Cache"), ("Kontext %", "Belegung des verfügbaren Kontextfensters"), ("auto", "Automatische Kontextkomprimierung") ] {
+                        ui.label(RichText::new(key).strong()); ui.label(desc); ui.end_row();
+                    }
+                });
+            });
             let st = IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 14.0, radius: 5 };
             if icons::icon_button(ui, vec2(20.0, 20.0), true, st, "Tokenanzeige erklären", icons::info).clicked() {
-                self.toast("↑ Eingabe · ↓ Ausgabe · R Cache gelesen · CH Cache-Trefferquote · Kontextbelegung/Fenster", ToastKind::Info);
+                let details = self.usage_details.clone();
+                self.ask(DialogKind::Editor, "Tokens & Kontext", "", vec![], &details, |_, _| {});
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let en = self.speech_available;
@@ -589,6 +999,46 @@ impl App {
                 let tip = if en { "Sprachausgabe ein-/ausschalten" } else { "Keine Vorlesen-Extension geladen" };
                 if icons::icon_button(ui, vec2(26.0, 22.0), en, st, tip, |p, r, c| icons::speaker(p, r, c, on)).clicked() {
                     self.speech_command(if on { "aus" } else { "an" });
+                }
+            });
+        });
+    }
+
+    /// Leiste mit Material-Chips (eine Datei/URL je Chip) und Status, über dem Eingabefeld.
+    /// Entspricht `#materialchips`/`#materialstatus` aus `ui/app.js`.
+    fn material_bar(&mut self, ui: &mut Ui) {
+        if !self.material.status.is_empty() {
+            ui.add(Label::new(txt(self.material.status.clone(), 12.0, DIM)).truncate());
+        }
+        if self.material.items.is_empty() {
+            return;
+        }
+        ui.horizontal_wrapped(|ui| {
+            for item in self.material.items.clone() {
+                let label = format!("{} {} ×", if item.url { "URL:" } else { "Datei:" }, item.value.rsplit('/').next().unwrap_or(&item.value));
+                let resp = btn(ui, &label, 12.0, vec2(8.0, 4.0), Vec2::ZERO, false, !self.material.preparing).on_hover_text(item.value.clone());
+                if resp.clicked() {
+                    self.remove_material(item);
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(!self.material.preparing, |ui| {
+                let refs = self.material.mode == crate::material_ui::MaterialMode::ReferencesOnly;
+                let mut checked = refs;
+                if ui.checkbox(&mut checked, "Nur Dateiverweise").changed() {
+                    self.material.mode = if checked { crate::material_ui::MaterialMode::ReferencesOnly } else { crate::material_ui::MaterialMode::Auto };
+                }
+                if !self.material.routes.is_empty() {
+                    egui::ComboBox::from_id_salt("material-route")
+                        .selected_text(if self.material.route.is_empty() { "Medienroute: automatisch".to_string() } else { self.material.route.clone() })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.material.route, String::new(), "automatisch – bestätigte Route");
+                            for r in self.material.routes.clone() {
+                                let label = format!("{} · {}{}", r.label, r.modalities.join("/"), if r.available { "" } else { " · Zugang fehlt" });
+                                ui.selectable_value(&mut self.material.route, r.id.clone(), label);
+                            }
+                        });
                 }
             });
         });
@@ -607,13 +1057,13 @@ impl App {
         let st = IconStyle { icon: 14.0, ..Default::default() };
         let row = |i: f32| Rect::from_min_size(tools.min + vec2(0.0, i * (h + 4.0)), vec2(32.0, h));
         let r0 = ui.interact(row(0.0), Id::new("t-add"), Sense::click()).on_hover_text("Material hinzufügen");
-        icons::paint_icon_button(ui, row(0.0), &r0, true, st, icons::plus);
+        icons::paint_icon_button(ui, row(0.0), &r0, true, IconStyle { fg: Color32::WHITE, bg: Some(ACC), ..st }, icons::plus);
         let r1 = ui.interact(row(1.0), Id::new("t-up"), Sense::click()).on_hover_text("Ältere Eingabe (Alt+↑)");
         icons::paint_icon_button(ui, row(1.0), &r1, true, st, icons::up);
         let r2 = ui.interact(row(2.0), Id::new("t-down"), Sense::click()).on_hover_text("Neuere Eingabe (Alt+↓)");
         icons::paint_icon_button(ui, row(2.0), &r2, true, st, icons::down);
         if r0.clicked() {
-            self.toast("Material kommt in Stufe 3.", ToastKind::Info);
+            self.choose_material();
         }
         if r1.clicked() {
             self.recall(-1);
@@ -666,6 +1116,7 @@ impl App {
         icons::paint_icon_button(ui, ex, &er, true, IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 13.0, radius: 5 }, icons::expand);
         if er.clicked() {
             self.editor_text = self.prompt.clone();
+            self.editor_target = EditorTarget::Prompt;
             self.editor_open = true;
             self.editor_focus = true;
         }
@@ -695,101 +1146,132 @@ impl App {
         let busy = self.busy;
         let th = md_egui::Theme { size, ..Default::default() };
         let items = &mut self.items;
-        ScrollArea::vertical().id_salt("log").stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+        let n = items.len();
+        // Die Busy-Animation zählt für die Höhen-Buchführung als ein weiterer
+        // "Eintrag" nach dem letzten Log-Item.
+        let total = n + usize::from(busy);
+
+        // Breite auf ein Raster runden, damit kleine Schwankungen (z. B. durch
+        // ein auftauchendes/verschwindendes Scrollbar-Pixel) nicht bei jedem
+        // Frame den kompletten Höhen-Cache verwerfen.
+        let width_bucket = (ui.available_width() / 8.0).round() * 8.0;
+        let cache_id = Id::new("copi-log-heights");
+        let mut cache = virtual_log::load(ui, cache_id);
+        cache.sync(total, width_bucket, size, epoch);
+
+        let out = ScrollArea::vertical().id_salt("log").stick_to_bottom(true).auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
             Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 12.0;
                 let avail = ui.available_width();
                 let maxw = avail.min(900.0);
-                for (i, item) in items.iter_mut().enumerate() {
-                    let salt = (epoch, i);
-                    match item {
-                        Item::User(text) => {
-                            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                                let fr = Frame::new().fill(ACC).corner_radius(10).inner_margin(Margin { left: 14, right: 30, top: 10, bottom: 10 }).show(ui, |ui| {
-                                    ui.set_max_width(maxw - 44.0);
-                                    ui.add(Label::new(txt(text.clone(), size, BG)).wrap());
-                                });
-                                let r = fr.response.rect;
-                                let br = Rect::from_min_size(r.right_top() + vec2(-24.0, 4.0), vec2(20.0, 20.0));
-                                let resp = ui.interact(br, Id::new(("redo", salt)), Sense::click()).on_hover_text("Anfrage in die Eingabe übernehmen");
-                                let col = if resp.hovered() { Color32::WHITE } else { alpha(BG, 0.7) };
-                                ui.painter().text(br.center(), Align2::CENTER_CENTER, "↻", FontId::proportional(14.0), col);
-                                if resp.clicked() {
-                                    let t = text.clone();
-                                    acts.push(Box::new(move |a| a.set_prompt(t)));
-                                }
-                            });
-                        }
-                        Item::Assistant { doc, text, done } => {
-                            let fr = Frame::new().fill(PANEL).corner_radius(10).inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
-                                ui.set_width(maxw - 28.0);
-                                md_egui::show_doc(ui, &th, doc.get(text), ("a", salt))
-                            });
-                            if let Some(link) = fr.inner.clicked_link {
-                                acts.push(Box::new(move |a| {
-                                    if is_url(&link) {
-                                        if let Err(e) = pi_backend::cli::open_url(&link) {
-                                            a.toast(e, ToastKind::Error);
-                                        }
-                                    } else {
-                                        a.toast(format!("Verweis: {link}"), ToastKind::Info);
-                                    }
-                                }));
-                            }
-                            if *done {
-                                let r = fr.response.rect;
-                                let br = Rect::from_min_size(r.right_top() + vec2(-26.0, 4.0), vec2(22.0, 22.0));
-                                let resp = ui.interact(br, Id::new(("copy", salt)), Sense::click()).on_hover_text("Diese Textausgabe als Markdown kopieren");
-                                if resp.hovered() || fr.response.hovered() || ui.rect_contains_pointer(r) {
-                                    let col = if resp.hovered() { FG } else { DIM };
-                                    ui.painter().text(br.center(), Align2::CENTER_CENTER, "⧉", FontId::proportional(14.0), col);
-                                }
-                                if resp.clicked() {
-                                    let t = text.clone();
-                                    acts.push(Box::new(move |a| {
-                                        a.ctx.copy_text(t);
-                                        a.toast("Markdown kopiert.", ToastKind::Info);
-                                    }));
-                                }
-                            }
-                        }
-                        Item::Thinking(t) => {
-                            ui.add(Label::new(txt(t.clone(), 13.0, DIM).italics()).wrap());
-                        }
-                        Item::Note { text, err, block } => {
-                            let c = if *err { ERR } else { DIM };
-                            if *block {
-                                Frame::new().fill(PANEL).corner_radius(8).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
-                                    ui.set_max_width(maxw - 24.0);
-                                    ui.add(Label::new(txt(text.clone(), 13.0, FG)).wrap());
-                                });
-                            } else {
-                                ui.vertical_centered(|ui| {
-                                    ui.add(Label::new(txt(text.clone(), 13.0, c)).wrap());
-                                });
-                            }
-                        }
-                        Item::Tool { name, args, out, open, err, path, .. } => {
-                            let stripe = if *err { ERR } else { ACC };
-                            let title = format!("{name} {args}");
-                            let p2 = path.clone();
-                            block(ui, maxw, stripe, salt, open, &title, "", p2.as_deref(), out, &mut acts);
-                        }
-                        Item::Shell { title, out, state, open, err } => {
-                            let stripe = if *err { ERR } else if state.starts_with("läuft") { WARN } else { OK };
-                            block(ui, maxw, stripe, salt, open, title, state, None, out, &mut acts);
-                        }
-                        Item::StartCard(card) => start_card(ui, maxw, card, salt, &mut acts),
-                    }
+                let spacing = ui.spacing().item_spacing.y;
+                // Großzügiger Überstand, damit knapp außerhalb des Viewports liegende
+                // Einträge schon gemountet sind, bevor sie sichtbar werden.
+                const OVERSCAN: f32 = 800.0;
+                const ESTIMATE: f32 = 90.0;
+                let mut pl = virtual_log::plan(&cache, total, viewport, OVERSCAN, spacing, ESTIMATE);
+                if force {
+                    // Beim erzwungenen Ans-Ende-Springen (z. B. Sitzungswechsel) muss
+                    // der tatsächlich letzte Eintrag gerendert sein, damit
+                    // `scroll_to_cursor` eine echte Zielposition hat. Einmaliger
+                    // Vollrender-Frame ist hierfür akzeptabel (seltenes Ereignis).
+                    pl.last = total;
+                    pl.trail_space = 0.0;
                 }
-                if busy {
-                    ui.horizontal(|ui| spinner(ui));
+                if pl.lead_space > 0.0 {
+                    ui.allocate_exact_size(vec2(1.0, pl.lead_space), Sense::hover());
+                }
+                for i in pl.first..pl.last.min(total) {
+                    let salt = (epoch, i);
+                    let measured = ui.scope(|ui| {
+                        if i >= n {
+                            ui.horizontal(|ui| spinner(ui));
+                            return;
+                        }
+                        match &mut items[i] {
+                            Item::User(text) => {
+                                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                                    let fr = Frame::new().fill(ACC).corner_radius(10).inner_margin(Margin { left: 14, right: 30, top: 10, bottom: 10 }).show(ui, |ui| {
+                                        ui.set_max_width(maxw - 44.0);
+                                        ui.add(Label::new(txt(text.clone(), size, BG)).wrap());
+                                    });
+                                    let r = fr.response.rect;
+                                    let br = Rect::from_min_size(r.right_top() + vec2(-24.0, 4.0), vec2(20.0, 20.0));
+                                    let resp = ui.interact(br, Id::new(("redo", salt)), Sense::click()).on_hover_text("Anfrage in die Eingabe übernehmen");
+                                    let col = if resp.hovered() { Color32::WHITE } else { alpha(BG, 0.7) };
+                                    ui.painter().text(br.center(), Align2::CENTER_CENTER, "↻", FontId::proportional(14.0), col);
+                                    if resp.clicked() {
+                                        let t = text.clone();
+                                        acts.push(Box::new(move |a| a.set_prompt(t)));
+                                    }
+                                });
+                            }
+                            Item::Assistant { doc, text, done } => {
+                                let fr = Frame::new().fill(PANEL).corner_radius(10).inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
+                                    ui.set_width(maxw - 28.0);
+                                    md_egui::show_doc(ui, &th, doc.get(text), ("a", salt))
+                                });
+                                if let Some(link) = fr.inner.clicked_link {
+                                    acts.push(Box::new(move |a| a.handle_markdown_link(&link)));
+                                }
+                                if *done {
+                                    let r = fr.response.rect;
+                                    let br = Rect::from_min_size(r.right_top() + vec2(-26.0, 4.0), vec2(22.0, 22.0));
+                                    let resp = ui.interact(br, Id::new(("copy", salt)), Sense::click()).on_hover_text("Diese Textausgabe als Markdown kopieren");
+                                    if resp.hovered() || fr.response.hovered() || ui.rect_contains_pointer(r) {
+                                        let col = if resp.hovered() { FG } else { DIM };
+                                        ui.painter().text(br.center(), Align2::CENTER_CENTER, "⧉", FontId::proportional(14.0), col);
+                                    }
+                                    if resp.clicked() {
+                                        let t = text.clone();
+                                        acts.push(Box::new(move |a| {
+                                            a.ctx.copy_text(t);
+                                            a.toast("Markdown kopiert.", ToastKind::Info);
+                                        }));
+                                    }
+                                }
+                            }
+                            Item::Thinking(t) => {
+                                ui.add(Label::new(txt(t.clone(), 13.0, DIM).italics()).wrap());
+                            }
+                            Item::Note { text, err, block } => {
+                                let c = if *err { ERR } else { DIM };
+                                if *block {
+                                    Frame::new().fill(PANEL).corner_radius(8).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
+                                        ui.set_max_width(maxw - 24.0);
+                                        ui.add(Label::new(txt(text.clone(), 13.0, FG)).wrap());
+                                    });
+                                } else {
+                                    ui.vertical_centered(|ui| {
+                                        ui.add(Label::new(txt(text.clone(), 13.0, c)).wrap());
+                                    });
+                                }
+                            }
+                            Item::Tool { name, args, out, open, err, path, .. } => {
+                                let stripe = if *err { ERR } else { ACC };
+                                let title = format!("{name} {args}");
+                                let p2 = path.clone();
+                                block(ui, maxw, stripe, salt, open, &title, "", p2.as_deref(), out, &mut acts);
+                            }
+                            Item::Shell { title, out, state, open, err } => {
+                                let stripe = if *err { ERR } else if state.starts_with("läuft") { WARN } else { OK };
+                                block(ui, maxw, stripe, salt, open, title, state, None, out, &mut acts);
+                            }
+                            Item::StartCard(card) => start_card(ui, maxw, card, salt, &mut acts),
+                        }
+                    });
+                    cache.set(i, measured.response.rect.height());
+                }
+                if pl.trail_space > 0.0 {
+                    ui.allocate_exact_size(vec2(1.0, pl.trail_space), Sense::hover());
                 }
                 if force {
                     ui.scroll_to_cursor(Some(Align::BOTTOM));
                 }
             });
         });
+        let _ = out;
+        virtual_log::save(ui, cache_id, cache);
         for a in acts {
             a(self);
         }
@@ -828,8 +1310,8 @@ impl App {
             .constrain(true)
             .show(ctx, |ui| {
                 Frame::new().fill(PANEL).stroke(Stroke::new(1.0, BORDER)).corner_radius(6).inner_margin(Margin::same(4)).show(ui, |ui| {
-                    ui.set_width(width);
-                    ScrollArea::vertical().max_height(maxh).show(ui, |ui| {
+                    ui.set_min_size(vec2(width, (rows.len() as f32 * 34.0).min(maxh)));
+                    ScrollArea::vertical().max_height(maxh).auto_shrink([false, false]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible).show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         for (i, r) in rows.iter().enumerate() {
                             let (rect, resp) = ui.allocate_exact_size(vec2(width, 30.0), Sense::click());
@@ -930,6 +1412,9 @@ impl App {
     fn dialog_overlay(&mut self, ctx: &Context) {
         let Some(d) = self.dialogs.front_mut() else { return };
         let mut answer: Option<Value> = None;
+        let mut navigate: Option<String> = None;
+        let mut navigate_material: Option<String> = None;
+        let mut toggle_material: Option<(String, bool)> = None;
         let screen = ctx.content_rect();
         let width = 560.0f32.min(screen.width() - 24.0);
         let modal = egui::Modal::new(Id::new("dialog"))
@@ -990,7 +1475,8 @@ impl App {
                     DialogKind::Input | DialogKind::Editor => {
                         let id = Id::new("dialog-text");
                         let editor = d.kind == DialogKind::Editor;
-                        let te = if editor { egui::TextEdit::multiline(&mut d.text).desired_rows(8) } else { egui::TextEdit::singleline(&mut d.text) };
+                        let info_only = d.title == "Tokens & Kontext";
+                        let te = if editor { egui::TextEdit::multiline(&mut d.text).desired_rows(14).interactive(!info_only) } else { egui::TextEdit::singleline(&mut d.text) };
                         let r = Frame::new().fill(BG).corner_radius(6).inner_margin(Margin::same(8)).show(ui, |ui| {
                             let te = te.id(id).frame(Frame::NONE).hint_text(d.placeholder.clone()).desired_width(f32::INFINITY).font(FontId::proportional(14.0));
                             if editor {
@@ -1008,7 +1494,7 @@ impl App {
                             d.focus = false;
                         }
                         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                            let ok_label = if editor { "Übernehmen (Strg+Enter)" } else { "OK" };
+                            let ok_label = if info_only { "Schließen" } else if editor { "Übernehmen (Strg+Enter)" } else { "OK" };
                             if btn(ui, ok_label, 13.0, vec2(14.0, 6.0), vec2(64.0, 0.0), true, true).clicked() {
                                 answer = Some(json!({"value": d.text.clone()}));
                             }
@@ -1017,8 +1503,151 @@ impl App {
                             }
                         });
                     }
+                    DialogKind::Folder => {
+                        let id = Id::new("dialog-folder-text");
+                        let mut enter_pressed = false;
+                        ui.horizontal(|ui| {
+                            let r = Frame::new().fill(BG).corner_radius(6).inner_margin(Margin::symmetric(8, 6)).show(ui, |ui| {
+                                let resp = ui.add(
+                                    egui::TextEdit::singleline(&mut d.text).id(id).frame(Frame::NONE).desired_width(ui.available_width() - 70.0).font(FontId::proportional(14.0)),
+                                );
+                                if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                                    enter_pressed = true;
+                                }
+                                resp
+                            });
+                            if d.focus {
+                                r.inner.request_focus();
+                                d.focus = false;
+                            }
+                            if btn(ui, "Hoch", 12.0, vec2(10.0, 6.0), Vec2::ZERO, false, d.parent.is_some()).clicked() {
+                                if let Some(p) = d.parent.clone() {
+                                    navigate = Some(p);
+                                }
+                            }
+                        });
+                        if enter_pressed {
+                            navigate = Some(d.text.clone());
+                        }
+                        let moved = ui.input(|i| i.pointer.delta() != Vec2::ZERO);
+                        ScrollArea::vertical().max_height(screen.height() * 0.45).show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            for (i, l) in d.folders.iter().enumerate() {
+                                let (rect, resp) = ui.allocate_exact_size(vec2(width - 32.0, 28.0), Sense::click());
+                                if resp.hovered() && moved {
+                                    d.cursor = i;
+                                }
+                                let sel = i == d.cursor;
+                                ui.painter().rect_filled(rect, 6, if sel { ACC } else { BTN });
+                                let mut job = LayoutJob::simple_singleline(l.name.clone(), FontId::proportional(13.0), FG);
+                                job.wrap = TextWrapping::truncate_at_width(rect.width() - 20.0);
+                                let g = ui.painter().layout_job(job);
+                                ui.painter().galley(pos_left(rect, 10.0, g.size().y), g, if sel { Color32::WHITE } else { FG });
+                                if sel && d.scroll {
+                                    resp.scroll_to_me(None);
+                                }
+                                if resp.double_clicked() {
+                                    navigate = Some(l.path.clone());
+                                } else if resp.clicked() {
+                                    d.cursor = i;
+                                }
+                            }
+                        });
+                        d.scroll = false;
+                        if d.folders.is_empty() {
+                            ui.add(Label::new(txt("Keine Unterordner.", 12.0, DIM)).wrap());
+                        }
+                        ui.add(Label::new(txt("Enter im Textfeld: Ordner wechseln · Doppelklick: Unterordner öffnen · Strg+Enter/Knopf: auswählen · Backspace: Hoch", 11.0, DIM)).wrap());
+                        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                            if btn(ui, "Ordner wählen", 13.0, vec2(14.0, 6.0), Vec2::ZERO, true, true).clicked() {
+                                answer = Some(json!({"path": d.text.clone()}));
+                            }
+                            if btn(ui, "Abbrechen", 13.0, vec2(14.0, 6.0), Vec2::ZERO, false, true).clicked() {
+                                answer = Some(json!({"cancelled": true}));
+                            }
+                        });
+                    }
+                    DialogKind::Material => {
+                        let id = Id::new("dialog-material-text");
+                        let mut enter_pressed = false;
+                        ui.horizontal(|ui| {
+                            let r = Frame::new().fill(BG).corner_radius(6).inner_margin(Margin::symmetric(8, 6)).show(ui, |ui| {
+                                let resp = ui.add(
+                                    egui::TextEdit::singleline(&mut d.text).id(id).frame(Frame::NONE).desired_width(ui.available_width() - 70.0).font(FontId::proportional(14.0)),
+                                );
+                                if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                                    enter_pressed = true;
+                                }
+                                resp
+                            });
+                            if d.focus {
+                                r.inner.request_focus();
+                                d.focus = false;
+                            }
+                            if btn(ui, "Hoch", 12.0, vec2(10.0, 6.0), Vec2::ZERO, false, d.parent.is_some()).clicked() {
+                                if let Some(p) = d.parent.clone() {
+                                    navigate_material = Some(p);
+                                }
+                            }
+                        });
+                        if enter_pressed {
+                            navigate_material = Some(d.text.clone());
+                        }
+                        let moved = ui.input(|i| i.pointer.delta() != Vec2::ZERO);
+                        ScrollArea::vertical().max_height(screen.height() * 0.45).show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            for (i, e) in d.entries.iter().enumerate() {
+                                let (rect, resp) = ui.allocate_exact_size(vec2(width - 32.0, 28.0), Sense::click());
+                                if resp.hovered() && moved {
+                                    d.cursor = i;
+                                }
+                                let sel = i == d.cursor;
+                                let picked = d.selected.contains(&e.path);
+                                ui.painter().rect_filled(rect, 6, if sel { ACC } else if picked { mix(BTN, 0.3, OK) } else { BTN });
+                                let prefix = if e.is_dir { "\u{1F4C1} " } else if picked { "\u{2611} " } else { "\u{2610} " };
+                                let mut job = LayoutJob::simple_singleline(format!("{prefix}{}", e.name), FontId::proportional(13.0), FG);
+                                job.wrap = TextWrapping::truncate_at_width(rect.width() - 20.0);
+                                let g = ui.painter().layout_job(job);
+                                ui.painter().galley(pos_left(rect, 10.0, g.size().y), g, if sel { Color32::WHITE } else { FG });
+                                if sel && d.scroll {
+                                    resp.scroll_to_me(None);
+                                }
+                                if e.is_dir && resp.double_clicked() {
+                                    navigate_material = Some(e.path.clone());
+                                } else if resp.clicked() {
+                                    d.cursor = i;
+                                    if !e.is_dir {
+                                        toggle_material = Some((e.path.clone(), false));
+                                    }
+                                }
+                            }
+                        });
+                        d.scroll = false;
+                        if d.entries.is_empty() {
+                            ui.add(Label::new(txt("Keine Eintr\u{e4}ge.", 12.0, DIM)).wrap());
+                        }
+                        let count = d.selected.len();
+                        ui.add(Label::new(txt(format!("{count} ausgew\u{e4}hlt \u{b7} Klick: Datei an/abw\u{e4}hlen \u{b7} Doppelklick: Ordner \u{f6}ffnen \u{b7} Backspace: Hoch"), 11.0, DIM)).wrap());
+                        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                            if btn(ui, "Auswahl \u{fc}bernehmen", 13.0, vec2(14.0, 6.0), Vec2::ZERO, true, true).clicked() {
+                                answer = Some(json!({"paths": d.selected.clone()}));
+                            }
+                            if btn(ui, "Abbrechen", 13.0, vec2(14.0, 6.0), Vec2::ZERO, false, true).clicked() {
+                                answer = Some(json!({"cancelled": true}));
+                            }
+                        });
+                    }
                 }
             });
+        if let Some(p) = navigate {
+            self.browse_folder(p);
+        }
+        if let Some(p) = navigate_material {
+            self.browse_material(p);
+        }
+        if let Some((path, is_dir)) = toggle_material {
+            self.toggle_material_entry(path, is_dir);
+        }
         // Hintergrundklick ist absichtlich kein Abbruch (versehentliche Datenverluste vermeiden).
         let _ = modal;
         if let Some(a) = answer {
@@ -1031,7 +1660,7 @@ impl App {
             return;
         }
         let mut close = false;
-        let width = 720.0f32.min(ctx.content_rect().width() - 24.0);
+        let width = 860.0f32.min(ctx.content_rect().width() - 24.0);
         let m = egui::Modal::new(Id::new("keyhelp"))
             .backdrop_color(Color32::from_black_alpha(0xaa))
             .frame(Frame::new().fill(PANEL).stroke(Stroke::new(1.0, ACC)).corner_radius(12).inner_margin(Margin::same(16)))
@@ -1039,9 +1668,16 @@ impl App {
                 ui.set_width(width - 32.0);
                 ui.spacing_mut().item_spacing.y = 10.0;
                 ui.add(Label::new(RichText::new("Tastatursteuerung").size(16.0).color(FG).family(egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()))));
-                for p in KEYHELP {
-                    ui.add(Label::new(txt(p, 13.0, FG)).wrap());
-                }
+                ScrollArea::vertical().max_height(ctx.content_rect().height() * 0.7).show(ui, |ui| {
+                    for (i, p) in KEYHELP.iter().enumerate() {
+                        Frame::new().fill(BG).corner_radius(8).inner_margin(Margin::same(12)).show(ui, |ui| {
+                            ui.set_width(width - 64.0);
+                            ui.label(RichText::new(format!("{}", ["Navigation", "Eingabe & Befehle", "Weitere Shortcuts"].get(i).unwrap_or(&"Bedienung"))).size(14.0).color(ACC));
+                            for line in p.split('\n') { ui.add(Label::new(txt(line, 14.0, FG)).wrap()); }
+                        });
+                        ui.add_space(8.0);
+                    }
+                });
                 ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                     if btn(ui, "Schließen (Esc)", 13.0, vec2(14.0, 6.0), Vec2::ZERO, false, true).clicked() {
                         close = true;
@@ -1062,15 +1698,24 @@ impl App {
         let (w, h) = (screen.width() * 0.92, screen.height() * 0.92);
         let (mut apply, mut close) = (false, false);
         let focus = std::mem::take(&mut self.editor_focus);
+        let mut editable = !matches!(self.editor_target, EditorTarget::InventoryFile { .. }) || self.editor_unlocked;
         let text = &mut self.editor_text;
         let size = self.store.output_size;
+        let title = match &self.editor_target {
+            EditorTarget::Prompt => "Eingabe bearbeiten".to_string(),
+            EditorTarget::InventoryFile { path, .. } => format!("Datei bearbeiten: {path}"),
+        };
+        let apply_label = match &self.editor_target {
+            EditorTarget::Prompt => "Übernehmen (Strg+S)",
+            EditorTarget::InventoryFile { .. } => "Speichern (Strg+S)",
+        };
         egui::Modal::new(Id::new("prompt-editor"))
             .backdrop_color(Color32::from_black_alpha(0xaa))
             .frame(Frame::new().fill(PANEL).stroke(Stroke::new(1.0, BORDER)).corner_radius(12).inner_margin(Margin::same(16)))
             .show(ctx, |ui| {
                 ui.set_width(w - 32.0);
                 ui.set_height(h - 32.0);
-                ui.add(Label::new(RichText::new("Eingabe bearbeiten").size(16.0).color(FG).family(egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()))));
+                ui.add(Label::new(RichText::new(title).size(16.0).color(FG).family(egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()))));
                 let eh = ui.available_height() - 48.0;
                 Frame::new().fill(BG).corner_radius(6).inner_margin(Margin::same(8)).show(ui, |ui| {
                     ScrollArea::vertical().max_height(eh).auto_shrink([false, false]).show(ui, |ui| {
@@ -1080,6 +1725,7 @@ impl App {
                                 .frame(Frame::NONE)
                                 .desired_width(f32::INFINITY)
                                 .desired_rows(20)
+                                .interactive(editable)
                                 .font(FontId::proportional(size))
                                 .lock_focus(true),
                         );
@@ -1090,16 +1736,21 @@ impl App {
                 });
                 ui.add_space(8.0);
                 ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                    apply = btn(ui, "Übernehmen (Strg+S)", 13.0, vec2(14.0, 6.0), Vec2::ZERO, true, true).clicked();
+                    apply = btn(ui, apply_label, 13.0, vec2(14.0, 6.0), Vec2::ZERO, true, editable).clicked();
                     close = btn(ui, "Schließen", 13.0, vec2(14.0, 6.0), Vec2::ZERO, false, true).clicked();
+                    if matches!(self.editor_target, EditorTarget::InventoryFile { .. }) {
+                        let st = IconStyle { bg: None, fg: if editable { ACC } else { DIM }, hover_fg: FG, icon: 18.0, radius: 5 };
+                        if icons::icon_button(ui, vec2(32.0, 30.0), true, st, if editable { "Schloss schließen · Schreibschutz" } else { "Schloss öffnen · Bearbeitung erlauben" }, |p, r, c| icons::lock(p, r, c, editable)).clicked() { editable = !editable; }
+                        ui.label(txt(if editable { "Bearbeitung erlaubt" } else { "Schreibgeschützt" }, 12.0, DIM));
+                    }
                 });
             });
+        self.editor_unlocked = editable;
         if apply {
-            self.editor_open = false;
-            let t = std::mem::take(&mut self.editor_text);
-            self.set_prompt(t);
+            self.apply_editor();
         } else if close {
             self.editor_open = false;
+            self.editor_target = EditorTarget::Prompt;
             self.focus_prompt = true;
         }
     }

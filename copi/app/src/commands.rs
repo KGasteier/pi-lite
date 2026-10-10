@@ -152,7 +152,10 @@ pub fn token_short(n: Option<f64>) -> String {
 fn local(sec: i64) -> (i32, i32, i32, i32, i32) {
     let t: libc::time_t = sec as libc::time_t;
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    #[cfg(unix)]
     unsafe { libc::localtime_r(&t, &mut tm) };
+    #[cfg(windows)]
+    unsafe { libc::localtime_s(&mut tm, &t) };
     (tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min)
 }
 
@@ -215,6 +218,143 @@ pub fn is_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://") || s.starts_with("mailto:")
 }
 
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(h) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(h);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn has_url_scheme(s: &str) -> bool {
+    let Some(colon) = s.find(':') else { return false };
+    if !s[colon..].starts_with("://") {
+        return false;
+    }
+    let scheme = &s[..colon];
+    let mut chars = scheme.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '.' || c == '-')
+}
+
+/// `base:line` oder `base:line:column` am Ende von `path` (letzterer Teil wird für die
+/// Zeile verwendet, die Spalte wird aktuell nicht weiterverarbeitet).
+fn strip_colon_line(path: &str) -> Option<(String, u32)> {
+    let parts: Vec<&str> = path.rsplitn(2, ':').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let (last, before_last) = (parts[0], parts[1]);
+    if last.is_empty() || !last.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if let Some(idx) = before_last.rfind(':') {
+        let maybe_line = &before_last[idx + 1..];
+        if !maybe_line.is_empty() && maybe_line.chars().all(|c| c.is_ascii_digit()) {
+            let line: u32 = maybe_line.parse().ok()?;
+            return Some((before_last[..idx].to_string(), line));
+        }
+    }
+    let line: u32 = last.parse().ok()?;
+    Some((before_last.to_string(), line))
+}
+
+/// `base#L<zeile>` oder `base#L<zeile>-L<zeile>` am Ende von `path`.
+fn strip_hash_line(path: &str) -> Option<(String, u32)> {
+    let idx = path.rfind("#L")?;
+    let after = &path[idx + 2..];
+    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    let rest = &after[digits.len()..];
+    let valid = rest.is_empty()
+        || (rest.starts_with('-') && {
+            let r = rest[1..].strip_prefix('L').unwrap_or(&rest[1..]);
+            !r.is_empty() && r.chars().all(|c| c.is_ascii_digit())
+        });
+    if !valid {
+        return None;
+    }
+    let line: u32 = digits.parse().ok()?;
+    Some((path[..idx].to_string(), line))
+}
+
+/// Letzte Pfadkomponente nach `/` *oder* `\` extrahieren (plattformunabhängige Textprüfung,
+/// nicht `std::path`-Semantik): erlaubt Windows-Backslash-Pfade wie `src\app.rs`, ohne dass
+/// diese Funktion je unter `cfg(windows)` laufen muss.
+fn looks_like_filename(path: &str) -> bool {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let Some(dot) = name.rfind('.') else { return false };
+    let (base, ext) = (&name[..dot], &name[dot + 1..]);
+    !base.is_empty() && !ext.is_empty() && ext.len() <= 12 && ext.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Portiert aus `ui/editor.js` (`editorReference`): erkennt konservativ Datei-/Zeilenverweise
+/// in Markdown-Links/Text und unterscheidet sie von externen URLs/Schemata. Liefert `(pfad,
+/// zeile)` oder `None`, wenn `value` eher wie eine URL/E-Mail/o. ä. aussieht.
+///
+/// Erkennt auch Windows-Backslash-Pfade (`src\app.rs:42`, `C:\Users\x\a.rs`) und
+/// `file://`-URIs mit Laufwerksbuchstaben (`file:///C:/Users/x/a.rs`); `looks_like_filename`
+/// prüft nur die letzte Komponente nach `/` *oder* `\`, daher funktioniert dieselbe Logik auf
+/// beiden Trennzeichenstilen ohne separaten Windows-Zweig (reine Textverarbeitung, keine
+/// `std::path`-Plattformsemantik nötig; das eigentliche Öffnen inkl. Laufwerksbuchstaben
+/// übernimmt `pi_backend::editor::resolve_target`/`open_in_editor` als `PathBuf`).
+pub fn editor_reference(value: &str) -> Option<(String, Option<u32>)> {
+    let mut path = value.trim().to_string();
+    if path.is_empty() {
+        return None;
+    }
+    if let Some(rest) = path.strip_prefix("file://") {
+        let (host, pathpart) = match rest.find('/') {
+            Some(i) => (&rest[..i], &rest[i..]),
+            None => (rest, ""),
+        };
+        if !host.is_empty() && host != "localhost" {
+            return None;
+        }
+        path = percent_decode(pathpart);
+    }
+    if has_url_scheme(&path) {
+        return None;
+    }
+    let lower = path.to_lowercase();
+    if ["mailto:", "javascript:", "data:", "vscode:", "command:"].iter().any(|s| lower.starts_with(s)) {
+        return None;
+    }
+    if path.contains(['\n', '\r', '\0']) {
+        return None;
+    }
+    let mut line = None;
+    if let Some((base, l)) = strip_colon_line(&path) {
+        path = base;
+        line = Some(l);
+    } else if let Some((base, l)) = strip_hash_line(&path) {
+        path = base;
+        line = Some(l);
+    }
+    if !looks_like_filename(&path) {
+        return None;
+    }
+    if path.chars().any(|c| "<>\"`|?*".contains(c)) {
+        return None;
+    }
+    Some((path, line))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,6 +394,29 @@ mod tests {
         assert_eq!(h.move_by(-1, "a"), "a");
         assert_eq!(h.move_by(1, "a"), "b");
         assert_eq!(h.move_by(1, "b"), "draft");
+    }
+
+    #[test]
+    fn editor_ref() {
+        assert_eq!(editor_reference("src/app.rs:42"), Some(("src/app.rs".into(), Some(42))));
+        assert_eq!(editor_reference("src/app.rs:42:7"), Some(("src/app.rs".into(), Some(42))));
+        assert_eq!(editor_reference("src/app.rs#L10"), Some(("src/app.rs".into(), Some(10))));
+        assert_eq!(editor_reference("src/app.rs#L10-L20"), Some(("src/app.rs".into(), Some(10))));
+        assert_eq!(editor_reference("README.md"), Some(("README.md".into(), None)));
+        assert_eq!(editor_reference("https://example.com/a.md"), None);
+        assert_eq!(editor_reference("mailto:a@b.com"), None);
+        assert_eq!(editor_reference("javascript:alert(1)"), None);
+        assert_eq!(editor_reference("not-a-file"), None);
+        assert_eq!(editor_reference("file:///home/x/a.rs:3"), Some(("/home/x/a.rs".into(), Some(3))));
+        assert_eq!(editor_reference("has space.md"), Some(("has space.md".into(), None)));
+        assert_eq!(editor_reference("bad<name>.md"), None);
+        // Windows-Backslash-Pfade (inkl. Laufwerksbuchstabe) müssen unabhängig vom aktuellen
+        // Build-Ziel textuell erkannt werden; die eigentliche Pfadauflösung/-öffnung läuft
+        // getrennt über `pi_backend::editor` mit echter `std::path`-Semantik.
+        assert_eq!(editor_reference("src\\app.rs:42"), Some(("src\\app.rs".into(), Some(42))));
+        assert_eq!(editor_reference("C:\\Users\\x\\a.rs"), Some(("C:\\Users\\x\\a.rs".into(), None)));
+        assert_eq!(editor_reference("C:\\Users\\x\\a.rs:3"), Some(("C:\\Users\\x\\a.rs".into(), Some(3))));
+        assert_eq!(editor_reference("file:///C:/Users/x/a.rs:3"), Some(("/C:/Users/x/a.rs".into(), Some(3))));
     }
 
     #[test]

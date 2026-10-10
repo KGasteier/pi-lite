@@ -222,6 +222,20 @@ fn align(a: &Alignment) -> Align {
     }
 }
 
+/// Sprach-Token aus einer Fenced-Code-Infozeile extrahieren.
+///
+/// Vor dem ersten Leerzeichen, Komma oder einer geschweiften Klammer
+/// (häufig bei Rust-Doctest-Attributen wie ```` ```rust,no_run ```` oder
+/// shiki-artigen Metastrings wie ```` ```js {1,3} ````). Nur das erste
+/// Token gilt als Sprachname, der Rest wird verworfen.
+fn fence_lang(info: &str) -> String {
+    info.trim()
+        .split(|c: char| c.is_whitespace() || c == ',' || c == '{')
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
+
 fn level(l: HeadingLevel) -> u8 {
     match l {
         HeadingLevel::H1 => 1,
@@ -262,7 +276,7 @@ pub fn parse(src: &str) -> Doc {
                 Tag::CodeBlock(kind) => {
                     b.flush_inline();
                     let lang = match kind {
-                        CodeBlockKind::Fenced(info) => info.split_whitespace().next().unwrap_or("").to_string(),
+                        CodeBlockKind::Fenced(info) => fence_lang(&info),
                         CodeBlockKind::Indented => String::new(),
                     };
                     b.code = Some((lang, String::new()));
@@ -486,6 +500,19 @@ mod tests {
         assert_eq!(s[0].style.link.as_deref(), Some("https://x.y"));
         assert!(s.iter().any(|x| x.text == "alt" && x.style.link.as_deref() == Some("bild.png")));
         assert!(inline_text(s).contains("<b>roh</b>"));
+    }
+
+    #[test]
+    fn code_sprache_mit_attributen() {
+        // Rust-Doctest-Konvention: ```rust,no_run – nur "rust" ist die Sprache.
+        let d = parse("```rust,no_run\nfn f(){}\n```\n");
+        assert_eq!(d.blocks[0], Block::Code { lang: "rust".into(), text: "fn f(){}".into() });
+        // Leerzeichen-getrennte Metadaten (z. B. Zeilennummern-Hinweise).
+        let d = parse("```js {1,3}\nx\n```\n");
+        assert_eq!(d.blocks[0], Block::Code { lang: "js".into(), text: "x".into() });
+        // Ohne Attribute bleibt es unverändert.
+        let d = parse("```python\nx\n```\n");
+        assert_eq!(d.blocks[0], Block::Code { lang: "python".into(), text: "x".into() });
     }
 
     #[test]

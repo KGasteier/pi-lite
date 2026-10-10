@@ -3,9 +3,11 @@ mod app;
 mod commands;
 mod headless;
 mod icons;
+mod material_ui;
 mod store;
 mod theme;
 mod view;
+mod virtual_log;
 #[cfg(test)]
 mod tests;
 
@@ -13,54 +15,48 @@ use std::sync::Arc;
 
 use egui::{FontData, FontDefinitions, FontFamily, Stroke};
 
-fn load_font(defs: &mut FontDefinitions, name: &str, path: &str) -> bool {
-    match std::fs::read(path) {
-        Ok(b) => {
-            defs.font_data.insert(name.into(), Arc::new(FontData::from_owned(b)));
-            true
-        }
-        Err(_) => false,
-    }
-}
-
 /// Schriften und dunkles Farbschema (für Fenster und Screenshot gleich).
+///
+/// Liest absichtlich **keine** Schriftdateien vom Dateisystem (kein `/usr/share/fonts`-Zugriff
+/// mehr): Das Original tat dies, wodurch das Erscheinungsbild von zufällig installierten
+/// System-Schriften abhing und auf macOS/Windows (wo `Adwaita`/`noto`-Pakete unter diesen
+/// Pfaden nicht existieren) ohnehin lautlos auf etwas anderes zurückfiel. Stattdessen werden
+/// drei Schriftarten per `include_bytes!` fest eingebettet: Figtree (SIL Open Font License
+/// 1.1, siehe `assets/fonts/OFL.txt`) für Fließtext/Fettdruck sowie Noto Sans Symbols 2
+/// (Google Noto-Projekt, Apache License 2.0, siehe
+/// `assets/fonts/NotoSansSymbols2-LICENSE-APACHE2.txt`) als letzter Symbol-Fallback für
+/// Zeichen wie ☑☐•◦▪↑↓→←×⌘, die zwar im UI verwendet werden, aber weder von Figtree
+/// noch von den mit `eframe`/`epaint` (Feature `default_fonts`) ohnehin schon
+/// eingebetteten Standardschriften (`Hack`/`Ubuntu-Light`/`NotoEmoji-Regular`/
+/// `emoji-icon-font`, die zwischen Figtree und Noto Sans Symbols 2 eingereiht werden)
+/// abgedeckt sind. Dadurch ist das Schriftbild auf allen drei Plattformen identisch,
+/// ohne Datei-I/O außerhalb des Binaries.
 pub fn setup_ctx(ctx: &egui::Context) {
     let mut defs = FontDefinitions::default();
-    let base = "/usr/share/fonts";
-    defs.font_data.insert("sans".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Figtree-Regular.ttf"))));
-    defs.font_data.insert("sans-bold".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Figtree-Bold.ttf"))));
-    let (sans, bold) = (true, true);
-    let mono = load_font(&mut defs, "mono", &format!("{base}/Adwaita/AdwaitaMono-Regular.ttf"));
-    let sym = load_font(&mut defs, "sym2", &format!("{base}/noto/NotoSansSymbols2-Regular.ttf"));
-    let sym1 = load_font(&mut defs, "sym1", &format!("{base}/noto/NotoSansSymbols-Regular.ttf"));
+    defs.font_data.insert("sans".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Figtree-Light.ttf"))));
+    defs.font_data.insert("sans-bold".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Figtree-SemiBold.ttf"))));
+    defs.font_data.insert("noto-symbols2".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/NotoSansSymbols2-Regular.ttf"))));
+    // Von epaint/egui (Feature `default_fonts`) bereits eingebettete Standardschriften, als
+    // weiterer Fallback hinter Figtree/Noto Sans Symbols 2.
+    //
+    // Wichtig: `noto-symbols2` wird bewusst *nach* den Standardschriften eingereiht
+    // (statt davor), weil epaint die erste Schrift in der Kette, die das
+    // Platzhalter-Ersatzzeichen `◻` enthaelt, intern als "Ersatzglyph-Schrift"
+    // merkt. `NotoSansSymbols2-Regular.ttf` enthaelt `◻` ebenfalls; stuende es an
+    // erster Stelle, wuerde epaint faelschlich *jedes* ueber diese Schrift
+    // aufgeloeste Zeichen als "nicht vorhanden" (= Ersatzglyph) werten, obwohl es
+    // korrekt gerendert wird (siehe `CachedFamily::new`/`find_face_for_char` in
+    // epaint). Die eingebauten Standardschriften (u.a. `NotoEmoji-Regular`,
+    // `Hack`) liefern bereits frueher in der Kette ein gueltiges `◻`, sodass
+    // `noto-symbols2` nur als reiner Fallback fuer fehlende Symbole dient.
     let defaults_p = defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let defaults_m = defs.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
-    let mut fallback: Vec<String> = Vec::new();
-    if mono {
-        fallback.push("mono".into());
-    }
-    if sym {
-        fallback.push("sym2".into());
-    }
-    if sym1 {
-        fallback.push("sym1".into());
-    }
-    let mut prop = Vec::new();
-    if sans {
-        prop.push("sans".to_string());
-    }
-    prop.extend(defaults_p.clone());
-    prop.extend(fallback.clone());
-    let mut mon = Vec::new();
-    if mono {
-        mon.push("mono".to_string());
-    }
-    mon.extend(defaults_m);
-    mon.extend(fallback.iter().filter(|f| *f != "mono").cloned());
-    let mut b = Vec::new();
-    if bold {
-        b.push("sans-bold".to_string());
-    }
+    let mut prop = vec!["sans".to_string()];
+    prop.extend(defaults_p);
+    prop.push("noto-symbols2".to_string());
+    let mut mon = defaults_m;
+    mon.push("noto-symbols2".to_string());
+    let mut b = vec!["sans-bold".to_string()];
     b.extend(prop.clone());
     defs.families.insert(FontFamily::Proportional, prop);
     defs.families.insert(FontFamily::Monospace, mon);

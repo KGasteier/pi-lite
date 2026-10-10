@@ -22,12 +22,23 @@ pub fn work_locations() -> Vec<Location> {
         Location { name: "Standard (Startordner)".into(), path: default.to_string_lossy().into() },
         Location { name: "Home".into(), path: home.to_string_lossy().into() },
     ];
-    for path in ["/mnt/mac", "/media/sf_shared", "/mnt/shared"] {
+    for path in shared_folder_candidates() {
         if PathBuf::from(path).is_dir() {
-            out.push(Location { name: "Shared Folder".into(), path: path.into() });
+            out.push(Location { name: "Shared Folder".into(), path: (*path).into() });
         }
     }
     out
+}
+
+/// Bekannte Mountpunkte für geteilte Ordner in VMs/Containern. Linux-spezifische Pfade;
+/// auf anderen Plattformen gibt es (noch) keine entsprechenden Konventionen hier.
+#[cfg(target_os = "linux")]
+fn shared_folder_candidates() -> &'static [&'static str] {
+    &["/mnt/mac", "/media/sf_shared", "/mnt/shared"]
+}
+#[cfg(not(target_os = "linux"))]
+fn shared_folder_candidates() -> &'static [&'static str] {
+    &[]
 }
 
 /// Unterordner von `path` (alphabetisch) plus kanonischer Pfad und Elternordner.

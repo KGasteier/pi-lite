@@ -2,6 +2,11 @@
 
 copi ist der Rust-/egui-Nachfolger von pi-lite ohne WebKit. Er entsteht auf dem Branch `copi` neben pi-lite; pi-lite bleibt bis zur Parität die stabile Oberfläche.
 
+## Installation auf Omarchy
+
+Reproduzierbare Anleitung, Pflicht-/optionale Abhängigkeiten und offene Prüfungen:
+[INSTALL_OMARCHY.md](docs/INSTALL_OMARCHY.md). Benutzerinstallation: `bash scripts/install.sh`.
+
 ## Aufbau
 
 | Crate | Zweck |
@@ -19,12 +24,12 @@ CARGO_BUILD_JOBS=2 cargo build --release -p copi
 ./target/release/copi                    # echtes Fenster, startet pi
 COPI_DEMO=1 ./target/release/copi        # Demo-Daten, startet pi nicht
 ./target/release/copi --shot /tmp/c.png  # fensterloser Screenshot (immer Demo)
-COPI_SCENE=slash ./target/release/copi --shot /tmp/c.png   # slash|picker|dialog|confirm|keyhelp|start|toast
+COPI_SCENE=slash ./target/release/copi --shot /tmp/c.png   # slash|picker|dialog|confirm|keyhelp|start|toast|inventory|longlog
 ```
 
 `COPI_*`-Umgebungsvariablen fallen auf die `PI_LITE_*`-Varianten zurück. Zustand: `~/.config/copi/state.json`.
 
-## Stand (Stufe 1 + 2)
+## Stand (Stufe 1–3, Live-Prüfungen teilweise offen)
 
 Vorhanden:
 - Eingebettete Figtree-Schrift (SIL OFL); proportionale UI-Größen und umbrechende Kopfzeile am Original orientiert
@@ -41,14 +46,14 @@ Korrekturen, verbleibende Optimierungen und Grenzen der Tests: [REVIEW.md](REVIE
 
 ## Paritäts-Checkliste (Stufe 3)
 
-- [ ] Vorschau-Spalte (Dateien, Bilder, PDF)
-- [ ] Konfigurationseditor, Endpunkt-Assistent
-- [ ] Material-Anhänge und Medienanalyse (Knopf zeigt bislang Hinweis)
-- [ ] Ordner-Browser statt Auswahlliste
-- [ ] Inventar-Ansichten der Seitenleiste (Extensions, Skills, Agents, Harnesses)
-- [ ] Ausführliche Token-Erklärung
-- [ ] Log-Virtualisierung für sehr lange Sessions
-- [ ] Tastaturnavigation in Session-Karten (↑↓, R/F2, Entf, M) und Alt+3/4/5
-- [ ] Editor-Verweise in Markdown-Links (Datei:Zeile)
+- [x] Floating-Vorschau für Sessions/Dateien; lokale Kurzinfo, KI nur nach Zustimmung (keine Bild-/PDF-Seitenansicht)
+- [x] Interner Dateieditor mit Schreibschutz und Konfliktprüfung; Endpunkt-Assistent noch offen
+- [x] Material-Anhänge und zustimmungspflichtige Medienanalyse (reale Routen nicht live geprüft)
+- [x] Ordner-Browser
+- [x] Inventar-Ansichten (Extensions, Skills, Agents, Harnesses)
+- [x] Ausführliche Token-Erklärung
+- [x] Log-Virtualisierung für lange Sessions; inkrementelle Session-Metadaten; begrenzter RPC-Schreibthread
+- [x] Tastaturnavigation in Session-Karten (↑↓, R/F2, Entf, M) und Alt+3/4/5
+- [x] Editor-Verweise (Datei:Zeile)
 - [ ] Schmale Sprechblasen (shrink-to-fit)
 - [ ] Echtfenster-Prüfung: IME, Textauswahl, Super+A, Alt+Ziffer, Stabilität unter virgl

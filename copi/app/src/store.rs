@@ -1,4 +1,8 @@
-//! Dauerhafte Einstellungen in `~/.config/copi/state.json`.
+//! Dauerhafte Einstellungen in `<copi_config_dir>/state.json` (plattformkonventioneller Pfad
+//! via `pi_backend::resolve_config_file`/der `dirs`-Hilfsbibliothek, z. B. `~/.config/copi`
+//! unter Linux, `~/Library/Application Support/copi` unter macOS, `%APPDATA%\copi` unter
+//! Windows), mit lesendem Fallback auf den alten `pi-lite`-Pfad. Kein eigenes XDG-Handling
+//! hier mehr; das Backend ist die einzige Quelle für Portabilitätslogik.
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -11,17 +15,18 @@ pub struct Store {
     pub sort: String,
     pub only_bookmarks: bool,
     pub side_visible: bool,
+    pub helper_provider: String,
+    pub helper_model: String,
 }
 
 impl Default for Store {
     fn default() -> Self {
-        Self { output_size: 15.0, bookmarks: Vec::new(), sort: "time".into(), only_bookmarks: false, side_visible: true }
+        Self { output_size: 15.0, bookmarks: Vec::new(), sort: "time".into(), only_bookmarks: false, side_visible: true, helper_provider: String::new(), helper_model: String::new() }
     }
 }
 
 fn path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| pi_backend::home().map(|h| h.join(".config")))?;
-    Some(base.join("copi/state.json"))
+    pi_backend::resolve_config_file("state.json")
 }
 
 impl Store {
