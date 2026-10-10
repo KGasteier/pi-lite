@@ -143,8 +143,8 @@ impl App {
             .show_separator_line(false)
             .frame(Frame::new().fill(PANEL).inner_margin(Margin::symmetric(12, 4)))
             .show(ui, |ui| self.usage_bar(ui));
-        if !self.ext_status.is_empty() {
-            let t = self.ext_status.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>().join(" · ");
+        let t = self.ext_status.iter().filter(|(key, _)| key != "vorlesen").map(|(_, v)| v.as_str()).collect::<Vec<_>>().join(" · ");
+        if !t.is_empty() {
             egui::Panel::bottom("extstatus")
                 .show_separator_line(false)
                 .frame(Frame::new().fill(PANEL).inner_margin(Margin::symmetric(12, 3)))

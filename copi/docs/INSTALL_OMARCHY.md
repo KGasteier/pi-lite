@@ -98,6 +98,18 @@ Die Entwicklung und Builds sind hier unter Linux/ARM64 geprüft. Windows/macOS-Z
 vorhanden, aber nicht gleichwertig live getestet. Auch unter Omarchy bleibt die gemeldete
 „Application Not Responding“-Situation ein offener Live-Prüfpunkt; keine Stabilitätsgarantie.
 
+## Binary-Größe und Rust zur Laufzeit
+
+Die hier gebaute Linux/ARM64-Release-Binary ist rund **8,47 MB (8,08 MiB)** groß
+(Stand 10.10.2026, vor der kleinen Statuszeilenkorrektur). Schriften und UI sind eingebettet;
+Größe kann mit Architektur und Build-Version abweichen. Icon/Launcher benötigen nur wenige KB.
+
+**Rust/Cargo wird nur zum Bauen oder Weiterentwickeln benötigt**, nicht zum Ausführen einer
+passenden fertigen Binary. Die rund 5 GB im lokalen `target/` sind Build-Artefakte und keine
+Laufzeitinstallation. Die Binary ist nicht völlig autark: pi (einschließlich dessen Runtime),
+Systembibliotheken und Grafiktreiber bleiben externe Abhängigkeiten. Ihre Gesamtgröße ist
+installationsabhängig. Es gibt derzeit keine vorgefertigten, plattformübergreifenden Release-Pakete.
+
 ## Aktualisieren
 
 ```bash
