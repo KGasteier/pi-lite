@@ -181,6 +181,13 @@
   header input { background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:6px; padding:4px 8px; }
   #status { color:var(--dim); font-size:13px; min-width:90px; display:inline-flex; align-items:center; justify-content:flex-end; gap:7px; }
   /* Pixel-Schlange wie pi "Working": 8 Pixel im 2x4-Raster, 3 leuchtende laufen im Kreis */
+  #workprogress { color:var(--acc); border:1px solid var(--acc); border-radius:6px; padding:3px 7px; font-size:12px; background:rgba(228,84,196,.10); font-variant-numeric:tabular-nums; }
+  #workprogress[hidden] { display:none; }
+  #status.busy #statustext { color:var(--acc); }
+  .md pre { position:relative; padding-top:32px; }
+  .codecopy { position:absolute; right:7px; top:6px; width:23px; height:21px; padding:3px; border:0; border-radius:4px; color:var(--dim); background:transparent; }
+  .codecopy:hover { color:var(--fg); background:#444a52; }
+  .codecopy svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.2; }
   #workspinner { display:none; grid-template-columns:repeat(2,3px); grid-template-rows:repeat(4,3px); gap:1.5px; }
   #status.busy #workspinner { display:inline-grid; }
   #status.busy #statustext { color:var(--acc); }
@@ -314,7 +321,7 @@
     <button id="textlarger" title="Ausgabetext vergrößern" aria-label="Ausgabetext vergrößern">A+</button>
   </span>
   <button id="keyboardhelp" title="Tastaturhilfe (F1)" aria-label="Tastaturhilfe">?</button>
-  <span id="status" role="status"><span id="workspinner" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span id="statustext">startet…</span></span>
+  <span id="status" role="status"><span id="workspinner" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span id="statustext">startet…</span><span id="workprogress" hidden title="Zeitbasierte Schätzung, kein gemessener Agent-Fortschritt. Bleibt während der Arbeit unter 95 %."></span></span>
 </header>
 <div id="logwrap"><div id="log" tabindex="0" role="region" aria-label="Chatverlauf"></div></div>
 <div id="widgets-above"></div>
