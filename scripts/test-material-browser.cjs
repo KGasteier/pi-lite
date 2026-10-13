@@ -1,7 +1,9 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const read=p=>fs.readFileSync(path.join(__dirname,'..',p),'utf8');
 const html=read('ui/index.html'),js=read('ui/app.js'),browser=read('ui/material-browser.js'),rust=read('copi/app/src/view.rs'),shared=read('shared/material_browser.rs');
-assert(html.includes('id="sessionrename"'));assert(rust.includes('"Session umbenennen"'));
+// pi-lite: der generische Kopfzeilen-Button "Session umbenennen" wurde entfernt; jede
+// Sessionkarte hat stattdessen einen dauerhaft sichtbaren Umbenennen-Button (renameSession).
+assert(!html.includes('id="sessionrename"'));assert(js.includes('function renameSession(s)'));assert(rust.includes('self.rename_session(s)'));
 assert(js.includes('openBookmarkColorPicker'));assert(rust.includes('"bookmark-color"'));
 assert(browser.includes("'material_preview'"));assert(browser.includes("'material_browser'"));
 assert(browser.includes("value=\"date\""));assert(rust.includes('"Datum ↓"'));

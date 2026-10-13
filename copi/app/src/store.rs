@@ -21,6 +21,9 @@ pub struct Store {
     /// "time" oder "bookmarks"
     pub sort: String,
     pub only_bookmarks: bool,
+    pub colored_bookmarks: bool,
+    pub category_names: Vec<String>,
+    pub duration_history: Vec<f64>,
     pub side_visible: bool,
     pub helper_provider: String,
     pub helper_model: String,
@@ -34,6 +37,9 @@ impl Default for Store {
             bookmark_colors: HashMap::new(),
             sort: "time".into(),
             only_bookmarks: false,
+            colored_bookmarks: false,
+            category_names: Vec::new(),
+            duration_history: Vec::new(),
             side_visible: true,
             helper_provider: String::new(),
             helper_model: String::new(),
@@ -71,6 +77,26 @@ impl Store {
         let tmp = p.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         std::fs::rename(tmp, p).map_err(|e| e.to_string())
+    }
+    pub fn category_name(&self, i: u8) -> String {
+        self.category_names.get(i as usize).filter(|n| !n.trim().is_empty()).cloned().unwrap_or_else(|| crate::bookmark_palette::name(i).into())
+    }
+    pub fn set_category_name(&mut self, i: u8, name: &str) {
+        self.category_names.resize(8, String::new());
+        self.category_names[crate::bookmark_palette::normalize(i) as usize] = name.trim().chars().take(48).collect();
+    }
+    pub fn record_duration(&mut self, seconds: f64) {
+        if seconds.is_finite() && seconds > 0.0 {
+            self.duration_history.push(seconds);
+            if self.duration_history.len() > 30 { self.duration_history.remove(0); }
+        }
+    }
+    pub fn duration_estimate(&self) -> f64 {
+        let mut h: Vec<_> = self.duration_history.iter().copied().filter(|n| n.is_finite() && *n > 0.0).collect();
+        if h.len() < 3 { return 180.0; }
+        h.sort_by(f64::total_cmp);
+        let m = h.len()/2;
+        if h.len()%2 == 0 { (h[m-1]+h[m])/2.0 } else { h[m] }
     }
     pub fn is_bookmark(&self, path: &str) -> bool {
         self.bookmarks.iter().any(|b| b == path)

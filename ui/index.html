@@ -17,10 +17,11 @@
   #sidetools { display:flex; align-items:center; gap:5px; min-height:28px; }
   #sidetools button, #sidetools select { height:28px; font-size:12px; border-radius:6px; }
   #sidetools #newsess { padding:3px 9px; }
-  #sidetools #bookmarkfilter { width:28px; padding:0; display:flex; align-items:center; justify-content:center; color:var(--dim); }
-  #bookmarkfilter svg { width:15px; height:15px; }
-  #bookmarkfilter[aria-pressed=true] { color:var(--cat); background:color-mix(in srgb, var(--cat) 22%, #2b3137); box-shadow:inset 0 0 0 1px var(--cat); }
-  #bookmarkfilter[aria-pressed=true] svg path { fill:currentColor; }
+  #sidetools #bookmarkfilter { width:auto; padding:0 7px; display:flex; align-items:center; justify-content:center; gap:4px; color:var(--dim); margin-left:auto; }
+  #bookmarkfilter svg { width:15px; height:15px; flex:none; }
+  #bookmarkfilter .filterlabel { font-size:11px; white-space:nowrap; }
+  #bookmarkfilter[data-mode=on], #bookmarkfilter[data-mode=colors] { color:var(--cat); background:color-mix(in srgb, var(--cat) 22%, #2b3137); box-shadow:inset 0 0 0 1px var(--cat); }
+  #bookmarkfilter[data-mode=on] svg path, #bookmarkfilter[data-mode=colors] svg path { fill:currentColor; }
   .sessempty { color:var(--dim); font-size:12px; padding:10px 4px; }
   #sidehint { font-size:11px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #sessions { flex:1; overflow:auto; padding:4px 8px; }
@@ -75,10 +76,18 @@
   .picklist [aria-selected=true] { background:var(--acc); color:white; }
   .picklist [role=option]:hover { background:#526781; color:white; box-shadow:inset 0 0 0 1px var(--cat); }
   #thinkpicker .picklist { width:max-content; min-width:160px; }
+  #commandmenu .pickbtn { max-width:none; width:80px; padding:6px 7px; text-align:center; background-image:none; }
+  #commandmenulist .cmdgroup > button { font-style:italic; background:color-mix(in srgb, var(--cat) 12%, transparent); }
+  #commandmenulist { width:min(320px,80vw); }
+  #commandmenulist button { display:flex; justify-content:space-between; gap:10px; width:100%; text-align:left; background:none; border:0; padding:6px 8px; border-radius:5px; color:inherit; font:inherit; font-size:13px; margin:1px 0; }
+  #commandmenulist button:hover, #commandmenulist button:focus-visible { background:var(--cat); color:#fff; outline:none; }
+  #commandmenulist .cmdgroup { position:relative; }
+  #commandmenulist .cmdgroup > button[aria-haspopup=true]::after { content:"\203A"; margin-left:auto; opacity:.7; }
+  #commandmenulist .cmdsubmenu { position:absolute; top:0; left:100%; z-index:71; width:min(280px,70vw); max-height:50vh; overflow-y:auto; background:var(--panel); border:1px solid var(--cat); border-radius:6px; padding:4px; }
+  #commandmenulist .cmdsubmenu[hidden] { display:none; }
   #editlock[hidden] { display:none; }
   #editlock { margin-left:auto; order:3; font-size:16px; padding:2px 8px; }
   #editor textarea[readonly] { opacity:.8; }
-  #sidetools #sessionsort { padding:3px 22px 3px 8px; min-width:0; max-width:104px; margin-left:auto; }
   .sess .bookmark { position:absolute; right:6px; bottom:5px; padding:3px; width:23px; height:23px; display:flex; align-items:center; justify-content:center; background:transparent; color:var(--dim); }
   .sess .bookmark[aria-pressed=true] { color:var(--cat); }
   .sess .bookmark svg { width:13px; height:16px; }
@@ -87,8 +96,11 @@
   .sess.active { border-color:var(--cat); background:color-mix(in srgb, var(--cat) 22%, #2b3137); }
   .sess .t { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .sess { position:relative; }
-  .sess .act { position:absolute; right:31px; bottom:5px; opacity:0; display:flex; }
-  .sess:hover .act, .sess:focus-within .act { opacity:1; }
+  .sess .act { position:absolute; right:56px; bottom:5px; display:flex; }
+  /* Umbenennen ist dauerhaft sichtbar; Löschen bleibt eine separate, nur bei Hover/Fokus
+     eingeblendete Aktion, damit sie nicht versehentlich getroffen wird. */
+  .sess .act button.delete { opacity:0; }
+  .sess:hover .act button.delete, .sess:focus-within .act button.delete { opacity:1; }
   .sess .act button { width:23px; height:23px; padding:3px; display:flex; align-items:center; justify-content:center; background:transparent; color:var(--dim); }
   .sess .act button svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.4; stroke-linecap:round; stroke-linejoin:round; }
   .sess .act button.delete:hover, .sess .act button.delete:focus-visible { color:var(--err); }
@@ -115,7 +127,8 @@
   .md a { color:#8095ff; } .md blockquote { margin:0; padding-left:12px; border-left:3px solid #3a4046; color:var(--dim); }
   .md img { max-width:100%; }
   /* schmale Fenster (gekachelt): Seitenleiste als Overlay, kompakte Kopfzeile */
-  #toggle { display:inline-block; padding:6px 10px; }
+  #toggle { display:inline-flex; padding:0; width:32px; height:32px; align-items:center; justify-content:center; color:var(--cat); }
+  #toggle svg { width:30px; height:30px; }
   @media (max-width: 860px) {
     #toggle { display:inline-block; }
     #side { position:absolute; z-index:5; top:0; bottom:0; left:0; transform:translateX(-100%); visibility:hidden; transition:transform .15s, visibility .15s; box-shadow:2px 0 12px #0008; }
@@ -129,6 +142,9 @@
     #prompt { height:52px; }
     button { padding:6px 10px; }
   }
+  /* Farbwähler: Namen editieren (acht globale, persistente Kategorienamen) */
+  .colorswatchrow { display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .colorswatchrow input { width:60px; font-size:10px; text-align:center; background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:4px; padding:1px 2px; }
   /* Dialoge der Extensions */
   #modal { position:fixed; inset:0; background:#000a; display:none; align-items:center; justify-content:center; z-index:20; padding:12px; }
   #modal.open { display:flex; }
@@ -177,12 +193,27 @@
   .widget { color:var(--dim); font:12px ui-monospace,monospace; padding:4px 12px; background:var(--panel); border-top:1px solid #3a4046; white-space:pre-wrap; }
   html,body { height:100%; overflow:hidden; color-scheme:dark; margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,sans-serif; }
   body { display:flex; flex-direction:column; }
-  header { flex-wrap:wrap; display:flex; gap:8px; align-items:center; padding:8px 12px; background:var(--panel); border-bottom:1px solid #3a4046; }
+  header { flex-wrap:nowrap; display:flex; gap:8px; align-items:center; padding:8px 12px; background:var(--panel); border-bottom:1px solid #3a4046; min-width:0; overflow-x:auto; scrollbar-width:thin; }
+  header > * { flex-shrink:1; min-width:0; }
+  header > #status { flex-shrink:0; }
+  header > #toggle, header > #commandmenu, header > #keyboardhelp { flex:none; }
   header input { background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:6px; padding:4px 8px; }
   #status { color:var(--dim); font-size:13px; min-width:90px; display:inline-flex; align-items:center; justify-content:flex-end; gap:7px; }
   /* Pixel-Schlange wie pi "Working": 8 Pixel im 2x4-Raster, 3 leuchtende laufen im Kreis */
-  #workprogress { color:var(--bg); border:1px solid var(--acc); border-radius:6px; padding:3px 7px; font-size:12px; background:var(--acc); font-variant-numeric:tabular-nums; }
+  #workprogress { color:var(--bg); border:1px solid var(--acc); border-radius:6px; padding:3px 7px; font-size:12px; background:var(--acc); font-variant-numeric:tabular-nums; display:inline-flex; align-items:center; gap:6px; }
   #workprogress[hidden] { display:none; }
+  #workpercent { font-variant-numeric:tabular-nums; background:var(--acc); color:var(--bg); border:1px solid var(--acc); border-radius:6px; padding:3px 7px; }
+  #workprogress { display:inline-flex; gap:0; width:152px; flex:none; padding:3px 0; border:1px solid var(--acc); background:var(--acc); }
+  #worktime, #workpercent { width:50%; box-sizing:border-box; text-align:center; padding:0 5px; border:0; border-radius:0; white-space:nowrap; overflow:hidden; }
+  #workpercent { border-left:1px solid color-mix(in srgb, var(--bg) 30%, transparent); }
+  #workspacegroup { flex:1 1 150px; min-width:70px; }
+  #modelpicker { flex:1 1 170px; min-width:70px; }
+  #thinkpicker { flex:0 1 100px; min-width:65px; }
+  #modelbutton, #thinkbutton { width:100%; }
+  header { gap:4px; padding:6px; }
+  header button { font-size:12px; padding:5px 7px; }
+  header .picker .picklist { position:fixed; top:54px; left:auto; }
+  #workprogress.overdue #workpercent { font-style:italic; }
   #status.busy #statustext { color:var(--acc); }
   .md pre { position:relative; padding-top:32px; }
   .codecopy { position:absolute; right:7px; top:6px; width:23px; height:21px; padding:3px; border:0; border-radius:4px; color:var(--dim); background:transparent; }
@@ -297,8 +328,7 @@
   <div id="sidetools" role="group" aria-label="Seitenleistenaktionen">
     <button id="newsess" title="Neue Session (Alt+N)">+ Neu</button>
     <span id="sidehint" hidden>Lokale Einträge</span>
-    <select id="sessionsort" aria-label="Sessions sortieren" title="Sessions sortieren"><option value="time">Zeit ↓</option><option value="bookmarks">Bookmarks</option></select>
-    <button id="bookmarkfilter" class="iconbutton" aria-pressed="false" title="Nur Bookmarks anzeigen" aria-label="Nur Bookmarks anzeigen"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.5h7v11L8 11l-3.5 2.5z"/></svg></button>
+    <button id="bookmarkfilter" class="iconbutton" data-mode="off" aria-pressed="false" title="Bookmark-Filter: alle Sessions, reine Zeitsortierung" aria-label="Bookmark-Filter umschalten"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.5h7v11L8 11l-3.5 2.5z"/></svg><span class="filterlabel">Alle</span></button>
   </div>
   </div>
   <div id="sessions"></div>
@@ -307,8 +337,7 @@
 <div id="main">
 <header>
   <button id="toggle" title="Seitenleiste ein-/ausblenden" aria-label="Seitenleiste"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor"><rect x="2" y="3" width="14" height="12" rx="2"/><path d="M6 3v12"/></svg></button>
- <button id="sessionrename" title="Einen neuen, merkbaren Titel eingeben">Session umbenennen</button>
- <details id="commandmenu" style="position:relative"><summary title="Alle Slash-Befehle" style="cursor:pointer;padding:6px 10px">/</summary><div id="commandmenulist" style="position:absolute;top:100%;left:0;z-index:50;max-height:360px;overflow:auto;min-width:250px;background:var(--panel);padding:6px;border:1px solid var(--acc);border-radius:6px"></div></details>
+ <div class="picker" id="commandmenu"><button class="pickbtn" id="commandmenubutton" aria-haspopup="true" aria-expanded="false" title="Alle Slash-Befehle">/ Befehle</button><div id="commandmenulist" class="picklist" role="menu" aria-label="Slash-Befehle" tabindex="0" hidden></div></div>
   <input id="cwd" type="hidden" aria-label="Arbeitsordner">
   <div id="workspacegroup" role="group" aria-label="Workspace und Editor">
   <div class="picker" id="cwdpicker"><button class="pickbtn" id="cwdbutton" aria-haspopup="listbox" aria-expanded="false" title="Arbeitsordner wählen">Workspace:</button><div class="picklist" id="cwdlist" role="listbox" aria-label="Workspaces" tabindex="0" hidden></div><select id="cwdoptions" hidden aria-hidden="true" tabindex="-1"><option value="">Workspace:</option></select></div>
@@ -323,7 +352,7 @@
     <button id="textlarger" title="Ausgabetext vergrößern" aria-label="Ausgabetext vergrößern">A+</button>
   </span>
   <button id="keyboardhelp" title="Tastaturhilfe (F1)" aria-label="Tastaturhilfe">?</button>
-  <span id="status" role="status"><span id="workspinner" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span id="statustext">startet…</span><span id="workprogress" hidden title="Laufzeit; die Restdauer des Agentenlaufs ist unbekannt."></span></span>
+  <span id="status" role="status"><span id="workspinner" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span id="statustext">startet…</span><span id="workprogress" hidden title="Laufzeit; die Restdauer des Agentenlaufs ist unbekannt."><span id="worktime"></span><span id="workpercent"></span></span></span>
 </header>
 <div id="logwrap"><div id="log" tabindex="0" role="region" aria-label="Chatverlauf"></div></div>
 <div id="widgets-above"></div>
@@ -388,6 +417,8 @@ Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhal
 <script src="editor.js"></script>
 <script src="material-browser.js"></script>
 <script src="bookmark-palette.js"></script>
+<script src="category-colors.js"></script>
+<script src="duration-estimate.js"></script>
 <script src="session-bookmarks.js"></script>
 <script src="commands.js"></script>
 <script src="slash.js"></script>

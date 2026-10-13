@@ -73,10 +73,17 @@ function scheduleRender(b) {
 }
 
 // ---------- Hilfen ----------
+// Lokale, rein clientseitige Laufzeit-Schätzung (keine echte Serverfortschrittsmeldung
+// existiert) – Details und Garantien: ui/duration-estimate.js.
+const durationEstimate = createDurationEstimate({ getItem: k => window.localStorage.getItem(k), setItem: (k, v) => window.localStorage.setItem(k, v) });
 let workStarted = 0, workTimer = null;
 function setStatus(t, busy_ = busy) {
   $("statustext").textContent = t;
   if (busy_ && !busy) workStarted = performance.now();
+  if (!busy_ && busy && t === "bereit") {
+    const elapsed = Math.max(0, (performance.now() - workStarted) / 1000);
+    durationEstimate.record(elapsed);
+  }
   busy = busy_; statusEl.classList.toggle("busy", busy);
   const progress = $("workprogress");
   if (!busy) {
@@ -86,8 +93,11 @@ function setStatus(t, busy_ = busy) {
   const update = () => {
     progress.hidden = false;
     const seconds = Math.max(0, Math.floor((performance.now() - workStarted) / 1000));
-    progress.textContent = Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
-    progress.title = "Laufzeit des Agentenlaufs. Die Restdauer ist unbekannt; Tool-Aufrufe und weitere Schritte können sie beliebig verlängern.";
+    $("worktime").textContent = Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
+    const info = durationEstimate.percent(seconds);
+    $("workpercent").textContent = durationEstimate.label(seconds);
+    progress.classList.toggle("overdue", info.overdue);
+    progress.title = "Laufzeit des Agentenlaufs. Die Restdauer ist unbekannt; Tool-Aufrufe und weitere Schritte können sie beliebig verlängern. " + durationEstimate.title(seconds);
   };
   update();
   if (!workTimer) workTimer = setInterval(update, 1000);
@@ -521,14 +531,26 @@ const sessionBookmarks = createSessionBookmarks({
   getItem: key => window.localStorage.getItem(key),
   setItem: (key, value) => window.localStorage.setItem(key, value)
 });
-$("sessionsort").value = sessionBookmarks.mode;
-$("bookmarkfilter").onclick = () => {
-  try { sessionBookmarks.setOnlyBookmarks(!sessionBookmarks.onlyBookmarks); renderSessions(); }
-  catch(e) { toast("Filter konnte nicht gespeichert werden.", "error"); }
+// Drei-Zustands-Zyklus statt getrennter Filter-/Sortierauswahl: off (alle, Zeit) ->
+// on (nur Bookmarks, Zeit) -> colors (nur Bookmarks, nach Bookmark-Farbe dann Zeit) -> off.
+const BOOKMARK_FILTER_LABELS = { off: "Alle", on: "Bookmarks", colors: "Nach Farbe" };
+const BOOKMARK_FILTER_TITLES = {
+  off: "Bookmark-Filter: alle Sessions, reine Zeitsortierung. Klicken für nur Bookmarks.",
+  on: "Bookmark-Filter: nur Bookmarks, Zeitsortierung. Klicken für Sortierung nach Bookmark-Farbe.",
+  colors: "Bookmark-Filter: nur Bookmarks, sortiert nach Farbe, dann Zeit. Klicken für alle Sessions.",
 };
-$("sessionsort").onchange = () => {
-  try { sessionBookmarks.setMode($("sessionsort").value); renderSessions(); }
-  catch(e) { $("sessionsort").value = sessionBookmarks.mode; toast("Sortierung konnte nicht gespeichert werden.", "error"); }
+function syncBookmarkFilterButton() {
+  const mode = sessionBookmarks.filterMode, button = $("bookmarkfilter");
+  button.dataset.mode = mode;
+  button.setAttribute("aria-pressed", String(mode !== "off"));
+  button.title = BOOKMARK_FILTER_TITLES[mode];
+  button.setAttribute("aria-label", button.title);
+  button.querySelector(".filterlabel").textContent = BOOKMARK_FILTER_LABELS[mode];
+}
+syncBookmarkFilterButton();
+$("bookmarkfilter").onclick = () => {
+  try { sessionBookmarks.cycleFilterMode(); syncBookmarkFilterButton(); renderSessions(); }
+  catch(e) { toast("Filter konnte nicht gespeichert werden.", "error"); }
 };
 function toggleSessionBookmark(s) {
   try {
@@ -538,19 +560,28 @@ function toggleSessionBookmark(s) {
     (row?.querySelector(".bookmark") || $("bookmarkfilter")).focus();
   } catch(e) { toast("Bookmark konnte nicht gespeichert werden.", "error"); }
 }
-$("sessionrename").onclick = () => renameCurrent();
+const categoryNames = createCategoryColorNames(window.localStorage, BookmarkPalette.COLORS.map(c => c.name));
 function openBookmarkColorPicker(s, anchor) {
   closeMenu(false); ctxFrom = anchor;
   const menu = document.createElement("div"); menu.id = "ctx";
   menu.setAttribute("role", "menu"); menu.setAttribute("aria-label", "Bookmark-Farbe");
-  menu.style.cssText = "display:grid;grid-template-columns:repeat(4,28px);gap:5px;padding:7px";
+  menu.style.cssText = "display:grid;grid-template-columns:28px 150px;gap:5px;padding:7px";
   BookmarkPalette.COLORS.forEach((color, i) => {
     const button = document.createElement("button");
-    button.title = color.name; button.setAttribute("aria-label", color.name);
+    button.title = categoryNames.nameOf(i); button.setAttribute("aria-label", categoryNames.nameOf(i));
     button.setAttribute("role", "menuitemradio"); button.setAttribute("aria-checked", String(sessionBookmarks.colorOf(s.path) === i));
     button.style.cssText = `background:${color.hex};width:26px;height:26px;border-radius:50%`;
     button.onclick = () => { try { sessionBookmarks.setColor(s.path, i); closeMenu(false); renderSessions(); } catch { toast("Farbe konnte nicht gespeichert werden.", "error"); } };
     menu.appendChild(button);
+    const input = document.createElement("input"); input.value = categoryNames.nameOf(i); input.maxLength = 48;
+    input.setAttribute("aria-label", "Kategorie " + (i + 1) + " benennen");
+    input.onkeydown = e => {
+      e.stopPropagation();
+      if (e.key === "Enter") { e.preventDefault(); input.onchange(); closeMenu(false); }
+      else if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
+    };
+    input.onchange = () => { categoryNames.rename(i, input.value); input.value = categoryNames.nameOf(i); button.title = input.value; button.setAttribute("aria-label", input.value); };
+    menu.appendChild(input);
   });
   document.body.appendChild(menu);
   const rect = anchor.getBoundingClientRect();
@@ -558,9 +589,9 @@ function openBookmarkColorPicker(s, anchor) {
   menu.style.top = Math.max(4, Math.min(rect.bottom, innerHeight - menu.offsetHeight - 4)) + "px";
   menu.firstChild.focus();
   menu.onkeydown = e => {
-    const buttons = [...menu.children], i = buttons.indexOf(document.activeElement);
+    const buttons = [...menu.querySelectorAll("button")], i = buttons.indexOf(document.activeElement);
     if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
-    if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.key)) {
+    if (i >= 0 && ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.key)) {
       e.preventDefault(); buttons[(i + (e.key === "ArrowLeft" || e.key === "ArrowUp" ? 7 : 1)) % 8].focus();
     }
   };
@@ -582,8 +613,7 @@ async function loadSessions() {
 function renderSessions() {
   const box = $("sessions"); box.innerHTML = "";
   const filtered = sessionBookmarks.visible(sessionList);
-  $("bookmarkfilter").setAttribute("aria-pressed", String(sessionBookmarks.onlyBookmarks));
-  $("bookmarkfilter").title = sessionBookmarks.onlyBookmarks ? "Alle Sessions anzeigen" : "Nur Bookmarks anzeigen";
+  syncBookmarkFilterButton();
   if (!filtered.length && sessionList.length) {
     const e = document.createElement("div"); e.className = "sessempty";
     e.textContent = "Keine Bookmarks. Lesezeichen-Knopf oben zeigt wieder alle Sessions."; box.appendChild(e);
@@ -598,8 +628,11 @@ function renderSessions() {
     const mk = (txt, tip, fn) => { const b = document.createElement("button"); b.textContent = txt; b.title = tip;
       b.onclick = (e) => { e.stopPropagation(); fn(); }; b.onkeydown = (e) => e.stopPropagation(); return b; };
     const icon = (b, cls, label, svg) => { b.className = cls; b.setAttribute("aria-label", label); b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${svg}</svg>`; return b; };
-    if (s.path === state.sessionFile) act.append(icon(mk("", "Umbenennen (F2)", renameCurrent), "rename", "Session umbenennen", '<path d="M3 13l1-3.5L10.5 3 13 5.5 6.5 12z M9.5 4l2.5 2.5"/>'));
-    else act.append(icon(mk("", "Löschen (Entf)", () => removeSession(s)), "delete", "Session löschen", '<path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.6 8.5h4.8l.6-8.5"/>'));
+    // Umbenennen-Button ist auf jeder Sessionkarte dauerhaft sichtbar (nicht nur bei Hover
+    // oder nur für die aktive Session); Löschen bleibt eine separate Aktion und ist nur für
+    // nicht-aktive Sessions verfügbar (die aktive Session kann nicht gelöscht werden).
+    act.append(icon(mk("", "Umbenennen (F2)", () => renameSession(s)), "rename", "Session umbenennen", '<path d="M3 13l1-3.5L10.5 3 13 5.5 6.5 12z M9.5 4l2.5 2.5"/>'));
+    if (s.path !== state.sessionFile) act.append(icon(mk("", "Löschen (Entf)", () => removeSession(s)), "delete", "Session löschen", '<path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.6 8.5h4.8l.6-8.5"/>'));
     const bookmark = mk("", "Bookmark", () => toggleSessionBookmark(s));
     bookmark.className = "bookmark";
     const marked = sessionBookmarks.has(s.path);
@@ -607,8 +640,9 @@ function renderSessions() {
     if (marked) {
       const colorButton = mk("", "Bookmark-Farbe · acht Standardfarben", () => openBookmarkColorPicker(s, colorButton));
       colorButton.setAttribute("aria-label", "Bookmark-Farbe wählen");
-      colorButton.style.cssText = "position:absolute;right:56px;bottom:6px;width:21px;height:21px;padding:0;background:transparent";
+      colorButton.style.cssText = "position:absolute;right:31px;bottom:6px;width:21px;height:21px;padding:0;background:transparent";
       colorButton.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="5" fill="${BookmarkPalette.hex(sessionBookmarks.colorOf(s.path))}"/></svg>`;
+      colorButton.title = categoryNames.nameOf(sessionBookmarks.colorOf(s.path)) + " · Kategorie wählen/benennen";
       d.appendChild(colorButton);
     }
     bookmark.setAttribute("aria-pressed", String(marked));
@@ -630,6 +664,7 @@ function renderSessions() {
 let ctxFrom = null;
 function closeMenu(refocus = true) {
   const m = $("ctx"); if (!m) return;
+  m.querySelectorAll("input").forEach(input => input.onchange?.());
   m.remove(); if (refocus) ctxFrom?.focus(); ctxFrom = null;
 }
 function sessMenu(s, x, y, from) {
@@ -957,7 +992,7 @@ async function changeSideView() {
   $("sessions").hidden = view !== "sessions";
   $("inventory").hidden = view === "sessions";
   $("newsess").hidden = view !== "sessions";
-  $("sessionsort").hidden = $("bookmarkfilter").hidden = view !== "sessions";
+  $("bookmarkfilter").hidden = view !== "sessions";
   $("sidehint").hidden = view === "sessions";
   $("sidetitle").textContent = $("sideview").selectedOptions[0].textContent;
   if (view === "sessions") return;
@@ -1536,6 +1571,17 @@ async function speechCommand(command) {
   const result = await request({ type: "prompt", message: "/vorlesen " + command });
   if (!result.success) toast(result.error || "Sprachbefehl fehlgeschlagen", "error");
 }
+const commandMenuButton = $("commandmenubutton"), commandMenuList = $("commandmenulist");
+commandMenuButton.onclick = () => {
+  commandMenuList.hidden = !commandMenuList.hidden;
+  commandMenuButton.setAttribute("aria-expanded", String(!commandMenuList.hidden));
+};
+document.addEventListener("click", e => {
+  if (!$("commandmenu").contains(e.target)) { commandMenuList.hidden = true; commandMenuButton.setAttribute("aria-expanded", "false"); }
+});
+commandMenuList.onkeydown = e => {
+  if (e.key === "Escape") { commandMenuList.hidden = true; commandMenuButton.setAttribute("aria-expanded", "false"); commandMenuButton.focus(); }
+};
 async function detectSpeech() {
   try {
     const r = await request({ type: "get_commands" });
@@ -1545,15 +1591,27 @@ async function detectSpeech() {
     slashPicker.setCommands(allCommands);
     const menu = $("commandmenulist");
     menu.replaceChildren();
-    for (const command of [...allCommands].sort((a, b) => a.name.localeCompare(b.name))) {
+    const selectCommand = command => {
+      menu.hidden = true; $("commandmenubutton").setAttribute("aria-expanded", "false");
+      $("prompt").value = "/" + command.name + " "; $("prompt").focus();
+      $("prompt").dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const skills = allCommands.filter(c => c.name.startsWith("skill:")).sort((a,b) => a.name.localeCompare(b.name));
+    const group = document.createElement("div"); group.className = "cmdgroup";
+    const skillButton = document.createElement("button"); skillButton.textContent = "/skill:"; skillButton.setAttribute("aria-haspopup", "true"); skillButton.setAttribute("aria-expanded", "false");
+    const submenu = document.createElement("div"); submenu.className = "cmdsubmenu"; submenu.hidden = true;
+    // In der scrollbaren Kopfliste als eingerückte Unterliste, nicht außerhalb abgeschnitten.
+    submenu.style.cssText = "position:static;width:auto;margin-left:12px";
+    for (const skill of skills) { const b = document.createElement("button"); b.textContent = skill.name.slice(6); b.title = skill.description || ""; b.onclick = () => selectCommand(skill); submenu.appendChild(b); }
+    if (!skills.length) submenu.textContent = "Keine Skills von pi gemeldet";
+    skillButton.onclick = () => { submenu.hidden = !submenu.hidden; skillButton.setAttribute("aria-expanded", String(!submenu.hidden)); };
+    group.append(skillButton, submenu);
+    const menuEntries = [...allCommands.filter(c => !c.name.startsWith("skill:")), {name:"skill:", skillGroup:true}].sort((a,b) => a.name.localeCompare(b.name));
+    for (const command of menuEntries) {
+      if (command.skillGroup) { menu.appendChild(group); continue; }
       const button = document.createElement("button");
       button.textContent = "/" + command.name; button.title = command.description || "";
-      button.style.cssText = "display:block;width:100%;text-align:left;margin:2px 0";
-      button.onclick = () => {
-        $("commandmenu").open = false;
-        $("prompt").value = "/" + command.name + " "; $("prompt").focus();
-        $("prompt").dispatchEvent(new Event("input", { bubbles: true }));
-      };
+      button.onclick = () => selectCommand(command);
       menu.appendChild(button);
     }
     const available = r.success && r.data?.commands?.some(c => c.name === "vorlesen");

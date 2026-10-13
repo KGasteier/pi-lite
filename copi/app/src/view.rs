@@ -405,7 +405,7 @@ impl App {
         // 4b. Sessions-/Inventarliste in der Seitenleiste (Tastaturnavigation, nur wenn die
         // Eingabe nicht fokussiert ist und keine Auswahlliste/Hilfe offen ist).
         let prompt_focused_now = ctx.memory(|m| m.has_focus(prompt_id()));
-        if self.store.side_visible && !prompt_focused_now {
+        if self.store.side_visible && !prompt_focused_now && !ctx.memory(|m| m.focused().is_some()) && !egui::Popup::is_any_open(ctx) {
             if self.list_menu {
                 if plain(ctx, Key::Escape) {
                     self.list_menu = false;
@@ -588,14 +588,13 @@ impl App {
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let only = self.store.only_bookmarks;
-                    let st = IconStyle { bg: if only { Some(PICK_OPEN) } else { None }, fg: if only { FG } else { DIM }, ..Default::default() };
-                    let tip = if only { "Alle Sessions anzeigen" } else { "Nur Bookmarks anzeigen" };
-                    if icons::icon_button(ui, vec2(28.0, 28.0), true, st, tip, |p, r, c| icons::bookmark_small(p, r, c, only)).clicked() {
-                        self.store.only_bookmarks = !only;
+                    let label = if !only { "Alle" } else if self.store.colored_bookmarks { "Farben" } else { "Bookmarks" };
+                    if btn(ui, label, 12.0, vec2(7.0,3.0), vec2(0.0,28.0), only, true).on_hover_text("Alle → nur Bookmarks (Zeit) → nur Bookmarks (Farbkategorie/Zeit)").clicked() {
+                        if !only { self.store.only_bookmarks = true; self.store.colored_bookmarks = false; }
+                        else if !self.store.colored_bookmarks { self.store.colored_bookmarks = true; }
+                        else { self.store.only_bookmarks = false; self.store.colored_bookmarks = false; }
                         self.save_store();
                     }
-                    let label = if self.store.sort == "bookmarks" { "Bookmarks" } else { "Zeit ↓" };
-                    self.pick_button(ui, PickerKind::Sort, label, 104.0, "Sortierung");
                 });
             });
         } else if self.inventory_loading {
@@ -829,7 +828,7 @@ impl App {
         p.galley(rect.min + vec2(12.0, 8.0), p.layout_job(job), FG);
         let meta = format!("{} · {}", fmt_date(s.modified), pi_backend::tilde(&s.cwd));
         let mut job = LayoutJob::simple_singleline(meta, FontId::proportional(11.0), DIM);
-        job.wrap = TextWrapping::truncate_at_width(tw - 52.0);
+        job.wrap = TextWrapping::truncate_at_width((tw - 102.0).max(10.0));
         p.galley(rect.min + vec2(12.0, 29.0), p.layout_job(job), DIM);
 
         if resp.hovered() {
@@ -840,43 +839,54 @@ impl App {
             self.show_preview(&s.path, &title, false);
         }
         let bm_rect = Rect::from_min_size(rect.right_bottom() - vec2(6.0 + 23.0, 5.0 + 23.0), vec2(23.0, 23.0));
-        let act_rect = bm_rect.translate(vec2(-25.0, 0.0));
+        let color_rect = bm_rect.translate(vec2(-25.0, 0.0));
+        let act_rect = bm_rect.translate(vec2(-75.0, 0.0));
+        let delete_rect = bm_rect.translate(vec2(-50.0, 0.0));
+        let delete_resp = ui.interact(delete_rect, Id::new(("card-delete", &s.path)), Sense::click()).on_hover_text("Session löschen");
+        icons::paint_icon_button(ui, delete_rect, &delete_resp, !active, IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 13.0, radius: 5 }, icons::trash);
+        if !active && delete_resp.clicked() { self.remove_session(s); }
         let bm_resp = ui.interact(bm_rect, Id::new(("cardbm", &s.path)), Sense::click()).on_hover_text(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" });
         let st = IconStyle { bg: None, fg: if bm { crate::bookmark_palette::color(self.store.bookmark_color(&s.path)) } else { DIM }, hover_fg: FG, icon: 13.0, radius: 5 };
         icons::paint_icon_button(ui, bm_rect, &bm_resp, true, st, |p, r, c| icons::bookmark_card(p, r, c, bm));
         let act_resp = ui
             .interact(act_rect, Id::new(("cardact", &s.path)), Sense::click())
-            .on_hover_text(if active { "Umbenennen (F2)" } else { "Löschen (Entf)" });
-        if resp.hovered() || act_resp.hovered() || active {
+            .on_hover_text("Session umbenennen (F2)");
+        {
             let st = IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 13.0, radius: 5 };
-            icons::paint_icon_button(ui, act_rect, &act_resp, true, st, |p, r, c| if active { icons::pencil(p, r, c) } else { icons::trash(p, r, c) });
+            icons::paint_icon_button(ui, act_rect, &act_resp, true, st, icons::pencil);
         }
-        let color_rect = act_rect.translate(vec2(-25.0, 0.0));
+        // Farbmenü muss Klicks und Textbearbeitung innen erlauben.
         let color_resp = ui.interact(color_rect, Id::new(("bookmark-color", &s.path)), Sense::click()).on_hover_text("Bookmark-Farbe · acht Standardfarben");
         if bm {
             ui.painter().circle_filled(color_rect.center(), 5.0, crate::bookmark_palette::color(self.store.bookmark_color(&s.path)));
-            egui::Popup::menu(&color_resp).show(|ui| {
-                ui.horizontal(|ui| {
-                    for i in 0..8 {
+            egui::Popup::menu(&color_resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+                for i in 0..8 {
+                    ui.horizontal(|ui| {
                         let (r, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
                         ui.painter().circle_filled(r.center(), 8.0, crate::bookmark_palette::color(i));
-                        if response.on_hover_text(crate::bookmark_palette::name(i)).clicked() {
+                        if response.on_hover_text(self.store.category_name(i)).clicked() {
                             self.store.set_bookmark_color(&s.path, i);
+                            self.save_store();
+                        }
+                        let mut name = self.store.category_name(i);
+                        let edit = ui.add(egui::TextEdit::singleline(&mut name).desired_width(140.0).char_limit(48));
+                        if edit.changed() {
+                            self.store.set_category_name(i, &name);
+                            self.save_store();
+                        }
+                        if (edit.has_focus() || edit.lost_focus()) && ui.input(|input| input.key_pressed(Key::Enter)) {
+                            self.store.set_category_name(i, &name);
                             self.save_store();
                             ui.close();
                         }
-                    }
-                });
+                    });
+                }
             });
         }
         if bm_resp.clicked() {
             self.toggle_bookmark(&s.path);
         } else if act_resp.clicked() {
-            if active {
-                self.rename_current();
-            } else {
-                self.remove_session(s);
-            }
+            self.rename_session(s);
         } else if resp.clicked() && !active {
             self.open_session(s, None);
         }
@@ -936,8 +946,8 @@ impl App {
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(30.0);
             let side_on = self.store.side_visible;
-            if icons::icon_button(ui, vec2(30.0, 28.0), true, IconStyle::default(), "Seitenleiste ein-/ausblenden", |p, r, c| {
-                let box_rect = r.shrink(4.0);
+            if icons::icon_button(ui, vec2(32.0, 30.0), true, IconStyle { icon: 28.0, fg: ACC, ..Default::default() }, "Seitenleiste ein-/ausblenden", |p, r, c| {
+                let box_rect = r.shrink(0.5);
                 p.rect_stroke(box_rect, 2, Stroke::new(1.2, c), StrokeKind::Inside);
                 let x = box_rect.left() + box_rect.width() * 0.3;
                 p.line_segment([pos2(x, box_rect.top()), pos2(x, box_rect.bottom())], Stroke::new(1.2, c));
@@ -946,22 +956,29 @@ impl App {
                 self.store.side_visible = !self.store.side_visible;
                 self.save_store();
             }
-            ui.menu_button("/", |ui| {
+            let commands_button = btn(ui, "/ Befehle", 13.0, vec2(10.0, 4.0), vec2(0.0, 28.0), false, true)
+                .on_hover_text("Alle Slash-Befehle · Auswahl in die Eingabe übernehmen");
+            egui::Popup::menu(&commands_button).show(|ui| {
                 ui.set_max_height(360.0);
                 ScrollArea::vertical().show(ui, |ui| {
                     let mut commands = self.commands.clone();
                     commands.sort_by_key(|c| c.name.to_lowercase());
-                    for command in commands {
-                        if ui.button(format!("/{}", command.name)).on_hover_text(&command.description).clicked() {
-                            self.set_prompt(format!("/{} ", command.name));
-                            ui.close();
+                    let mut entries: Vec<String> = commands.iter().filter(|c| !c.name.starts_with("skill:")).map(|c| c.name.clone()).collect();
+                    entries.push("skill:".into()); entries.sort_by_key(|s| s.to_lowercase()); entries.dedup();
+                    for entry in entries {
+                        if entry == "skill:" {
+                            ui.menu_button(RichText::new("/skill:").italics().color(ACC), |ui| {
+                                for command in commands.iter().filter(|c| c.name.starts_with("skill:")) {
+                                    if ui.button(format!("/{}", command.name)).clicked() { self.set_prompt(format!("/{} ", command.name)); ui.close(); }
+                                }
+                                if !commands.iter().any(|c| c.name.starts_with("skill:")) { ui.label("Keine Skills von pi gemeldet"); }
+                            });
+                        } else if ui.button(format!("/{}", entry)).clicked() {
+                            self.set_prompt(format!("/{} ", entry)); ui.close();
                         }
                     }
                 });
-            }).response.on_hover_text("Alle Slash-Befehle · Auswahl in die Eingabe übernehmen");
-            if btn(ui, "Session umbenennen", 12.0, vec2(7.0, 4.0), vec2(0.0, 28.0), false, !self.busy).on_hover_text("Einen neuen, merkbaren Titel für die aktuelle Session eingeben").clicked() {
-                self.rename_current();
-            }
+            });
             let ws = format!("Workspace: {}", if self.cwd.is_empty() { "—".into() } else { pi_backend::tilde(&self.cwd) });
             let w = (ui.available_width() - 32.0) * 0.30;
             Frame::new().stroke(Stroke::new(1.0, BORDER)).corner_radius(7).inner_margin(Margin::same(2)).show(ui, |ui| {
@@ -1001,9 +1018,23 @@ impl App {
                     let sec = self.busy_since.map(|t| t.elapsed().as_secs_f32()).unwrap_or(0.0);
                     Frame::new().fill(ACC).stroke(Stroke::new(1.0, ACC))
                         .corner_radius(6).inner_margin(Margin::symmetric(7, 3)).show(ui, |ui| {
-                            // Die Gesamtdauer eines Agentenlaufs ist nicht messbar. Keine fiktiven Prozentwerte.
+                            ui.set_width(138.0);
+                            ui.set_height(18.0);
+                            ui.spacing_mut().item_spacing.x = 5.0;
+                            let est = self.store.duration_estimate() as f32;
+                            let overdue = sec > est;
+                            let longer: Vec<_> = self.store.duration_history.iter().copied().filter(|n| *n > sec as f64).collect();
+                            let remaining = if longer.is_empty() { est } else {
+                                let mut r: Vec<_> = longer.iter().map(|n| *n as f32 - sec).collect(); r.sort_by(f32::total_cmp);
+                                let m = r.len()/2; if r.len()%2 == 0 { (r[m-1]+r[m])/2.0 } else { r[m] }
+                            };
+                            let pct = if overdue { 100.0*sec/(sec+remaining.max(1.0)) } else { 90.0*sec/est };
+                            ui.add_sized(vec2(62.0,18.0), Label::new(txt(format!("≈{:.0}%{}", pct.min(99.0), if overdue { " +" } else { "" }), 12.0, BG)).truncate())
+                                .on_hover_text(format!("Lokale Laufzeitschätzung, kein gemessener Fortschritt. Basis: Median letzter abgeschlossener Läufe, anfangs 180 s. Erwartung: {:.0} s. {} Restdauer unbekannt.", est, if overdue { "Länger als üblich." } else { "" }));
+                            let (separator, _) = ui.allocate_exact_size(vec2(1.0,14.0), Sense::hover());
+                            ui.painter().vline(separator.center().x, separator.y_range(), Stroke::new(1.0, BG.gamma_multiply(0.3)));
                             let elapsed = format!("{}:{:02}", sec as u64 / 60, sec as u64 % 60);
-                            ui.add(Label::new(txt(elapsed, 12.0, BG)))
+                            ui.add_sized(vec2(62.0,18.0), Label::new(txt(elapsed, 12.0, BG)).truncate())
                                 .on_hover_text("Laufzeit des Agentenlaufs. Die Restdauer ist unbekannt; Tool-Aufrufe und weitere Schritte können sie beliebig verlängern.");
                         });
                 }

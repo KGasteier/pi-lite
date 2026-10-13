@@ -600,7 +600,12 @@ impl App {
     pub fn set_status(&mut self, s: &str, busy: bool) {
         self.status = s.into();
         if busy && !self.busy { self.busy_since = Some(Instant::now()); }
-        if !busy { self.busy_since = None; }
+        if !busy {
+            if self.busy && s == "bereit" {
+                if let Some(start) = self.busy_since { self.store.record_duration(start.elapsed().as_secs_f64()); self.save_store(); }
+            }
+            self.busy_since = None;
+        }
         self.busy = busy;
     }
 
@@ -1182,11 +1187,12 @@ impl App {
     }
 
     pub fn visible_sessions(&self) -> Vec<SessionInfo> {
-        let bm = self.store.sort == "bookmarks";
         let mut v: Vec<SessionInfo> = self.sessions.iter().filter(|s| !self.store.only_bookmarks || self.store.is_bookmark(&s.path)).cloned().collect();
         v.sort_by(|a, b| {
-            let (ka, kb) = (bm && self.store.is_bookmark(&a.path), bm && self.store.is_bookmark(&b.path));
-            kb.cmp(&ka).then(b.modified.cmp(&a.modified)).then(a.path.cmp(&b.path))
+            let category = if self.store.only_bookmarks && self.store.colored_bookmarks {
+                self.store.bookmark_color(&a.path).cmp(&self.store.bookmark_color(&b.path))
+            } else { std::cmp::Ordering::Equal };
+            category.then(b.modified.cmp(&a.modified)).then(a.path.cmp(&b.path))
         });
         v
     }

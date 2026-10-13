@@ -177,3 +177,17 @@ Der private lokale Fortsetzungsstarter ist nicht Teil des Repos.
 ## Nachtrag 13. Oktober 2026
 
 Beide Oberflächen: acht Bookmark-Farben, sichtbarer Session-Umbenennen-Button, lokaler Materialbrowser mit Name-/Datumssortierung und DL_Omarchy-Erkennung, Bild-/Text-/Markdown-/PDF-Erstseitenvorschau. Standard sind Originalreferenzen; kein Material-Kopieraufruf gefunden, Agentenaktionen nicht technisch gesperrt. Beide Release-Binaries installiert und Hashgleichheit geprüft; Livebedienung offen. Quellcode-Paritätsmatrix und tatsächliche Lücken: docs/FEATURE_PARITY.md. Details: docs/CORRECTIONS-2026-10-12.md.
+
+## Menü-/Sidebar-Korrekturen
+
+Beide Frontends: Header-Umbenennen entfernt, Edit-Button dauerhaft auf jeder Sessionkarte. /skill:-Unterliste aus get_commands; nur von pi gemeldete Skills, keine behauptete Vollständigkeit deaktivierter Skills. pi-lite / ohne Pfeil/Play, Header kompakt einzeilig (sehr schmale Fenster horizontal scrollbar). Bookmark-Modi Alle/Zeit → Bookmarks/Zeit → Bookmarks/Farbindex+Zeit. Acht globale Kategorienamen lokal editierbar. Zeit meint vorhandenes modified, nicht reines Öffnungsdatum. Invertierte Prozent-Schätzung neben Laufzeit: lokale max30 abgeschlossene Läufe, Median ab3, initial180s; bei Überschreiten verbleibende Dauer längerer beobachteter Läufe, sonst neuer180s/Median-Horizont, +Markierung, ggf Rücksprung. Keine gemessene Gesamtfortschrittsanzeige. Rust-/JS-Tests und Release-Builds bestanden; reale Layout-/Bedienprüfung offen. Kein Push dieser Änderung.
+
+## Farbmenü-Fokus und Warnhinweise – Nachtrag
+
+Beide Oberflächen: / Befehle statt isoliertem Slash; /skill: alphabetisch einsortiert und kursiv abgesetzt. Session-Aktionen links von Farbe/Bookmark, Löschen separat (aktive Session weiterhin geschützt). Sidebar-Symbol vergrößert. copi-Farbpopup schließt nur außerhalb; Sidebar-Tastenkürzel bei Textfokus oder offenem Popup gesperrt. pi-lite Kategoriename mit Enter oder Außenklick speichern/schließen, Eingabetasten bleiben im Namensfeld. Rust-/JS-Tests, beide Release-Builds und Hashinstallation bestanden; reale Bedienprüfung offen.
+
+Drei Nutzer-Screenshots vom 13.10. zeigen ANR, auch auf leerer Startkarte, nicht nur langem Chat. Keine Coredumps seit10:30, kein passender OOM-/GPU-/Panic-Befund in verfügbaren Journalen11:55–12:25; Momentaufnahme5.1GiB verfügbar, Swap2.0GiB benutzt. Keine aktive copi-Instanz beim Diagnoseabruf, daher kein live Threadstack. Ursache weiterhin unbekannt; nächste sinnvolle Diagnose: während tatsächlichem Hänger Prozess-/Threadzustände und optional mit Zustimmung kurz Thread-Backtrace erfassen. Kein Grafikconfig-Wechsel, keine Sessions beendet, keine privaten Bilder committet.
+
+### Abschluss Kategoriename / feste Statusbreite
+
+copi: Enter bei Fokus oder Fokusverlust des Kategorien-Textfelds speichert und schließt Popup. Befehlsbutton nutzt denselben btn-Helfer13px/28px wie übrige Kopfbuttons. Beide UIs: feste Zeit/Prozent-Breite, dezenter Mittelstrich. Rust-/JS-Tests und Release-Builds bestanden, atomar installiert und Hashgleichheit geprüft; Liveprüfung ausstehend, nicht gepusht.

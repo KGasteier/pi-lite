@@ -2,7 +2,7 @@ const fs = require('node:fs'), assert = require('node:assert/strict');
 const html = fs.readFileSync('ui/index.html','utf8');
 const head = html.slice(html.indexOf('<div id="sidehead">'), html.indexOf('<div id="sessions">'));
 assert(head.indexOf('id="sideview"') < head.indexOf('id="sidetools"'));
-for (const id of ['sideview','sidetools','newsess','sessionsort','bookmarkfilter','sidehint']) assert(head.includes(`id="${id}"`));
+for (const id of ['sideview','sidetools','newsess','bookmarkfilter','sidehint']) assert(head.includes(`id="${id}"`));
 assert(!head.includes('<h3>')); assert(!head.includes('cacheclear'));
 const preview = html.slice(html.indexOf('<div id="preview"'), html.indexOf('\n', html.indexOf('<div id="preview"')));
 assert(preview.includes('id="cacheclear"') && preview.includes('Gespeicherte Kurzinfos löschen'));
