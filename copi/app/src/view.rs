@@ -1,7 +1,7 @@
 //! Darstellung (entspricht index.html/style.css in pi-lite).
 use egui::text::{LayoutJob, TextWrapping};
 use egui::{
-    vec2, Align, Align2, Color32, Context, CornerRadius, Event, FontId, Frame, Id, Key, Label, Layout, Margin, Modifiers, Order, Pos2, Rect, Response, RichText, ScrollArea, Sense,
+    pos2, vec2, Align, Align2, Color32, Context, CornerRadius, Event, FontId, Frame, Id, Key, Label, Layout, Margin, Modifiers, Order, Pos2, Rect, Response, RichText, ScrollArea, Sense,
     Stroke, StrokeKind, Ui, Vec2,
 };
 use serde_json::{json, Value};
@@ -707,7 +707,6 @@ impl App {
             });
         });
         ui.add_space(4.0);
-        if ui.small_button("KI-Hilfsmodell auswählen…").clicked() { self.configure_preview_helper(); }
         ui.add(Label::new(txt(name, 13.0, FG)).wrap());
         ui.add(Label::new(txt(pi_backend::tilde(&path), 11.0, DIM)).truncate());
         ui.add_space(8.0);
@@ -752,12 +751,15 @@ impl App {
                     ui.add(Label::new(txt(ai_text, 12.5, FG)).wrap());
                     if !ai_method.is_empty() { ui.add(Label::new(txt(format!("LLM: {ai_method}"), 9.0, DIM)).wrap()); }
                 });
-                if btn(ui, "Neu erklären", 11.0, vec2(8.0, 4.0), Vec2::ZERO, false, !ai_loading).clicked() {
-                    self.request_ai_explain(true);
-                }
-            } else if btn(ui, "Zweck mit KI erklären…", 12.0, vec2(10.0, 5.0), Vec2::ZERO, false, true).clicked() {
-                self.request_ai_explain(false);
             }
+            ui.horizontal_wrapped(|ui| {
+                if btn(ui, "Von KI erklären lassen…", 12.0, vec2(8.0, 4.0), Vec2::ZERO, false, !ai_loading).clicked() {
+                    self.request_ai_explain(ai_visible);
+                }
+                if btn(ui, "Hilfsmodell…", 10.5, vec2(6.0, 3.0), Vec2::ZERO, false, true).on_hover_text("KI-Hilfsmodell auswählen").clicked() {
+                    self.configure_preview_helper();
+                }
+            });
         });
     }
 
@@ -840,7 +842,7 @@ impl App {
         let bm_rect = Rect::from_min_size(rect.right_bottom() - vec2(6.0 + 23.0, 5.0 + 23.0), vec2(23.0, 23.0));
         let act_rect = bm_rect.translate(vec2(-25.0, 0.0));
         let bm_resp = ui.interact(bm_rect, Id::new(("cardbm", &s.path)), Sense::click()).on_hover_text(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" });
-        let st = IconStyle { bg: None, fg: if bm { CAT } else { DIM }, hover_fg: FG, icon: 13.0, radius: 5 };
+        let st = IconStyle { bg: None, fg: if bm { crate::bookmark_palette::color(self.store.bookmark_color(&s.path)) } else { DIM }, hover_fg: FG, icon: 13.0, radius: 5 };
         icons::paint_icon_button(ui, bm_rect, &bm_resp, true, st, |p, r, c| icons::bookmark_card(p, r, c, bm));
         let act_resp = ui
             .interact(act_rect, Id::new(("cardact", &s.path)), Sense::click())
@@ -848,6 +850,24 @@ impl App {
         if resp.hovered() || act_resp.hovered() || active {
             let st = IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 13.0, radius: 5 };
             icons::paint_icon_button(ui, act_rect, &act_resp, true, st, |p, r, c| if active { icons::pencil(p, r, c) } else { icons::trash(p, r, c) });
+        }
+        let color_rect = act_rect.translate(vec2(-25.0, 0.0));
+        let color_resp = ui.interact(color_rect, Id::new(("bookmark-color", &s.path)), Sense::click()).on_hover_text("Bookmark-Farbe · acht Standardfarben");
+        if bm {
+            ui.painter().circle_filled(color_rect.center(), 5.0, crate::bookmark_palette::color(self.store.bookmark_color(&s.path)));
+            egui::Popup::menu(&color_resp).show(|ui| {
+                ui.horizontal(|ui| {
+                    for i in 0..8 {
+                        let (r, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+                        ui.painter().circle_filled(r.center(), 8.0, crate::bookmark_palette::color(i));
+                        if response.on_hover_text(crate::bookmark_palette::name(i)).clicked() {
+                            self.store.set_bookmark_color(&s.path, i);
+                            self.save_store();
+                            ui.close();
+                        }
+                    }
+                });
+            });
         }
         if bm_resp.clicked() {
             self.toggle_bookmark(&s.path);
@@ -870,7 +890,7 @@ impl App {
                 self.toggle_bookmark(&s.path);
                 ui.close();
             }
-            if ui.button("Umbenennen   R").clicked() {
+            if ui.button("Session umbenennen   R").clicked() {
                 self.rename_session(s);
                 ui.close();
             }
@@ -915,9 +935,32 @@ impl App {
         ui.spacing_mut().item_spacing.x = 8.0;
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(30.0);
-            if btn(ui, "☰", 14.0, vec2(9.0, 4.0), vec2(30.0, 28.0), false, true).on_hover_text("Seitenleiste ein-/ausblenden").clicked() {
+            let side_on = self.store.side_visible;
+            if icons::icon_button(ui, vec2(30.0, 28.0), true, IconStyle::default(), "Seitenleiste ein-/ausblenden", |p, r, c| {
+                let box_rect = r.shrink(4.0);
+                p.rect_stroke(box_rect, 2, Stroke::new(1.2, c), StrokeKind::Inside);
+                let x = box_rect.left() + box_rect.width() * 0.3;
+                p.line_segment([pos2(x, box_rect.top()), pos2(x, box_rect.bottom())], Stroke::new(1.2, c));
+                if side_on { p.rect_filled(Rect::from_min_max(box_rect.min, pos2(x, box_rect.bottom())).shrink(1.5), 1, c); }
+            }).clicked() {
                 self.store.side_visible = !self.store.side_visible;
                 self.save_store();
+            }
+            ui.menu_button("/", |ui| {
+                ui.set_max_height(360.0);
+                ScrollArea::vertical().show(ui, |ui| {
+                    let mut commands = self.commands.clone();
+                    commands.sort_by_key(|c| c.name.to_lowercase());
+                    for command in commands {
+                        if ui.button(format!("/{}", command.name)).on_hover_text(&command.description).clicked() {
+                            self.set_prompt(format!("/{} ", command.name));
+                            ui.close();
+                        }
+                    }
+                });
+            }).response.on_hover_text("Alle Slash-Befehle · Auswahl in die Eingabe übernehmen");
+            if btn(ui, "Session umbenennen", 12.0, vec2(7.0, 4.0), vec2(0.0, 28.0), false, !self.busy).on_hover_text("Einen neuen, merkbaren Titel für die aktuelle Session eingeben").clicked() {
+                self.rename_current();
             }
             let ws = format!("Workspace: {}", if self.cwd.is_empty() { "—".into() } else { pi_backend::tilde(&self.cwd) });
             let w = (ui.available_width() - 32.0) * 0.30;
@@ -956,10 +999,12 @@ impl App {
                 }
                 if self.busy {
                     let sec = self.busy_since.map(|t| t.elapsed().as_secs_f32()).unwrap_or(0.0);
-                    Frame::new().fill(mix(ACC, 0.10, PANEL)).stroke(Stroke::new(1.0, ACC))
+                    Frame::new().fill(ACC).stroke(Stroke::new(1.0, ACC))
                         .corner_radius(6).inner_margin(Margin::symmetric(7, 3)).show(ui, |ui| {
-                            ui.add(Label::new(txt(format!("≈{:.0}%", 95.0 * (1.0 - (-sec / 90.0).exp())), 12.0, ACC)))
-                                .on_hover_text("Zeitbasierte Schätzung, kein gemessener Agent-Fortschritt. Bleibt während der Arbeit unter 95 %.");
+                            // Die Gesamtdauer eines Agentenlaufs ist nicht messbar. Keine fiktiven Prozentwerte.
+                            let elapsed = format!("{}:{:02}", sec as u64 / 60, sec as u64 % 60);
+                            ui.add(Label::new(txt(elapsed, 12.0, BG)))
+                                .on_hover_text("Laufzeit des Agentenlaufs. Die Restdauer ist unbekannt; Tool-Aufrufe und weitere Schritte können sie beliebig verlängern.");
                         });
                 }
                 ui.add(Label::new(txt(self.status.clone(), 13.0, if self.busy { ACC } else { DIM })).truncate());
@@ -1056,12 +1101,12 @@ impl App {
         let h = (full.height() - 8.0) / 3.0;
         let st = IconStyle { icon: 14.0, ..Default::default() };
         let row = |i: f32| Rect::from_min_size(tools.min + vec2(0.0, i * (h + 4.0)), vec2(32.0, h));
-        let r0 = ui.interact(row(0.0), Id::new("t-add"), Sense::click()).on_hover_text("Material hinzufügen");
-        icons::paint_icon_button(ui, row(0.0), &r0, true, IconStyle { fg: Color32::WHITE, bg: Some(ACC), ..st }, icons::plus);
-        let r1 = ui.interact(row(1.0), Id::new("t-up"), Sense::click()).on_hover_text("Ältere Eingabe (Alt+↑)");
-        icons::paint_icon_button(ui, row(1.0), &r1, true, st, icons::up);
-        let r2 = ui.interact(row(2.0), Id::new("t-down"), Sense::click()).on_hover_text("Neuere Eingabe (Alt+↓)");
-        icons::paint_icon_button(ui, row(2.0), &r2, true, st, icons::down);
+        let r0 = ui.interact(row(2.0), Id::new("t-add"), Sense::click()).on_hover_text("Material hinzufügen");
+        icons::paint_icon_button(ui, row(2.0), &r0, true, IconStyle { fg: Color32::WHITE, bg: Some(ACC), ..st }, icons::plus);
+        let r1 = ui.interact(row(0.0), Id::new("t-up"), Sense::click()).on_hover_text("Ältere Eingabe (Alt+↑)");
+        icons::paint_icon_button(ui, row(0.0), &r1, true, st, icons::up);
+        let r2 = ui.interact(row(1.0), Id::new("t-down"), Sense::click()).on_hover_text("Neuere Eingabe (Alt+↓)");
+        icons::paint_icon_button(ui, row(1.0), &r2, true, st, icons::down);
         if r0.clicked() {
             self.choose_material();
         }
@@ -1171,12 +1216,14 @@ impl App {
                 const ESTIMATE: f32 = 90.0;
                 let mut pl = virtual_log::plan(&cache, total, viewport, OVERSCAN, spacing, ESTIMATE);
                 if force {
-                    // Beim erzwungenen Ans-Ende-Springen (z. B. Sitzungswechsel) muss
-                    // der tatsächlich letzte Eintrag gerendert sein, damit
-                    // `scroll_to_cursor` eine echte Zielposition hat. Einmaliger
-                    // Vollrender-Frame ist hierfür akzeptabel (seltenes Ereignis).
-                    pl.last = total;
-                    pl.trail_space = 0.0;
+                    // Nur das Ende mounten, statt bei langen Sitzungen tausende
+                    // Markdown-/Tool-Blöcke in einem einzigen Frame zu layouten.
+                    let bottom = pl.total_height;
+                    let end_viewport = Rect::from_min_max(
+                        pos2(viewport.min.x, (bottom - viewport.height()).max(0.0)),
+                        pos2(viewport.max.x, bottom),
+                    );
+                    pl = virtual_log::plan(&cache, total, end_viewport, OVERSCAN, spacing, ESTIMATE);
                 }
                 if pl.lead_space > 0.0 {
                     ui.allocate_exact_size(vec2(1.0, pl.lead_space), Sense::hover());
@@ -1412,9 +1459,12 @@ impl App {
     fn dialog_overlay(&mut self, ctx: &Context) {
         let Some(d) = self.dialogs.front_mut() else { return };
         let mut answer: Option<Value> = None;
+        let mut explain_tokens = false;
+        let mut select_helper = false;
         let mut navigate: Option<String> = None;
         let mut navigate_material: Option<String> = None;
         let mut toggle_material: Option<(String, bool)> = None;
+        let mut preview_material: Option<String> = None;
         let screen = ctx.content_rect();
         let width = 560.0f32.min(screen.width() - 24.0);
         let modal = egui::Modal::new(Id::new("dialog"))
@@ -1475,7 +1525,7 @@ impl App {
                     DialogKind::Input | DialogKind::Editor => {
                         let id = Id::new("dialog-text");
                         let editor = d.kind == DialogKind::Editor;
-                        let info_only = d.title == "Tokens & Kontext";
+                        let info_only = d.title.starts_with("Tokens & Kontext");
                         let te = if editor { egui::TextEdit::multiline(&mut d.text).desired_rows(14).interactive(!info_only) } else { egui::TextEdit::singleline(&mut d.text) };
                         let r = Frame::new().fill(BG).corner_radius(6).inner_margin(Margin::same(8)).show(ui, |ui| {
                             let te = te.id(id).frame(Frame::NONE).hint_text(d.placeholder.clone()).desired_width(f32::INFINITY).font(FontId::proportional(14.0));
@@ -1492,6 +1542,12 @@ impl App {
                         if d.focus {
                             r.inner.request_focus();
                             d.focus = false;
+                        }
+                        if info_only {
+                            ui.horizontal(|ui| {
+                                explain_tokens = ui.button("Von KI erklären lassen…").clicked();
+                                select_helper = ui.small_button("Hilfsmodell…").clicked();
+                            });
                         }
                         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                             let ok_label = if info_only { "Schließen" } else if editor { "Übernehmen (Strg+Enter)" } else { "OK" };
@@ -1568,6 +1624,11 @@ impl App {
                         });
                     }
                     DialogKind::Material => {
+                        ui.horizontal(|ui| {
+                            ui.label("Sortierung:");
+                            if ui.selectable_label(!self.material.sort_date, "Name").clicked() { self.material.sort_date = false; navigate_material = Some(d.text.clone()); }
+                            if ui.selectable_label(self.material.sort_date, "Datum ↓").clicked() { self.material.sort_date = true; navigate_material = Some(d.text.clone()); }
+                        });
                         let id = Id::new("dialog-material-text");
                         let mut enter_pressed = false;
                         ui.horizontal(|ui| {
@@ -1626,6 +1687,18 @@ impl App {
                         if d.entries.is_empty() {
                             ui.add(Label::new(txt("Keine Eintr\u{e4}ge.", 12.0, DIM)).wrap());
                         }
+                        if let Some(entry) = d.entries.get(d.cursor).filter(|e| !e.is_dir) {
+                            if ui.button("Lokale Vorschau …").clicked() { preview_material = Some(entry.path.clone()); }
+                        }
+                        if !self.material.preview_text.is_empty() {
+                            ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                                let th = md_egui::Theme::default();
+                                md_egui::show_markdown(ui, &th, &self.material.preview_text);
+                            });
+                            if let Some(texture) = &self.material.preview_texture {
+                                ui.add(egui::Image::new(texture).max_size(vec2(width - 40.0, 240.0)).maintain_aspect_ratio(true));
+                            }
+                        }
                         let count = d.selected.len();
                         ui.add(Label::new(txt(format!("{count} ausgew\u{e4}hlt \u{b7} Klick: Datei an/abw\u{e4}hlen \u{b7} Doppelklick: Ordner \u{f6}ffnen \u{b7} Backspace: Hoch"), 11.0, DIM)).wrap());
                         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
@@ -1642,6 +1715,7 @@ impl App {
         if let Some(p) = navigate {
             self.browse_folder(p);
         }
+        if let Some(path) = preview_material { self.preview_material(path); }
         if let Some(p) = navigate_material {
             self.browse_material(p);
         }
@@ -1650,7 +1724,13 @@ impl App {
         }
         // Hintergrundklick ist absichtlich kein Abbruch (versehentliche Datenverluste vermeiden).
         let _ = modal;
-        if let Some(a) = answer {
+        if explain_tokens {
+            self.close_dialog(None);
+            self.explain_token_info();
+        } else if select_helper {
+            self.close_dialog(None);
+            self.configure_preview_helper();
+        } else if let Some(a) = answer {
             self.close_dialog(Some(a));
         }
     }

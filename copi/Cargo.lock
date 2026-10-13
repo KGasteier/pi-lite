@@ -327,6 +327,7 @@ dependencies = [
 name = "copi"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "eframe",
  "egui",
  "libc",

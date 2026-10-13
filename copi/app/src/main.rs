@@ -1,5 +1,6 @@
 //! copi – native Oberfläche für pi (Rust + egui).
 mod app;
+mod bookmark_palette;
 mod commands;
 mod headless;
 mod icons;

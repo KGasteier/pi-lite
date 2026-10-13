@@ -2,6 +2,8 @@
 //! ohne `rfd`: die Dateiauswahl erfolgt über [`crate::folders::list_folders`]-artige Logik in
 //! [`list_entries`] plus einem Dialog in der Oberfläche statt eines nativen Dateidialogs. Dies
 //! ist bewusst portabler, aber kein Ersatz für ein echtes XDG-Portal-Fenster.
+#[path = "../../../../shared/material_browser.rs"]
+pub mod material_browser;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::io::Read;
 use std::path::Path;
@@ -70,6 +72,7 @@ pub fn prepare(paths: Vec<String>, references_only: bool) -> Result<Prepared, St
         }
         let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("").to_lowercase();
         result.text.push_str(&format!("\nDatei: {}\n", serde_json::to_string(&p.to_string_lossy()).unwrap()));
+        result.text.push_str("Originaldatei referenziert: nicht kopieren, verschieben oder in DL_Omarchy ablegen. Änderungen nur auf ausdrücklichen Auftrag.\n");
         if references_only {
             continue;
         }

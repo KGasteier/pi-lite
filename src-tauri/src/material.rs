@@ -1,3 +1,17 @@
+#[path = "../../shared/material_browser.rs"]
+mod browser;
+#[tauri::command]
+pub async fn material_browser(path: Option<String>, by_date: bool) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = path.unwrap_or_else(|| browser::default_dir(&std::env::var("HOME").unwrap_or_else(|_| ".".into())));
+        let p = std::path::PathBuf::from(&path).canonicalize().map_err(|e|e.to_string())?;
+        Ok(serde_json::json!({"path":p.to_string_lossy(),"parent":p.parent().map(|p|p.to_string_lossy().into_owned()),"entries":browser::list(p.to_str().ok_or("Ungültiger Pfad")?,by_date)?}))
+    }).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+pub async fn material_preview(path: String) -> Result<browser::Preview,String> {
+    tauri::async_runtime::spawn_blocking(move || browser::preview(&path)).await.map_err(|e|e.to_string())?
+}
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::path::Path;
 use std::io::Read;
@@ -21,6 +35,7 @@ fn prepare(paths: Vec<String>, references_only: bool) -> Result<Prepared, String
         if !metadata.is_file() { return Err("Material muss eine reguläre Datei sein".into()); }
         let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("").to_lowercase();
         result.text.push_str(&format!("\nDatei: {}\n", serde_json::to_string(&p.to_string_lossy()).unwrap()));
+        result.text.push_str("Originaldatei referenziert: nicht kopieren, verschieben oder in DL_Omarchy ablegen. Änderungen nur auf ausdrücklichen Auftrag.\n");
         if references_only { continue; }
         if metadata.len() > 100*1024*1024 { return Err("Material überschreitet 100 MiB; bitte als Verweis senden".into()); }
         let mime = match ext.as_str() { "png"=>Some("image/png"), "jpg"|"jpeg"=>Some("image/jpeg"), "webp"=>Some("image/webp"), _=>None };

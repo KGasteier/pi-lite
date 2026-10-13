@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const read=p=>fs.readFileSync(path.join(__dirname,'..',p),'utf8');
+const html=read('ui/index.html'),js=read('ui/app.js'),browser=read('ui/material-browser.js'),rust=read('copi/app/src/view.rs'),shared=read('shared/material_browser.rs');
+assert(html.includes('id="sessionrename"'));assert(rust.includes('"Session umbenennen"'));
+assert(js.includes('openBookmarkColorPicker'));assert(rust.includes('"bookmark-color"'));
+assert(browser.includes("'material_preview'"));assert(browser.includes("'material_browser'"));
+assert(browser.includes("value=\"date\""));assert(rust.includes('"Datum ↓"'));
+assert(shared.includes('DL_Omarchy'));assert(!shared.includes('fs::copy'));
+assert(browser.includes('renderMd(text,data.text,true)'));assert(js.includes('FORBID_TAGS'));
+assert(read('copi/app/src/material_ui.rs').includes('#[default]\n    ReferencesOnly'));
+console.log('Material/Bookmarks: Paritäts-Strukturen und lokale Vorschau geprüft.');

@@ -1505,6 +1505,23 @@ impl App {
         );
     }
 
+    pub fn explain_token_info(&mut self) {
+        let snapshot = self.usage_text.clone();
+        self.ask(DialogKind::Confirm, "Tokenanzeige von KI erklären lassen?", "Die angezeigten Verbrauchswerte werden an das ausgewählte KI-Hilfsmodell gesendet. Keine Chatnachrichten oder Dateien. Es können Kosten entstehen.", vec![], "", move |a, r| {
+            if !r.is_some_and(|v| v["confirmed"] == true) { return; }
+            if a.demo { a.toast("Demo: keine KI-Übertragung.", ToastKind::Info); return; }
+            if !a.store.helper_provider.is_empty() && !a.store.helper_model.is_empty() {
+                std::env::set_var("PI_LITE_HELP_PROVIDER", &a.store.helper_provider);
+                std::env::set_var("PI_LITE_HELP_MODEL", &a.store.helper_model);
+            }
+            a.toast("Tokenwerte werden im Hintergrund erklärt…", ToastKind::Info);
+            a.spawn(move || pi_backend::preview::explain_usage(snapshot), |a, result: Result<String, String>| {
+                let text = result.unwrap_or_else(|e| e);
+                a.ask(DialogKind::Editor, "Tokens & Kontext · KI-Erklärung", "", vec![], &text, |_, _| {});
+            });
+        });
+    }
+
     pub fn configure_preview_helper(&mut self) {
         let models = self.models.clone();
         if models.is_empty() { self.toast("Keine Modelle geladen. Zuerst einen Agenten verbinden.", ToastKind::Error); return; }

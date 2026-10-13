@@ -43,3 +43,11 @@ Dokumentation und Tests aktualisieren, Änderungen verständlich committen. Remo
 und Datenschutz vor Push prüfen; nur mit Nutzerauftrag veröffentlichen. README
 Deutsch/Englisch konsistent halten. docs/HANDOFF.md mit Stand, offenen Prüfungen
 und nächsten Schritten fortschreiben. Keine Lizenzentscheidung ohne Nutzerauftrag.
+
+## Verknüpfter Skill: mobicopidev
+
+Remote-Betrieb (Hub, mobiler Web-Client, weitere Harnesses) liegt in `~/Work/pi-hub` und wird vom Skill
+**mobicopidev** betreut (zeigt bei jedem Aufruf Stand und alle Todos). Bei Arbeiten an Transport,
+`pi-backend`-Umbau (`Instances`, Traits `Harness`/`Files`), responsivem pi-lite oder Android/PWA
+zuerst diesen Skill aufrufen und beide Statusdateien (`docs/HANDOFF.md` hier, `docs/STATUS.md`/`docs/TODO.md` dort)
+abgleichen.

@@ -5,6 +5,13 @@ Neue UI-Funktionen mit Tastatur und Maus prüfen; ungeprüfte Plattformen/Wege k
 benennen. Keine echten Sessions für Löschtests verwenden. Keine Credentials,
 privaten Chatlogs, lokalen Einstellungen oder Screenshots ins Repository übernehmen.
 
+## Feature-Parität (verbindlich)
+
+copi und pi-lite bleiben funktional gleichwertig. Jede Änderung oder Erweiterung
+muss in beiden Oberflächen umgesetzt und getrennt geprüft werden. Bestehende
+Abweichungen werden als offene Aufgaben dokumentiert, nicht stillschweigend als
+fertige Parität bezeichnet. Laufende Sessions bleiben bei Installation erhalten.
+
 ## Checks
 
 ```bash

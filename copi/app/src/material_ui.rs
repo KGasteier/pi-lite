@@ -19,8 +19,8 @@ pub struct MaterialItem {
 /// Pfad als Textzeile anhängen).
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum MaterialMode {
-    #[default]
     Auto,
+    #[default]
     ReferencesOnly,
 }
 
@@ -39,6 +39,10 @@ pub struct MaterialState {
     /// Manuell gewähltes Modell `provider/id` für Material (leer = aktuelles Chatmodell).
     pub model_override: String,
     pub status: String,
+    pub sort_date: bool,
+    pub preview_text: String,
+    pub preview_texture: Option<egui::TextureHandle>,
+    pub preview_seq: u64,
 }
 
 pub const MAX_ITEMS: usize = pi_backend::material::MAX_ITEMS;
@@ -77,7 +81,7 @@ impl App {
 
     /// Portabler Datei-/Ordnerbrowser mit Mehrfachauswahl (ersetzt `pick_material`/`rfd`).
     fn choose_material_files(&mut self) {
-        let prefill = pi_backend::tilde(&self.cwd);
+        let prefill = pi_backend::material::material_browser::default_dir(&self.cwd);
         self.ask(DialogKind::Material, "Dateien für Material auswählen", "", vec![], &prefill, |a, r| {
             let Some(paths) = r.and_then(|r| r["paths"].as_array().cloned()) else { return };
             let additions: Vec<MaterialItem> = paths.into_iter().filter_map(|v| v.as_str().map(|s| MaterialItem { value: s.to_string(), url: false })).collect();
@@ -96,8 +100,13 @@ impl App {
         d.folder_seq += 1;
         let seq = d.folder_seq;
         let resolved = App::resolve_tilde(&path);
+        let by_date = self.material.sort_date;
         self.spawn(
-            move || pi_backend::material::list_entries(&resolved),
+            move || {
+                let p = std::path::PathBuf::from(&resolved).canonicalize().map_err(|e|e.to_string())?;
+                let entries = pi_backend::material::material_browser::list(p.to_str().ok_or("Ungültiger Pfad")?, by_date)?;
+                Ok((p.to_string_lossy().into_owned(), p.parent().map(|p|p.to_string_lossy().into_owned()), entries.into_iter().map(|e| pi_backend::material::Entry {name:e.name,path:e.path,is_dir:e.is_dir}).collect()))
+            },
             move |a, res: Result<(String, Option<String>, Vec<pi_backend::material::Entry>), String>| {
                 let Some(d) = a.dialogs.front_mut() else { return };
                 if d.kind != DialogKind::Material || d.folder_seq != seq {
@@ -115,6 +124,46 @@ impl App {
                 }
             },
         );
+    }
+
+    pub fn preview_material(&mut self, path: String) {
+        self.material.preview_seq += 1;
+        let seq = self.material.preview_seq;
+        self.material.preview_text = "Lokale Vorschau wird geladen …".into();
+        self.material.preview_texture = None;
+        self.spawn(move || pi_backend::material::material_browser::preview(&path), move |a, result| {
+            if a.material.preview_seq != seq { return; }
+            match result {
+                Ok(p) => {
+                    a.material.preview_text = p.text;
+                    if let Some(data) = p.png {
+                        use base64::Engine;
+                        let decoded = (|| -> Result<egui::ColorImage, String> {
+                            let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(|e|e.to_string())?;
+                            let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+                            decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+                            let mut reader = decoder.read_info().map_err(|e|e.to_string())?;
+                            if reader.info().width as u64 * reader.info().height as u64 > 16_000_000 { return Err("Bild zu groß für Vorschau".into()); }
+                            let mut buf = vec![0;reader.output_buffer_size()];
+                            let info = reader.next_frame(&mut buf).map_err(|e|e.to_string())?;
+                            let mut rgba = Vec::new();
+                            for pixel in buf[..info.buffer_size()].chunks(info.color_type.samples()) {
+                                match info.color_type {
+                                    png::ColorType::Rgb => rgba.extend_from_slice(&[pixel[0],pixel[1],pixel[2],255]),
+                                    png::ColorType::Rgba => rgba.extend_from_slice(pixel),
+                                    png::ColorType::Grayscale => rgba.extend_from_slice(&[pixel[0],pixel[0],pixel[0],255]),
+                                    png::ColorType::GrayscaleAlpha => rgba.extend_from_slice(&[pixel[0],pixel[0],pixel[0],pixel[1]]),
+                                    _ => return Err("Nicht unterstützte PNG-Palette".into()),
+                                }
+                            }
+                            Ok(egui::ColorImage::from_rgba_unmultiplied([info.width as usize,info.height as usize], &rgba))
+                        })();
+                        match decoded { Ok(img) => a.material.preview_texture = Some(a.ctx.load_texture("material-preview",img,egui::TextureOptions::LINEAR)), Err(e) => a.material.preview_text = e }
+                    }
+                }
+                Err(e) => a.material.preview_text = e,
+            }
+        });
     }
 
     /// Klick/Enter auf einen Eintrag im Material-Dialog: Ordner navigiert, Datei wird
@@ -388,6 +437,6 @@ mod tests {
         let s = MaterialState::default();
         assert!(s.items.is_empty());
         assert!(!s.preparing);
-        assert_eq!(s.mode, MaterialMode::Auto);
+        assert_eq!(s.mode, MaterialMode::ReferencesOnly);
     }
 }

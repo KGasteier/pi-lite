@@ -173,3 +173,7 @@ keine Kopie des vollständigen Chats.
 Session beim Start. pi-lite dafür aus deren ursprünglichem Workspace starten.
 Keine zweite Instanz oder TUI parallel auf derselben Session schreiben lassen.
 Der private lokale Fortsetzungsstarter ist nicht Teil des Repos.
+
+## Nachtrag 13. Oktober 2026
+
+Beide Oberflächen: acht Bookmark-Farben, sichtbarer Session-Umbenennen-Button, lokaler Materialbrowser mit Name-/Datumssortierung und DL_Omarchy-Erkennung, Bild-/Text-/Markdown-/PDF-Erstseitenvorschau. Standard sind Originalreferenzen; kein Material-Kopieraufruf gefunden, Agentenaktionen nicht technisch gesperrt. Beide Release-Binaries installiert und Hashgleichheit geprüft; Livebedienung offen. Quellcode-Paritätsmatrix und tatsächliche Lücken: docs/FEATURE_PARITY.md. Details: docs/CORRECTIONS-2026-10-12.md.

@@ -33,8 +33,8 @@ const pending = new Map(); // id -> Promise-Resolver
 
 // ---------- Markdown ----------
 marked.setOptions({ gfm: true, breaks: false });
-function renderMd(el, text) {
-  const html = DOMPurify.sanitize(marked.parse(text), { USE_PROFILES: { html: true } });
+function renderMd(el, text, localOnly = false) {
+  const html = DOMPurify.sanitize(marked.parse(text), { USE_PROFILES: { html: true }, ...(localOnly ? { FORBID_TAGS: ["img", "video", "audio", "iframe", "source"], FORBID_ATTR: ["href", "src", "srcset"] } : {}) });
   el.innerHTML = html;
   el.querySelectorAll("pre code").forEach((c) => {
     try { hljs.highlightElement(c); } catch {}
@@ -85,7 +85,9 @@ function setStatus(t, busy_ = busy) {
   }
   const update = () => {
     progress.hidden = false;
-    progress.textContent = "≈" + Math.floor(95 * (1 - Math.exp(-(performance.now() - workStarted) / 90000))) + "%";
+    const seconds = Math.max(0, Math.floor((performance.now() - workStarted) / 1000));
+    progress.textContent = Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
+    progress.title = "Laufzeit des Agentenlaufs. Die Restdauer ist unbekannt; Tool-Aufrufe und weitere Schritte können sie beliebig verlängern.";
   };
   update();
   if (!workTimer) workTimer = setInterval(update, 1000);
@@ -536,6 +538,33 @@ function toggleSessionBookmark(s) {
     (row?.querySelector(".bookmark") || $("bookmarkfilter")).focus();
   } catch(e) { toast("Bookmark konnte nicht gespeichert werden.", "error"); }
 }
+$("sessionrename").onclick = () => renameCurrent();
+function openBookmarkColorPicker(s, anchor) {
+  closeMenu(false); ctxFrom = anchor;
+  const menu = document.createElement("div"); menu.id = "ctx";
+  menu.setAttribute("role", "menu"); menu.setAttribute("aria-label", "Bookmark-Farbe");
+  menu.style.cssText = "display:grid;grid-template-columns:repeat(4,28px);gap:5px;padding:7px";
+  BookmarkPalette.COLORS.forEach((color, i) => {
+    const button = document.createElement("button");
+    button.title = color.name; button.setAttribute("aria-label", color.name);
+    button.setAttribute("role", "menuitemradio"); button.setAttribute("aria-checked", String(sessionBookmarks.colorOf(s.path) === i));
+    button.style.cssText = `background:${color.hex};width:26px;height:26px;border-radius:50%`;
+    button.onclick = () => { try { sessionBookmarks.setColor(s.path, i); closeMenu(false); renderSessions(); } catch { toast("Farbe konnte nicht gespeichert werden.", "error"); } };
+    menu.appendChild(button);
+  });
+  document.body.appendChild(menu);
+  const rect = anchor.getBoundingClientRect();
+  menu.style.left = Math.max(4, Math.min(rect.left, innerWidth - menu.offsetWidth - 4)) + "px";
+  menu.style.top = Math.max(4, Math.min(rect.bottom, innerHeight - menu.offsetHeight - 4)) + "px";
+  menu.firstChild.focus();
+  menu.onkeydown = e => {
+    const buttons = [...menu.children], i = buttons.indexOf(document.activeElement);
+    if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
+    if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.key)) {
+      e.preventDefault(); buttons[(i + (e.key === "ArrowLeft" || e.key === "ArrowUp" ? 7 : 1)) % 8].focus();
+    }
+  };
+}
 function fmtDate(sec) {
   const d = new Date(sec * 1000), now = new Date();
   return d.toDateString() === now.toDateString()
@@ -574,6 +603,14 @@ function renderSessions() {
     const bookmark = mk("", "Bookmark", () => toggleSessionBookmark(s));
     bookmark.className = "bookmark";
     const marked = sessionBookmarks.has(s.path);
+    bookmark.style.color = marked ? BookmarkPalette.hex(sessionBookmarks.colorOf(s.path)) : "";
+    if (marked) {
+      const colorButton = mk("", "Bookmark-Farbe · acht Standardfarben", () => openBookmarkColorPicker(s, colorButton));
+      colorButton.setAttribute("aria-label", "Bookmark-Farbe wählen");
+      colorButton.style.cssText = "position:absolute;right:56px;bottom:6px;width:21px;height:21px;padding:0;background:transparent";
+      colorButton.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="5" fill="${BookmarkPalette.hex(sessionBookmarks.colorOf(s.path))}"/></svg>`;
+      d.appendChild(colorButton);
+    }
     bookmark.setAttribute("aria-pressed", String(marked));
     bookmark.setAttribute("aria-label", marked ? "Bookmark entfernen" : "Als Bookmark markieren");
     bookmark.title = marked ? "Bookmark entfernen" : "Als Bookmark markieren";
@@ -606,7 +643,7 @@ function sessMenu(s, x, y, from) {
   };
   if (!active) item("Öffnen", "↵", () => openSession(s));
   item(sessionBookmarks.has(s.path) ? "Bookmark entfernen" : "Als Bookmark markieren", "", () => toggleSessionBookmark(s));
-  item("Umbenennen", "R", () => renameSession(s));
+  item("Session umbenennen", "R", () => renameSession(s));
   if (!active) item("Löschen …", "⌫", () => removeSession(s));
   document.body.appendChild(m);
   const r = m.getBoundingClientRect();
@@ -765,7 +802,7 @@ $("materialadd").onclick = async () => {
   if (!choice) return;
   try {
     let additions = [];
-    if (choice.value === "Dateien auswählen …") additions = (await invoke("pick_material")).map(value => ({value,url:false}));
+    if (choice.value === "Dateien auswählen …") additions = (await chooseLocalMaterials(invoke)).map(value => ({value,url:false}));
     else {
       const response = await ask({method:"editor", title:"URLs – eine pro Zeile", prefill:""}); if (!response) return;
       additions = response.value.split(/\r?\n/).filter(s => s.trim()).map(s => { const url = new URL(s.trim()); if (!["http:","https:"].includes(url.protocol) || url.username || url.password) throw new Error("Nur HTTP(S)-URLs ohne Zugangsdaten"); return {value:url.href,url:true}; });
@@ -1504,7 +1541,21 @@ async function detectSpeech() {
     const r = await request({ type: "get_commands" });
     const commands = r.success ? r.data?.commands || [] : [];
     lastCommands = commands;
-    slashPicker.setCommands([...LOCAL_COMMANDS, ...commands.filter(c => !LOCAL_COMMANDS.some(l => l.name === c.name))]);
+    const allCommands = [...LOCAL_COMMANDS, ...commands.filter(c => !LOCAL_COMMANDS.some(l => l.name === c.name))];
+    slashPicker.setCommands(allCommands);
+    const menu = $("commandmenulist");
+    menu.replaceChildren();
+    for (const command of [...allCommands].sort((a, b) => a.name.localeCompare(b.name))) {
+      const button = document.createElement("button");
+      button.textContent = "/" + command.name; button.title = command.description || "";
+      button.style.cssText = "display:block;width:100%;text-align:left;margin:2px 0";
+      button.onclick = () => {
+        $("commandmenu").open = false;
+        $("prompt").value = "/" + command.name + " "; $("prompt").focus();
+        $("prompt").dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      menu.appendChild(button);
+    }
     const available = r.success && r.data?.commands?.some(c => c.name === "vorlesen");
     $("speech").disabled = $("speechstop").disabled = !available;
     if (!available) $("speech").title = "Keine Vorlesen-Extension geladen";
