@@ -237,3 +237,10 @@ Release gebaut, separat installiert; CPU-Headless-Layout geprüft, kein Live-UI-
 Tauri vorbereitet durch serde-Kern, Adapter noch nicht implementiert.
 Upstream-Abgleich explizit per copi/scripts/update-cocopi.sh, nicht unbeaufsichtigt.
 Stand/Grenzen/Todos: COCOPI.md; Server/authentik/KI-API: COCOPI_DEPLOYMENT.md.
+
+## cocopi veröffentlichen / Testanleitung
+
+PDF-Übersicht `cocopi-first-build.pdf` (10 A4-Seiten), HTML-Quelle, Quickstart mit
+Zwei-Personen-LAN-Test und separatem install-cocopi.sh ergänzt. Nur Branch cocopi
+veröffentlichen; copi/main unverändert. PDF benennt fehlendes MLS/Relay/authentik
+und nicht synchronisierte Räume deutlich. Referenzierte Konzept-PDF unverändert.

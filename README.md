@@ -1,5 +1,11 @@
 **Deutsch** · [English](README.en.md)
 
+> **Branch cocopi:** Rust/egui-Prototyp für direkten P2P-Austausch. Einstieg:
+> [Installation und Zwei-Personen-Test](docs/COCOPI_QUICKSTART.md) ·
+> [PDF-Übersicht](docs/cocopi-first-build.pdf) ·
+> [Stand und Grenzen](docs/COCOPI.md).
+> Noch kein MLS-/authentik-Gruppennetz und nicht für vertraulichen Lehreinsatz freigegeben.
+
 # pi-lite
 
 Ein schlankes Desktop-Frontend für [pi](https://github.com/earendil-works/pi).

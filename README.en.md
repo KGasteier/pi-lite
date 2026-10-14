@@ -1,3 +1,5 @@
+> **cocopi branch:** Rust/egui direct-P2P prototype. See [installation and two-person test](docs/COCOPI_QUICKSTART.md), [PDF overview](docs/cocopi-first-build.pdf) and [limitations](docs/COCOPI.md) (German). No MLS/authentik group network yet; not approved for confidential teaching use.
+
 [Deutsch](README.md) · **English**
 
 # pi-lite
