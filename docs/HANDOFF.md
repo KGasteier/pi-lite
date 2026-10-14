@@ -226,3 +226,12 @@ Statuszeile gestrafft: keine rechte Werkzeugdetail-Anzeige mehr (Befehl/Pfad ste
 bereits im Verlauf); Phase, Laufzeit/Schätzung und kompakte Zähler bleiben.
 Invertierter Chip: Regular statt fett, copi mit expliziter Figtree-Regular-Familie.
 Getestet: alle JS-Tests, copi-Workspace und src-tauri; reale Layoutprüfung offen.
+
+## Sidebar / Prozentzeichen – Korrektur
+
+„Andere Agent Harnesses“ vorerst aus beiden Sidebar-Auswahlen entfernt; Backend-
+Inventar unverändert für spätere Wiederaufnahme. Status-Regular hatte keine
+Fallback-Schriften, daher fehlte das bereits im Quellcode vorhandene ≈. Jetzt
+Regular mit eingebetteter Fallback-Kette; Regression prüft ≈-Glyphabdeckung.
+JS-Sidebar-/Format-Test, Rust-Workspace, Tauri und Medientests bestanden.
+Status bleibt über der Eingabe. Live-Bedienprüfung nach Neustart offen.

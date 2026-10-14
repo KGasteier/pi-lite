@@ -39,7 +39,6 @@ pub fn setup_ctx(ctx: &egui::Context) {
     let mut defs = FontDefinitions::default();
     defs.font_data.insert("sans".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Figtree-Light.ttf"))));
     defs.font_data.insert("sans-regular".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Figtree-Regular.ttf"))));
-    defs.families.insert(FontFamily::Name("status-regular".into()), vec!["sans-regular".into()]);
     defs.font_data.insert("sans-bold".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Figtree-SemiBold.ttf"))));
     defs.font_data.insert("noto-symbols2".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/NotoSansSymbols2-Regular.ttf"))));
     // Von epaint/egui (Feature `default_fonts`) bereits eingebettete Standardschriften, als
@@ -64,6 +63,10 @@ pub fn setup_ctx(ctx: &egui::Context) {
     mon.push("noto-symbols2".to_string());
     let mut b = vec!["sans-bold".to_string()];
     b.extend(prop.clone());
+    // Regular beibehalten, mathematische Zeichen wie ≈ über vorhandene Fallbacks.
+    let mut regular = vec!["sans-regular".to_string()];
+    regular.extend(prop.iter().filter(|name| name.as_str() != "sans").cloned());
+    defs.families.insert(FontFamily::Name("status-regular".into()), regular);
     defs.families.insert(FontFamily::Proportional, prop);
     defs.families.insert(FontFamily::Monospace, mon);
     defs.families.insert(FontFamily::Name(md_egui::BOLD_FAMILY.into()), b);
