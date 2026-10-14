@@ -244,3 +244,12 @@ PDF-Übersicht `cocopi-first-build.pdf` (10 A4-Seiten), HTML-Quelle, Quickstart 
 Zwei-Personen-LAN-Test und separatem install-cocopi.sh ergänzt. Nur Branch cocopi
 veröffentlichen; copi/main unverändert. PDF benennt fehlendes MLS/Relay/authentik
 und nicht synchronisierte Räume deutlich. Referenzierte Konzept-PDF unverändert.
+
+## Sidebar / Prozentzeichen – Korrektur
+
+„Andere Agent Harnesses“ vorerst aus beiden Sidebar-Auswahlen entfernt; Backend-
+Inventar unverändert für spätere Wiederaufnahme. Status-Regular hatte keine
+Fallback-Schriften, daher fehlte das bereits im Quellcode vorhandene ≈. Jetzt
+Regular mit eingebetteter Fallback-Kette; Regression prüft ≈-Glyphabdeckung.
+JS-Sidebar-/Format-Test, Rust-Workspace, Tauri und Medientests bestanden.
+Status bleibt über der Eingabe. Live-Bedienprüfung nach Neustart offen.

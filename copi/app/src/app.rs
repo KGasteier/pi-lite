@@ -42,7 +42,7 @@ pub fn err_or(r: &Value, d: &str) -> String {
 }
 
 pub const THINKING: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-pub const SIDE_VIEWS: [&str; 5] = ["Sessions", "Extensions / Plugins", "Skills", "pi · Agent- und Kontextdateien", "Andere Agent Harnesses"];
+pub const SIDE_VIEWS: [&str; 4] = ["Sessions", "Extensions / Plugins", "Skills", "pi · Agent- und Kontextdateien"];
 
 /// Inventar-Kategorie für `SIDE_VIEWS[idx]`; `None` für „Sessions“ (idx 0, eigene Liste statt Inventar).
 pub fn side_view_category(idx: usize) -> Option<&'static str> {
@@ -50,7 +50,6 @@ pub fn side_view_category(idx: usize) -> Option<&'static str> {
         1 => Some("extensions"),
         2 => Some("skills"),
         3 => Some("agents"),
-        4 => Some("harnesses"),
         _ => None,
     }
 }

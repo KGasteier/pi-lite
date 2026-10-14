@@ -245,6 +245,13 @@ fn empty_prompt_with_material_does_not_submit() {
 // ---------- Schriften (eingebettet, kein Datei-I/O) ----------
 
 #[test]
+fn sidebar_temporarily_excludes_other_harnesses() {
+    assert_eq!(SIDE_VIEWS.len(), 4);
+    assert!(!SIDE_VIEWS.iter().any(|s| s.contains("Harness")));
+    assert_eq!(crate::app::side_view_category(4), None);
+}
+
+#[test]
 fn fonts_cover_ui_symbols_without_filesystem_access() {
     // `setup_ctx` darf ausschließlich `include_bytes!`-eingebettete Schriften verwenden
     // (Figtree + die von epaint/egui mitgelieferten `default_fonts`-Schriften Hack/
@@ -276,6 +283,8 @@ fn fonts_cover_ui_symbols_without_filesystem_access() {
                 "Proportional-Schrift sollte Zeichen {c:?} abdecken"
             );
         }
+        let regular_chars = f.fonts.font(&egui::FontFamily::Name("status-regular".into())).characters().clone();
+        assert!(regular_chars.contains_key(&'≈'), "Status-Regular muss ≈ ohne Ersatzzeichen darstellen");
         let mono_chars = f.fonts.font(&egui::FontFamily::Monospace).characters().clone();
         for c in mono_symbols.chars() {
             assert!(
