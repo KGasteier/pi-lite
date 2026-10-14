@@ -30,6 +30,8 @@ function createSessionBookmarks(storage) {
   const key = "pi-lite.session-bookmarks.v1", filterKey = "pi-lite.session-filter-mode.v1",
     colorKey = "pi-lite.session-bookmark-colors.v1";
   let paths = new Set(), filterMode = "off", colors = new Map();
+  const reload = () => {
+  paths = new Set(); colors = new Map(); filterMode = "off";
   try {
     const saved = JSON.parse(storage.getItem(key) || "[]");
     if (Array.isArray(saved)) paths = new Set(saved.filter(p => typeof p === "string"));
@@ -48,22 +50,28 @@ function createSessionBookmarks(storage) {
       }
     }
   } catch (_) { /* Corrupt/unavailable storage must not break sessions. */ }
+  };
+  reload();
   const saveColors = () => storage.setItem(colorKey, JSON.stringify(Object.fromEntries(colors)));
   return {
-    has: path => paths.has(path),
-    get filterMode() { return filterMode; },
-    get onlyBookmarks() { return filterMode !== "off"; }, // Kompatibilitätsgetter für einfache Abfragen
+    has: path => { reload(); return paths.has(path); },
+    reload,
+    get filterMode() { reload(); return filterMode; },
+    get onlyBookmarks() { reload(); return filterMode !== "off"; },
     setFilterMode(value) {
+      reload();
       const next = normalizeFilterMode(value);
       storage.setItem(filterKey, next); filterMode = next;
       return filterMode;
     },
     cycleFilterMode() {
+      reload();
       const next = FILTER_MODES[(FILTER_MODES.indexOf(filterMode) + 1) % FILTER_MODES.length];
       return this.setFilterMode(next);
     },
-    visible: sessions => filterMode === "off" ? [...sessions] : sessions.filter(s => paths.has(s.path)),
+    visible: sessions => { reload(); return filterMode === "off" ? [...sessions] : sessions.filter(s => paths.has(s.path)); },
     toggle(path) {
+      reload();
       const next = new Set(paths);
       if (next.has(path)) {
         next.delete(path);
@@ -78,6 +86,7 @@ function createSessionBookmarks(storage) {
     // Sortierung ergibt sich direkt aus dem Filtermodus (kein separates Sortier-Select
     // mehr nötig): "colors" sortiert primär nach Palettenindex, sonst rein nach Zeit.
     sort(sessions) {
+      reload();
       return [...sessions].sort((a, b) =>
         (filterMode === "colors" ? this.colorOf(a.path) - this.colorOf(b.path) : 0) ||
         b.modified - a.modified || a.path.localeCompare(b.path));
@@ -85,11 +94,13 @@ function createSessionBookmarks(storage) {
     // Farbindex eines Bookmarks (0..=7, normalisiert); 0 (Vorgabe) auch für nicht markierte
     // Pfade oder Pfade ohne eigenen Eintrag.
     colorOf(path) {
+      reload();
       return colors.has(path) ? colors.get(path) : 0;
     },
     // Setzt die Bookmark-Farbe eines **markierten** Pfads; ohne Wirkung, falls `path` kein
     // Bookmark ist (keine verwaisten Farbeinträge für nicht markierte Sessions).
     setColor(path, index) {
+      reload();
       if (!paths.has(path)) return false;
       const n = normalizeColorIndex(index);
       if (n === 0) colors.delete(path); else colors.set(path, n);

@@ -9,6 +9,8 @@ const CATEGORY_COLOR_NAMES_KEY = "pi-lite.category-color-names.v1";
 
 function createCategoryColorNames(storage, defaults) {
   const names = [...defaults];
+  const reload = () => {
+  names.splice(0, names.length, ...defaults);
   let saved = {};
   try {
     const parsed = JSON.parse(storage.getItem(CATEGORY_COLOR_NAMES_KEY) || "{}");
@@ -18,17 +20,20 @@ function createCategoryColorNames(storage, defaults) {
     const i = Number(k);
     if (Number.isInteger(i) && i >= 0 && i < names.length && typeof v === "string" && v.trim()) names[i] = v.trim();
   }
+  };
+  reload();
   const persist = () => {
     const overrides = {};
     names.forEach((n, i) => { if (n !== defaults[i]) overrides[i] = n; });
     try { storage.setItem(CATEGORY_COLOR_NAMES_KEY, JSON.stringify(overrides)); } catch (_) { /* best effort */ }
   };
   return {
-    nameOf(index) { return Number.isInteger(index) && index >= 0 && index < names.length ? names[index] : defaults[0]; },
-    all() { return [...names]; },
+    nameOf(index) { reload(); return Number.isInteger(index) && index >= 0 && index < names.length ? names[index] : defaults[0]; },
+    all() { reload(); return [...names]; },
     // Leerer/nur-Leerzeichen-Name setzt auf die Vorgabe zurück statt einen leeren Namen
     // zu speichern (keine unsichtbaren Labels in der UI).
     rename(index, value) {
+      reload();
       if (!Number.isInteger(index) || index < 0 || index >= names.length) return false;
       const trimmed = (value || "").trim();
       names[index] = trimmed || defaults[index];
@@ -36,6 +41,7 @@ function createCategoryColorNames(storage, defaults) {
       return true;
     },
     reset(index) {
+      reload();
       if (!Number.isInteger(index) || index < 0 || index >= names.length) return false;
       names[index] = defaults[index];
       persist();

@@ -10,6 +10,7 @@ use std::time::Duration;
 use crate::app::*;
 use crate::commands::*;
 use crate::icons::{self, IconStyle};
+use crate::run_activity;
 use crate::theme::*;
 use crate::virtual_log;
 
@@ -17,10 +18,16 @@ type Act = Box<dyn FnOnce(&mut App)>;
 
 const KEYHELP: [&str; 5] = [
     "Tab / Shift+Tab: nächstes / vorheriges Bedienelement · Enter/Leertaste: aktivieren · Esc: schließen/zurück",
-    "Alt+1: Eingabe · Alt+2: Seitenliste · Alt+3: Chat · Alt+4: Kopfzeile · Alt+5: Vorschau\nAlt+N: neue Session · Alt+A: abbrechen · Alt+F: Fork · Alt+M: Modell · Alt+T: Thinking\nAlt+− / Alt++: Ausgabeschrift · F1: diese Hilfe · Strg/Cmd+B: Sessions",
+    "Alt+1: Eingabe · Alt+2: Seitenliste · Alt+3: Chat · Alt+4: Kopfzeile · Alt+5: Vorschau\nAlt+N: neue Session · Alt+A: abbrechen · Alt+F: Fork · Alt+M: Modell · Alt+T: Thinking\nAlt+− / Alt++: Ausgabeschrift · F1: diese Hilfe · Strg/Cmd+B: Sessions · Strg/Cmd+Shift+B: Netz-Seitenleiste",
     "Listen: ↑/↓, Home/End · ←: Ansichtsauswahl · →: Vorschau\nSessions: Enter öffnen · R/F2 umbenennen · Backspace löschen · M/Shift+F10 Menü\nChat: ↑/↓ scrollen · Home/End Anfang/Ende · Tab erreicht Links und Tool-Blöcke",
     "Eingabe: ↑/↓ an erster/letzter Zeile: History; sonst Cursor · Alt+↑/↓ oder Pfeilknöpfe: History\nEnter sendet · Option/Alt+Enter: neue Zeile · Editor: Strg/Cmd+S speichert\nEsc unterbricht den Agenten · !cmd Shell (!!cmd ohne Kontext) · pi update u. a. pi-CLI-Befehle direkt\n/ öffnet Befehle · Tippen filtert Namen · Hover/↑↓ markieren · Klick/Enter ausführen · Tab vervollständigen · Esc schließen",
     "Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhalb von Textfeldern.",
+];
+/// Texte der Netz-Seitenleiste (identisch in ui/index.html, #netpanel).
+pub const NET_PLACEHOLDER: [&str; 3] = [
+    "Hier entsteht der Chat mit Menschen: Kurs, Projekt oder Direktnachricht.",
+    "Noch ohne Funktion – es wird nichts gesendet, empfangen oder gespeichert.",
+    "Geplant: Präsenz, Dateien, Code und Prompts als Karten. Prompts landen nur nach ausdrücklicher Übernahme in der Eingabe.",
 ];
 const PLACEHOLDER: &str = "Nachricht, /Befehl, !Shell oder pi update … (Enter = senden, Alt+Enter = Zeilenumbruch)";
 
@@ -94,11 +101,18 @@ pub fn btn(ui: &mut Ui, text: &str, size: f32, pad: Vec2, min: Vec2, primary: bo
 
 /// Pixel-Spinner: 2×4 Punkte, 3 px, Abstand 1,5 px, gestaffelt.
 fn spinner(ui: &mut Ui) {
+    snake(ui, false);
+}
+
+/// Pixel-Schlange; `mirror` lässt sie gespiegelt (gegenläufig) laufen – so flankieren
+/// zwei Schlangen den Status-Chip symmetrisch.
+fn snake(ui: &mut Ui, mirror: bool) {
     let (rect, _) = ui.allocate_exact_size(vec2(7.5, 16.5), Sense::hover());
     let t = ui.ctx().input(|i| i.time) as f32;
     let order = [0, 1, 3, 5, 7, 6, 4, 2];
     for (n, &cell) in order.iter().enumerate() {
-        let (cx, cy) = ((cell % 2) as f32, (cell / 2) as f32);
+        let cx = if mirror { 1 - cell % 2 } else { cell % 2 } as f32;
+        let cy = (cell / 2) as f32;
         let phase = ((t - n as f32 * 0.1).rem_euclid(0.8)) / 0.8;
         let a = if phase < 0.375 { 1.0 } else { 0.18 };
         let r = Rect::from_min_size(rect.min + vec2(cx * 4.5, cy * 4.5), vec2(3.0, 3.0));
@@ -164,7 +178,31 @@ impl App {
             .show_separator_line(false)
             .frame(Frame::new().fill(PANEL).inner_margin(Margin::symmetric(12, 8)))
             .show(ui, |ui| self.footer(ui));
+        egui::Panel::bottom("statusline")
+            .exact_size(30.0)
+            .show_separator_line(false)
+            .frame(Frame::new().fill(PANEL).inner_margin(Margin::symmetric(12, 0)))
+            .show(ui, |ui| {
+                let r = ui.max_rect();
+                ui.painter().hline(r.x_range(), r.top(), Stroke::new(1.0, BORDER));
+                self.status_line(ui);
+            });
         self.widget_panel(ui, "aboveEditor");
+        if self.store.net_visible {
+            // Unterhalb der Kopfzeile, oberhalb der Eingabezone; schmale Fenster behalten
+            // mindestens ~60 % für den Agentenchat.
+            let free = ui.available_width();
+            egui::Panel::right("net")
+                .exact_size(320.0f32.min(free * 0.4).max(200.0))
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(Frame::new().fill(PANEL).inner_margin(Margin::same(12)))
+                .show(ui, |ui| {
+                    let r = ui.max_rect().expand(12.0);
+                    ui.painter().vline(r.left(), r.y_range(), Stroke::new(1.0, BORDER));
+                    self.net_panel(ui);
+                });
+        }
         egui::CentralPanel::default().frame(Frame::new().fill(BG)).show(ui, |ui| self.log(ui));
         let pointer = ctx.input(|i| i.pointer.hover_pos());
         let over_preview = pointer.is_some_and(|p| self.preview_rect.contains(p) || self.preview_anchor.contains(p));
@@ -534,6 +572,8 @@ impl App {
         } else if k(ctx, Key::Num2, true, false, false) || k(ctx, Key::B, false, true, false) {
             self.store.side_visible = !self.store.side_visible;
             self.save_store();
+        } else if k(ctx, Key::B, false, true, true) {
+            self.toggle_net();
         } else if k(ctx, Key::N, true, false, false) {
             self.new_session();
         } else if k(ctx, Key::A, true, false, false) {
@@ -943,7 +983,7 @@ impl App {
 
     fn header(&mut self, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.x = 8.0;
-        ui.horizontal_wrapped(|ui| {
+        ui.allocate_ui_with_layout(vec2(ui.available_width(), 34.0), Layout::left_to_right(Align::Center), |ui| {
             ui.set_min_height(30.0);
             let side_on = self.store.side_visible;
             if icons::icon_button(ui, vec2(32.0, 30.0), true, IconStyle { icon: 28.0, fg: ACC, ..Default::default() }, "Seitenleiste ein-/ausblenden", |p, r, c| {
@@ -1011,36 +1051,113 @@ impl App {
                 self.keyhelp = true;
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if self.busy || self.active_job.is_some() {
-                    spinner(ui);
+                let net_on = self.store.net_visible;
+                let tip = if net_on { "Netz-Seitenleiste ausblenden" } else { "Netz-Seitenleiste einblenden (menschlicher Chat, in Vorbereitung)" };
+                if icons::icon_button(ui, vec2(32.0, 30.0), true, IconStyle { icon: 28.0, fg: OK, ..Default::default() }, tip, |p, r, c| {
+                    let box_rect = r.shrink(0.5);
+                    p.rect_stroke(box_rect, 2, Stroke::new(1.2, c), StrokeKind::Inside);
+                    let x = box_rect.right() - box_rect.width() * 0.3;
+                    p.line_segment([pos2(x, box_rect.top()), pos2(x, box_rect.bottom())], Stroke::new(1.2, c));
+                    if net_on { p.rect_filled(Rect::from_min_max(pos2(x, box_rect.top()), box_rect.max).shrink(1.5), 1, c); }
+                }).clicked() {
+                    self.toggle_net();
                 }
-                if self.busy {
-                    let sec = self.busy_since.map(|t| t.elapsed().as_secs_f32()).unwrap_or(0.0);
-                    Frame::new().fill(ACC).stroke(Stroke::new(1.0, ACC))
-                        .corner_radius(6).inner_margin(Margin::symmetric(7, 3)).show(ui, |ui| {
-                            ui.set_width(138.0);
-                            ui.set_height(18.0);
-                            ui.spacing_mut().item_spacing.x = 5.0;
-                            let est = self.store.duration_estimate() as f32;
-                            let overdue = sec > est;
-                            let longer: Vec<_> = self.store.duration_history.iter().copied().filter(|n| *n > sec as f64).collect();
-                            let remaining = if longer.is_empty() { est } else {
-                                let mut r: Vec<_> = longer.iter().map(|n| *n as f32 - sec).collect(); r.sort_by(f32::total_cmp);
-                                let m = r.len()/2; if r.len()%2 == 0 { (r[m-1]+r[m])/2.0 } else { r[m] }
-                            };
-                            let pct = if overdue { 100.0*sec/(sec+remaining.max(1.0)) } else { 90.0*sec/est };
-                            ui.add_sized(vec2(62.0,18.0), Label::new(txt(format!("≈{:.0}%{}", pct.min(99.0), if overdue { " +" } else { "" }), 12.0, BG)).truncate())
-                                .on_hover_text(format!("Lokale Laufzeitschätzung, kein gemessener Fortschritt. Basis: Median letzter abgeschlossener Läufe, anfangs 180 s. Erwartung: {:.0} s. {} Restdauer unbekannt.", est, if overdue { "Länger als üblich." } else { "" }));
-                            let (separator, _) = ui.allocate_exact_size(vec2(1.0,14.0), Sense::hover());
-                            ui.painter().vline(separator.center().x, separator.y_range(), Stroke::new(1.0, BG.gamma_multiply(0.3)));
-                            let elapsed = format!("{}:{:02}", sec as u64 / 60, sec as u64 % 60);
-                            ui.add_sized(vec2(62.0,18.0), Label::new(txt(elapsed, 12.0, BG)).truncate())
-                                .on_hover_text("Laufzeit des Agentenlaufs. Die Restdauer ist unbekannt; Tool-Aufrufe und weitere Schritte können sie beliebig verlängern.");
-                        });
-                }
-                ui.add(Label::new(txt(self.status.clone(), 13.0, if self.busy { ACC } else { DIM })).truncate());
             });
         });
+    }
+
+    pub(crate) fn toggle_net(&mut self) {
+        self.store.net_visible = !self.store.net_visible;
+        self.save_store();
+    }
+
+    /// Statuszeile direkt über der Eingabe: links Zähler bzw. letzter Lauf, Mitte der
+    /// Status-Chip (Phase · Laufzeit · Schätzung) zwischen zwei Pixel-Schlangen, rechts
+    /// laufende Shell-/pi-Befehle und die Warteschlange.
+    fn status_line(&mut self, ui: &mut Ui) {
+        let r = ui.max_rect();
+        let busy = self.busy;
+        let job = match &self.active_job {
+            Some(Job::Bash(_)) => Some("Shell-Befehl läuft"),
+            Some(Job::Cli(_)) => Some("pi-Befehl läuft"),
+            None => None,
+        };
+        let moving = busy || job.is_some();
+        let chip_w: f32 = if busy { 320.0 } else { 200.0 };
+        let total: f32 = chip_w + if moving { 2.0 * (7.5 + 10.0) } else { 0.0 };
+        let center = Rect::from_center_size(r.center(), vec2(total.min(r.width()), r.height()));
+        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(center).layout(Layout::left_to_right(Align::Center)));
+        c.spacing_mut().item_spacing.x = 10.0;
+        if moving { snake(&mut c, false); }
+        let phase = if busy { self.activity.phase_label(&self.status) } else { job.map(String::from).unwrap_or_else(|| self.status.clone()) };
+        let (fill, fg) = if busy { (ACC, BG) } else if job.is_some() { (mix(ACC, 0.18, PANEL), FG) } else { (PANEL, DIM) };
+        let chip_inner = (chip_w - 2.0 * 8.0).min(c.available_width() - if moving { 17.5 } else { 0.0 }).max(40.0);
+        Frame::new().fill(fill).stroke(Stroke::new(1.0, if busy { ACC } else { BORDER })).corner_radius(6).inner_margin(Margin::symmetric(8, 2)).show(&mut c, |ui| {
+            ui.style_mut().override_font_id = Some(egui::FontId::new(12.0, egui::FontFamily::Name("status-regular".into())));
+            ui.set_width(chip_inner);
+            ui.set_height(18.0);
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if !busy {
+                ui.add_sized(vec2(chip_inner, 18.0), Label::new(txt(phase, 12.5, fg).family(egui::FontFamily::Name("status-regular".into()))).truncate());
+                return;
+            }
+            let sec = self.busy_since.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
+            let (pct, overdue, est) = self.store.duration_percent(sec);
+            let sep = |ui: &mut Ui| {
+                let (s, _) = ui.allocate_exact_size(vec2(1.0, 14.0), Sense::hover());
+                ui.painter().vline(s.center().x, s.y_range(), Stroke::new(1.0, BG.gamma_multiply(0.3)));
+            };
+            let phase_w = (chip_inner - 44.0 - 58.0 - 2.0 * (1.0 + 2.0 * 6.0)).max(30.0);
+            ui.add_sized(vec2(phase_w, 18.0), Label::new(txt(phase, 12.5, fg).family(egui::FontFamily::Name("status-regular".into()))).truncate())
+                .on_hover_text("Aktuelle Phase des Agentenlaufs (aus den Ereignissen von pi)");
+            sep(ui);
+            ui.add_sized(vec2(44.0, 18.0), Label::new(txt(run_activity::clock(sec), 12.0, fg).family(egui::FontFamily::Name("status-regular".into()))).truncate())
+                .on_hover_text("Laufzeit des Agentenlaufs. Die Restdauer ist unbekannt; Tool-Aufrufe und weitere Schritte können sie beliebig verlängern.");
+            sep(ui);
+            let label = format!("≈{:.0}%{}", pct, if overdue { " +" } else { "" });
+            let label = if overdue { RichText::new(label).italics() } else { RichText::new(label) };
+            ui.add_sized(vec2(58.0, 18.0), Label::new(label.size(12.0).color(fg).family(egui::FontFamily::Name("status-regular".into()))).truncate())
+                .on_hover_text(format!("Lokale Laufzeitschätzung, kein gemessener Fortschritt. Basis: Median letzter abgeschlossener Läufe, anfangs 180 s. Erwartung: {:.0} s. {}Restdauer unbekannt.", est, if overdue { "Länger als üblich. " } else { "" }));
+        });
+        if moving { snake(&mut c, true); }
+        // Seitentext nur, wenn neben dem Chip Platz bleibt; keine Werkzeug-Rohdetails.
+        let left = Rect::from_min_max(r.min, pos2(center.left() - 12.0, r.max.y));
+        let counts = self.activity.counts_label();
+        if left.width() > 60.0 && !counts.is_empty() {
+            let mut l = ui.new_child(egui::UiBuilder::new().max_rect(left).layout(Layout::left_to_right(Align::Center)));
+            l.add(Label::new(txt(counts, 12.0, DIM)).truncate()).on_hover_text(if self.activity.active {
+                "Dieser Lauf: Runden (Modellantworten), abgeschlossene Werkzeugaufrufe, Fehler und wartende Nachrichten"
+            } else {
+                "Zusammenfassung des letzten abgeschlossenen Agentenlaufs"
+            });
+        }
+    }
+
+    /// Platzhalter der rechten Seitenleiste „Netz“ (menschlicher Chat). Noch ohne Funktion:
+    /// nichts wird gesendet, empfangen oder gespeichert.
+    fn net_panel(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.add(Label::new(RichText::new("Netz").size(14.0).color(FG).family(egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()))));
+            Frame::new().stroke(Stroke::new(1.0, OK)).corner_radius(5).inner_margin(Margin::symmetric(5, 1)).show(ui, |ui| {
+                ui.label(txt("in Vorbereitung", 11.0, OK));
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let st = IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 12.0, radius: 5 };
+                if icons::icon_button(ui, vec2(24.0, 24.0), true, st, "Netz-Seitenleiste ausblenden", |p, r, c| {
+                    let s = Stroke::new(1.4, c);
+                    p.line_segment([r.left_top(), r.right_bottom()], s);
+                    p.line_segment([r.right_top(), r.left_bottom()], s);
+                }).clicked() {
+                    self.toggle_net();
+                }
+            });
+        });
+        ui.add_space(8.0);
+        ui.add(Label::new(txt(NET_PLACEHOLDER[0], 12.5, FG)).wrap());
+        ui.add_space(6.0);
+        ui.add(Label::new(txt(NET_PLACEHOLDER[1], 12.0, DIM)).wrap());
+        ui.add_space(6.0);
+        ui.add(Label::new(txt(NET_PLACEHOLDER[2], 12.0, DIM)).wrap());
     }
 
     // ---------- Fußzeile ----------
@@ -1219,13 +1336,12 @@ impl App {
         let epoch = self.log_epoch;
         let mut acts: Vec<Act> = Vec::new();
         let force = std::mem::take(&mut self.force_scroll);
-        let busy = self.busy;
         let th = md_egui::Theme { size, ..Default::default() };
         let items = &mut self.items;
         let n = items.len();
-        // Die Busy-Animation zählt für die Höhen-Buchführung als ein weiterer
-        // "Eintrag" nach dem letzten Log-Item.
-        let total = n + usize::from(busy);
+        // Kein eigener Busy-Eintrag mehr im Verlauf: die Statuszeile über der Eingabe
+        // zeigt Aktivität (Pixel-Schlangen) bereits an.
+        let total = n;
 
         // Breite auf ein Raster runden, damit kleine Schwankungen (z. B. durch
         // ein auftauchendes/verschwindendes Scrollbar-Pixel) nicht bei jedem
@@ -1262,10 +1378,6 @@ impl App {
                 for i in pl.first..pl.last.min(total) {
                     let salt = (epoch, i);
                     let measured = ui.scope(|ui| {
-                        if i >= n {
-                            ui.horizontal(|ui| spinner(ui));
-                            return;
-                        }
                         match &mut items[i] {
                             Item::User(text) => {
                                 ui.with_layout(Layout::right_to_left(Align::Min), |ui| {

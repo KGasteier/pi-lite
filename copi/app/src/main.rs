@@ -5,6 +5,9 @@ mod commands;
 mod headless;
 mod icons;
 mod material_ui;
+#[path = "../../../shared/bookmarks.rs"]
+mod shared_bookmarks;
+mod run_activity;
 mod store;
 mod theme;
 mod view;
@@ -35,6 +38,8 @@ use egui::{FontData, FontDefinitions, FontFamily, Stroke};
 pub fn setup_ctx(ctx: &egui::Context) {
     let mut defs = FontDefinitions::default();
     defs.font_data.insert("sans".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Figtree-Light.ttf"))));
+    defs.font_data.insert("sans-regular".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Figtree-Regular.ttf"))));
+    defs.families.insert(FontFamily::Name("status-regular".into()), vec!["sans-regular".into()]);
     defs.font_data.insert("sans-bold".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Figtree-SemiBold.ttf"))));
     defs.font_data.insert("noto-symbols2".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/NotoSansSymbols2-Regular.ttf"))));
     // Von epaint/egui (Feature `default_fonts`) bereits eingebettete Standardschriften, als

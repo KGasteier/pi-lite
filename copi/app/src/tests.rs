@@ -360,3 +360,34 @@ fn virtualized_log_renders_only_a_fraction_of_ten_thousand_entries() {
         "Virtualisierung sollte bei 10.000 Einträgen nur einen kleinen Ausschnitt zeichnen, gemessen: {measured}"
     );
 }
+
+// ---------- Statuszeile und Netz-Seitenleiste ----------
+
+#[test]
+fn ctrl_shift_b_toggles_net_sidebar_and_frames_render() {
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    assert!(!a.store.net_visible, "Netz-Seitenleiste ist standardmäßig aus");
+    let ev = Event::Key { key: Key::B, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers { shift: true, ..Modifiers::COMMAND } };
+    prompt_frame(&mut a, vec![ev]);
+    assert!(a.store.net_visible);
+    // Laufender Agent: Statuszeile mit Phase/Zählern und Netz-Leiste zeichnen ohne Panik.
+    a.set_status("arbeitet …", true);
+    a.activity.event(&json!({"type":"agent_start"}), 0.0);
+    a.activity.event(&json!({"type":"tool_execution_start","toolCallId":"t","toolName":"bash","args":{"command":"ls"}}), 0.0);
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(700.0, 500.0));
+    let mut out = a.ctx.clone().run_ui(RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| a.draw(ui));
+    out.textures_delta.clear();
+    assert_eq!(a.activity.phase_label("bereit"), "Werkzeug: bash");
+}
+
+#[test]
+fn duration_percent_matches_js_rules() {
+    let mut s = crate::store::Store::default();
+    assert_eq!(s.duration_percent(90.0), (45.0, false, 180.0));
+    for n in [10.0, 20.0, 30.0] { s.record_duration(n); }
+    let (p, over, est) = s.duration_percent(21.0);
+    assert!(over && est == 20.0);
+    assert!((p - 100.0 * 21.0 / 30.0).abs() < 1e-9, "Rest = Median längerer Läufe (30−21 = 9)");
+    assert_eq!(s.duration_percent(1000.0).0, 100.0 * 1000.0 / 1020.0);
+}

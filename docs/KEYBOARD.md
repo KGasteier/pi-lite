@@ -14,6 +14,7 @@ native Pfeilbedienung. Sichtbare Fokusmarkierung. F1 öffnet/schließt die Hilfe
   WebKitGTK-Meldungen Meta, Super und OS werden berücksichtigt; kein Hyprland-Binding
   wird angelegt. Automatisierter Test: `node scripts/test-super-select.cjs`.
 - Strg/Cmd+B wechselt zur Sessionansicht und fokussiert die Liste
+- Strg/Cmd+Shift+B blendet die rechte Netz-Seitenleiste ein/aus (Platzhalter, beide Frontends)
 
 ## Bereiche
 

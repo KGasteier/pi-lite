@@ -1,0 +1,21 @@
+// Zwei unabhängige Fenster, gleicher Speicher: Änderungen bleiben nach Neustart erhalten.
+const assert = require('node:assert/strict');
+const { createSessionBookmarks } = require('../ui/session-bookmarks.js');
+const { createCategoryColorNames } = require('../ui/category-colors.js');
+const data = new Map();
+const storage = { getItem:k=>data.get(k) ?? null, setItem:(k,v)=>data.set(k,v) };
+const a = createSessionBookmarks(storage), b = createSessionBookmarks(storage);
+a.toggle('/synthetic/a'); a.setColor('/synthetic/a',6);
+b.toggle('/synthetic/b'); b.setColor('/synthetic/b',3);
+assert(a.has('/synthetic/b')); assert(b.has('/synthetic/a'));
+a.toggle('/synthetic/a'); b.setColor('/synthetic/b',2);
+const restarted = createSessionBookmarks(storage);
+assert(!restarted.has('/synthetic/a')); assert(restarted.has('/synthetic/b'));
+assert.equal(restarted.colorOf('/synthetic/b'),2);
+a.setFilterMode('colors'); assert.equal(b.filterMode,'colors');
+const defaults=['Blau','Grün','Gelb','Violett','Orange','Rot','Türkis','Pink'];
+const x=createCategoryColorNames(storage,defaults), y=createCategoryColorNames(storage,defaults);
+x.rename(6,'Kurs'); y.rename(3,'Projekt');
+assert.equal(x.nameOf(3),'Projekt'); assert.equal(y.nameOf(6),'Kurs');
+assert.equal(createCategoryColorNames(storage,defaults).nameOf(6),'Kurs');
+console.log('pi-lite: Mehrinstanz-Bookmarks, Farben, Kategorienamen und Neustart geprüft.');

@@ -249,6 +249,7 @@ pub struct App {
     // Status
     pub(crate) busy: bool,
     pub(crate) busy_since: Option<Instant>,
+    pub(crate) activity: crate::run_activity::RunActivity,
     pub(crate) prompt_ime_active: bool,
     pub(crate) editor_unlocked: bool,
     pub(crate) status: String,
@@ -366,6 +367,7 @@ impl App {
             list_menu: false,
             busy: false,
             busy_since: None,
+            activity: Default::default(),
             prompt_ime_active: false,
             editor_unlocked: false,
             status: "startet…".into(),
@@ -497,6 +499,8 @@ impl App {
 
     /// Einmal pro Frame: Ereignisse, Hintergrundergebnisse, Zeitüberschreitungen.
     pub fn pump(&mut self) {
+        self.store.refresh(!self.demo);
+        if !self.demo { self.ctx.request_repaint_after(Duration::from_secs(1)); }
         // Pro Frame begrenzen: ein stetiger RPC-Strom darf die Wayland-Ping/Pong-
         // Verarbeitung nicht durch eine unendliche Drain-Schleife verdrängen.
         let deadline = Instant::now() + Duration::from_millis(8);
@@ -544,6 +548,7 @@ impl App {
                 if g == self.generation {
                     self.drop_dialogs();
                     self.note("pi wurde beendet.", true);
+                    self.activity.halt();
                     self.set_status("beendet", false);
                 }
             }
@@ -707,6 +712,8 @@ impl App {
     }
 
     fn handle(&mut self, v: Value) {
+        let elapsed = self.busy_since.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
+        self.activity.event(&v, elapsed);
         match v["type"].as_str().unwrap_or("") {
             "response" => {
                 let p = v["id"].as_str().and_then(|id| self.pending.remove(id));
@@ -962,6 +969,7 @@ impl App {
         self.usage_seq += 1;
         self.usage_text = "Tokenverbrauch: —".into();
         self.speech_available = false;
+        self.activity.reset();
         self.set_status("startet…", false);
         if self.demo {
             self.fill_demo();
@@ -2224,6 +2232,22 @@ impl App {
             "toast" => self.toast("Arbeitsordner für die nächste neue Session ausgewählt.", ToastKind::Info),
             "inventory" => self.demo_scene_inventory(),
             "longlog" => self.demo_scene_longlog(10_000),
+            "statusline" => {
+                // Synthetischer laufender Agent mit Werkzeug und Warteschlange; Netz-Leiste offen.
+                self.store.net_visible = true;
+                self.set_status("arbeitet …", true);
+                for ev in [
+                    json!({"type":"agent_start"}),
+                    json!({"type":"turn_start"}),
+                    json!({"type":"turn_start"}),
+                    json!({"type":"tool_execution_start","toolCallId":"a","toolName":"read","args":{"path":"src/main.rs"}}),
+                    json!({"type":"tool_execution_end","toolCallId":"a"}),
+                    json!({"type":"tool_execution_start","toolCallId":"b","toolName":"bash","args":{"command":"cargo test --workspace"}}),
+                    json!({"type":"queue_update","steering":["x"],"followUp":[]}),
+                ] {
+                    self.activity.event(&ev, 0.0);
+                }
+            }
             _ => {}
         }
     }

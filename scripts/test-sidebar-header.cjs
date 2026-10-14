@@ -8,7 +8,10 @@ const preview = html.slice(html.indexOf('<div id="preview"'), html.indexOf('\n',
 assert(preview.includes('id="cacheclear"') && preview.includes('Gespeicherte Kurzinfos löschen'));
 assert(html.includes('appearance:none') && html.includes('select:hover, select:focus-visible'));
 assert(html.includes('<div id="logwrap"><div id="log"') && html.includes('#logwrap:has(#log:focus-visible)::after'));
-const st = html.match(/<span id="status"[^>]*>(.*?)<\/span><\/span>/s); assert(st && (st[1].match(/<i><\/i>/g)||[]).length === 8 && st[0].includes('id="statustext"'));
+const line = html.slice(html.indexOf('<div id="statusline">'), html.indexOf('<footer>'));
+assert(line && (line.match(/<i><\/i>/g)||[]).length === 16 && line.includes('id="statustext"') && line.includes('class="snake mirror"'), 'Statuszeile: zwei flankierende Pixel-Schlangen über der Eingabe');
+const header = html.slice(html.indexOf('<header>'), html.indexOf('</header>'));
+assert(!header.includes('id="status"') && header.includes('id="nettoggle"'), 'Status nicht mehr in der Kopfzeile; Netz-Schalter rechts');
 assert(html.includes('@keyframes pixelsnake') && html.includes('prefers-reduced-motion'));
 const app = fs.readFileSync('ui/app.js','utf8');
 assert(app.includes('statusEl.classList.toggle("busy", busy)') && !app.includes('"🗑"') && app.includes('"delete", "Session löschen"'));

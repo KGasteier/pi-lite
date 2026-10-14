@@ -57,3 +57,39 @@ Index-Normalisierung, Parität zwischen `ui/bookmark-palette.js` und
 seine Farbe auf, andere Bookmarks bleiben unberührt, beschädigter Farbspeicher zerstört
 nicht die Bookmarks selbst). `cargo test -p copi --locked` prüft die Rust-Seite
 (`Store`/`bookmark_palette`) analog.
+
+## Mehrere Instanzen / Neustart (Korrektur 14. Oktober 2026)
+
+- copi: `~/.config/copi/state.json` (plattformabhängiger Konfigurationspfad).
+  Jeder Schreibvorgang sperrt `state.lock`, liest den aktuellen Stand und führt nur
+  lokal geänderte Felder zusammen. Bookmarks/Farben werden je Sessionpfad,
+  Kategorienamen je Farbindex zusammengeführt. Fremde Änderungen werden regelmäßig
+  eingelesen, noch nicht gespeicherte eigene Eingaben bleiben erhalten. Ein älteres
+  Fenster überschreibt neue Bookmarks nicht mehr mit seinem vollständigen Altstand.
+  Ungültige JSON-Dateien werden beim Speichern nicht überschrieben; Fehler werden angezeigt.
+- pi-lite: bestehender WebKit-localStorage bleibt erhalten. Vor Lesen/Ändern werden
+  Bookmarks, Farben und Kategorienamen aktualisiert; `storage`-Ereignisse und
+  Fensterfokus aktualisieren die Sessionkarten.
+- Gleiche Eigenschaft gleichzeitig geändert: die letzte Speicherung gewinnt.
+  copi und pi-lite haben weiterhin getrennte Ablagen, keine appübergreifende Synchronisation.
+  Bereits überschriebene Markierungen lassen sich ohne Sicherung nicht rekonstruieren.
+- Regression: echter Datei-Neustart/Mehrinstanz-Test in `store.rs`, einschließlich
+  Löschung und Schutz beschädigter JSON-Dateien; JS-Test
+  `scripts/test-bookmark-multi-instance.cjs`. Liveprüfung mit mehreren Nutzerfenstern offen.
+  Alte noch laufende Binaries können weiterhin den vollständigen Altstand schreiben:
+  nach Installation alle alten Fenster regulär schließen, danach neue Markierungen setzen.
+
+## Gemeinsame Ablage copi / pi-lite
+
+Bookmarks, Farbzuordnungen und Kategorienamen liegen jetzt gemeinsam in
+`~/.config/pi-frontends/bookmarks.json` (macOS Application Support, Windows APPDATA).
+Beide Apps verwenden `shared/bookmarks.rs`: Dateisperre, Delta je Session/Farbindex,
+atomarer Austausch. pi-lite nutzt Tauri-Kommandos und localStorage nur als Cache;
+Polling jede Sekunde übernimmt Fremdänderungen. copi liest ebenfalls regelmäßig.
+Einmalige Migration übernimmt vorhandene App-Markierungen; gemeinsame Zuordnungen
+haben Vorrang. Migrationsmarker verhindern Wiederbelebung gelöschter Bookmarks.
+Filtermodus, Schriftgröße und andere UI-Einstellungen bleiben appbezogen.
+Alle alten App-Fenster regulär schließen und neue Binaries starten, bevor Bookmarks
+gepflegt werden: alte Versionen nutzen noch die getrennten Ablagen.
+Tests: gemeinsamer Rust-Dateitest läuft in beiden Builds, JS-Brückentest
+`test-shared-bookmarks.cjs`; reale gleichzeitige Fensterbedienung offen.

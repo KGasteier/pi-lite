@@ -7,7 +7,7 @@ const log = $("log"), statusEl = $("status");
 let cur = null;          // aktuelle Assistenten-Blase { el, text }
 let curThink = null;     // aktuelle Thinking-Blase { el, text }
 const tools = new Map(); // toolCallId -> <details>
-let busy = false;
+let busy = false, activeJob = null;   // activeJob: laufender pi-CLI-/Shell-Befehl (Statuszeile, Abbruch)
 let state = {};          // letzter get_state-Stand
 let sessionCwd = "";     // relative Chatpfade gehören zur Session, nicht zum nächsten Workspace
 async function openEditor(reference = {}, cwd = sessionCwd || $("cwd").value) {
@@ -76,31 +76,37 @@ function scheduleRender(b) {
 // Lokale, rein clientseitige Laufzeit-Schätzung (keine echte Serverfortschrittsmeldung
 // existiert) – Details und Garantien: ui/duration-estimate.js.
 const durationEstimate = createDurationEstimate({ getItem: k => window.localStorage.getItem(k), setItem: (k, v) => window.localStorage.setItem(k, v) });
-let workStarted = 0, workTimer = null;
-function setStatus(t, busy_ = busy) {
-  $("statustext").textContent = t;
-  if (busy_ && !busy) workStarted = performance.now();
-  if (!busy_ && busy && t === "bereit") {
-    const elapsed = Math.max(0, (performance.now() - workStarted) / 1000);
-    durationEstimate.record(elapsed);
-  }
-  busy = busy_; statusEl.classList.toggle("busy", busy);
+// Statuszeile über der Eingabe: Phase/Zähler aus run-activity.js, Laufzeit + Schätzung.
+const runActivity = createRunActivity();
+let workStarted = 0, workTimer = null, statusIdle = "startet …";
+const workSeconds = () => busy ? Math.max(0, (performance.now() - workStarted) / 1000) : 0;
+function renderStatusLine() {
+  const line = $("statusline"), job = activeJob ? activeJob.label : "";
+  line.classList.toggle("busy", busy);
+  line.classList.toggle("jobbing", !busy && !!job);
+  line.classList.toggle("moving", busy || !!job);
+  $("statustext").textContent = busy ? runActivity.phaseLabel(statusIdle) : (job || statusIdle);
+  $("runcounts").textContent = runActivity.countsLabel();
+  $("runcounts").title = runActivity.state.active ? "Dieser Lauf: Runden (Modellantworten), abgeschlossene Werkzeugaufrufe, Fehler und wartende Nachrichten" : "Zusammenfassung des letzten abgeschlossenen Agentenlaufs";
+  $("rundetail").textContent = ""; // Keine Wiederholung des Werkzeugbefehls aus dem Verlauf.
   const progress = $("workprogress");
-  if (!busy) {
-    clearInterval(workTimer); workTimer = null; progress.hidden = true;
-    return;
-  }
-  const update = () => {
-    progress.hidden = false;
-    const seconds = Math.max(0, Math.floor((performance.now() - workStarted) / 1000));
-    $("worktime").textContent = Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
-    const info = durationEstimate.percent(seconds);
-    $("workpercent").textContent = durationEstimate.label(seconds);
-    progress.classList.toggle("overdue", info.overdue);
-    progress.title = "Laufzeit des Agentenlaufs. Die Restdauer ist unbekannt; Tool-Aufrufe und weitere Schritte können sie beliebig verlängern. " + durationEstimate.title(seconds);
-  };
-  update();
-  if (!workTimer) workTimer = setInterval(update, 1000);
+  progress.hidden = !busy;
+  if (!busy) return;
+  const seconds = Math.floor(workSeconds());
+  $("worktime").textContent = runClock(seconds);
+  const info = durationEstimate.percent(seconds);
+  $("workpercent").textContent = durationEstimate.label(seconds);
+  progress.classList.toggle("overdue", info.overdue);
+  $("workpercent").title = "Lokale Laufzeitschätzung, kein gemessener Fortschritt. " + durationEstimate.title(seconds);
+}
+function setStatus(t, busy_ = busy) {
+  statusIdle = t;
+  if (busy_ && !busy) workStarted = performance.now();
+  if (!busy_ && busy && t === "bereit") durationEstimate.record(workSeconds());
+  busy = busy_; statusEl.classList.toggle("busy", busy);
+  if (busy && !workTimer) workTimer = setInterval(renderStatusLine, 1000);
+  if (!busy) { clearInterval(workTimer); workTimer = null; }
+  renderStatusLine();
 }
 async function copyText(text) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
@@ -211,6 +217,9 @@ function showHistory(messages) {
 
 // ---------- Ereignisse von pi ----------
 function handle(ev) {
+  const before = runActivity.phaseLabel("") + "|" + runActivity.countsLabel() + "|" + runActivity.detailLabel();
+  runActivity.event(ev, workSeconds());
+  if (before !== runActivity.phaseLabel("") + "|" + runActivity.countsLabel() + "|" + runActivity.detailLabel()) queueMicrotask(renderStatusLine);
   switch (ev.type) {
     case "response":
       if (ev.id && pending.has(ev.id)) { pending.get(ev.id)(ev); pending.delete(ev.id); }
@@ -527,10 +536,10 @@ const cwdPicker = makePicker("cwd", $("cwdoptions"), () => {
 
 // ---------- Sessions ----------
 let sessionList = [];
-const sessionBookmarks = createSessionBookmarks({
-  getItem: key => window.localStorage.getItem(key),
-  setItem: (key, value) => window.localStorage.setItem(key, value)
-});
+const bookmarkSync = createSharedBookmarkSync(invoke, window.localStorage,
+  () => { syncBookmarkFilterButton(); renderSessions(); },
+  message => toast("Bookmark-Synchronisierung fehlgeschlagen: " + message, "error"));
+const sessionBookmarks = createSessionBookmarks(bookmarkSync.storage);
 // Drei-Zustands-Zyklus statt getrennter Filter-/Sortierauswahl: off (alle, Zeit) ->
 // on (nur Bookmarks, Zeit) -> colors (nur Bookmarks, nach Bookmark-Farbe dann Zeit) -> off.
 const BOOKMARK_FILTER_LABELS = { off: "Alle", on: "Bookmarks", colors: "Nach Farbe" };
@@ -548,6 +557,12 @@ function syncBookmarkFilterButton() {
   button.querySelector(".filterlabel").textContent = BOOKMARK_FILTER_LABELS[mode];
 }
 syncBookmarkFilterButton();
+window.addEventListener("storage", e => {
+  if (!e.key || e.key.startsWith("pi-lite.session-") || e.key === "pi-lite.category-color-names.v1") {
+    syncBookmarkFilterButton(); renderSessions();
+  }
+});
+window.addEventListener("focus", () => { syncBookmarkFilterButton(); renderSessions(); });
 $("bookmarkfilter").onclick = () => {
   try { sessionBookmarks.cycleFilterMode(); syncBookmarkFilterButton(); renderSessions(); }
   catch(e) { toast("Filter konnte nicht gespeichert werden.", "error"); }
@@ -560,7 +575,9 @@ function toggleSessionBookmark(s) {
     (row?.querySelector(".bookmark") || $("bookmarkfilter")).focus();
   } catch(e) { toast("Bookmark konnte nicht gespeichert werden.", "error"); }
 }
-const categoryNames = createCategoryColorNames(window.localStorage, BookmarkPalette.COLORS.map(c => c.name));
+const categoryNames = createCategoryColorNames(bookmarkSync.storage, BookmarkPalette.COLORS.map(c => c.name));
+bookmarkSync.initialize();
+setInterval(() => bookmarkSync.refresh(), 1000);
 function openBookmarkColorPicker(s, anchor) {
   closeMenu(false); ctxFrom = anchor;
   const menu = document.createElement("div"); menu.id = "ctx";
@@ -717,6 +734,12 @@ function sessKey(e, s, el) {
     case "F10": if (e.shiftKey) { e.preventDefault(); const b = el.getBoundingClientRect(); sessMenu(s, b.left + 40, b.bottom - 8, el); } break;
   }
 }
+// Cmd/Strg+Shift+B: Netz-Seitenleiste ein-/ausblenden (wie copi)
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "b" && !activeDialog && $("editor").hidden && $("keyhelp").hidden && $("folderdialog").hidden) {
+    e.preventDefault(); setNetVisible($("netpanel").hidden);
+  }
+});
 // Cmd/Strg+B: Sessionliste fokussieren (auf schmalen Fenstern vorher einblenden)
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b" && !activeDialog && $("editor").hidden && $("keyhelp").hidden && $("folderdialog").hidden) {
@@ -767,6 +790,16 @@ async function forkFromHere() {
   await refreshState(); loadSessions();
 }
 $("fork").onclick = forkFromHere;
+// Rechte Seitenleiste „Netz“ (Platzhalter für menschlichen Chat): Sichtbarkeit lokal merken.
+function setNetVisible(on, persist = true) {
+  $("netpanel").hidden = !on;
+  $("nettoggle").setAttribute("aria-pressed", String(on));
+  $("nettoggle").title = (on ? "Netz-Seitenleiste ausblenden" : "Netz-Seitenleiste einblenden (menschlicher Chat, in Vorbereitung)") + " · Strg/Cmd+Shift+B";
+  if (persist) { try { localStorage.setItem("pi-lite-net-visible", on ? "1" : "0"); } catch {} }
+}
+try { setNetVisible(localStorage.getItem("pi-lite-net-visible") === "1", false); } catch { setNetVisible(false, false); }
+$("nettoggle").onclick = () => setNetVisible($("netpanel").hidden);
+$("netclose").onclick = () => { setNetVisible(false); $("nettoggle").focus(); };
 $("toggle").onclick = () => {
   if (matchMedia("(max-width: 860px)").matches) document.body.classList.toggle("side-open");
   else document.body.classList.toggle("side-hidden");
@@ -787,6 +820,7 @@ async function start({ session = null } = {}) {
   $("usagetext").textContent = "Tokenverbrauch: —";
   $("usagepopup").hidden = true; usageExplanationSequence++;
   $("speech").disabled = true; $("speechstop").disabled = true;
+  runActivity.reset();
   setStatus("startet …", false);
   const args = session ? ["--session", session] : [];
   try {
@@ -811,7 +845,7 @@ listen("pi-line", (e) => {
   try { handle(JSON.parse(e.payload)); } catch { /* keine JSON-Zeile */ }
 });
 listen("pi-stderr", (e) => console.warn("pi:", e.payload));
-listen("pi-exit", () => { dropDialogs(); note("pi wurde beendet.", true); setStatus("beendet", false); });
+listen("pi-exit", () => { dropDialogs(); note("pi wurde beendet.", true); runActivity.halt(); setStatus("beendet", false); });
 
 let materialItems = [], materialPreparing = false, availableModels = [];
 async function loadMediaRoutes() {
@@ -1102,7 +1136,7 @@ $("editor").onkeydown = e => {
 
 // ---------- Befehlseingabe wie im pi-Terminal ----------
 // "pi update" → pi-CLI, "!cmd"/"!!cmd" → Shell (RPC bash), eingebaute /Befehle → lokal; alles andere geht an das Modell.
-let lastCommands = [], activeJob = null;
+let lastCommands = [];
 const bashBlocks = new Map(), cliBlocks = new Map();
 let cliSeq = 0;
 const stripAnsi = (text) => text.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "");
@@ -1126,20 +1160,20 @@ function noteBlock(text) {
 async function runCli(args) {
   if (activeJob) { toast("Es läuft bereits ein pi-Befehl oder eine Shell-Eingabe.", "error"); return; }
   const id = "c" + (++cliSeq), block = addShellBlock("pi " + args.join(" "));
-  cliBlocks.set(id, block); activeJob = { cancel: () => invoke("pi_cli_cancel") };
+  cliBlocks.set(id, block); activeJob = { label: "pi-Befehl läuft", cancel: () => invoke("pi_cli_cancel") }; renderStatusLine();
   try {
     const code = await invoke("pi_cli", { id, cwd: $("cwd").value.trim(), args });
     block.finish(code === 0 ? "fertig" : "Exit " + code, code !== 0);
     if (code === 0 && ["update", "install", "remove", "uninstall"].includes(args[0])) note("Änderungen an pi und Erweiterungen wirken in einer neuen Session (Alt+N).");
   } catch (e) { block.finish("Fehler", true); block.append(String(e) + "\n"); }
-  finally { activeJob = null; setTimeout(() => cliBlocks.delete(id), 1000); }
+  finally { activeJob = null; renderStatusLine(); setTimeout(() => cliBlocks.delete(id), 1000); }
 }
 listen("pi-cli", (e) => { const b = cliBlocks.get(e.payload.id); if (b) b.append(stripAnsi(e.payload.line) + "\n"); });
 async function runBash(command, exclude) {
   if (busy) { note("pi arbeitet noch – erst abbrechen.", true); return; }
   if (activeJob) { toast("Es läuft bereits ein pi-Befehl oder eine Shell-Eingabe.", "error"); return; }
   const id = "b" + (++reqSeq), block = addShellBlock((exclude ? "!! " : "! ") + command);
-  bashBlocks.set(id, block); activeJob = { cancel: () => send({ type: "abort_bash" }) };
+  bashBlocks.set(id, block); activeJob = { label: "Shell-Befehl läuft", cancel: () => send({ type: "abort_bash" }) }; renderStatusLine();
   try {
     const r = await new Promise(resolve => { pending.set(id, resolve); send({ type: "bash", id, command, excludeFromContext: exclude }); });
     if (!r.success) { block.finish("Fehler", true); block.append((r.error || "bash fehlgeschlagen") + "\n"); }
@@ -1150,7 +1184,7 @@ async function runBash(command, exclude) {
       if (d.fullOutputPath) note("Vollständige Ausgabe: " + d.fullOutputPath);
     }
   } catch (e) { block.finish("Fehler", true); block.append(String(e) + "\n"); }
-  finally { activeJob = null; setTimeout(() => bashBlocks.delete(id), 1000); }
+  finally { activeJob = null; renderStatusLine(); setTimeout(() => bashBlocks.delete(id), 1000); }
 }
 async function runLocal(name, arg) {
   const mutating = ["new", "compact", "clone", "fork", "name"].includes(name);

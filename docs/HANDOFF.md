@@ -191,3 +191,38 @@ Drei Nutzer-Screenshots vom 13.10. zeigen ANR, auch auf leerer Startkarte, nicht
 ### Abschluss Kategoriename / feste Statusbreite
 
 copi: Enter bei Fokus oder Fokusverlust des Kategorien-Textfelds speichert und schließt Popup. Befehlsbutton nutzt denselben btn-Helfer13px/28px wie übrige Kopfbuttons. Beide UIs: feste Zeit/Prozent-Breite, dezenter Mittelstrich. Rust-/JS-Tests und Release-Builds bestanden, atomar installiert und Hashgleichheit geprüft; Liveprüfung ausstehend, nicht gepusht.
+
+### Header-Zentrierung und abgeschnittener Busy-Text
+
+copi: expliziter34px-Headerbereich mit vertikaler Align::Center-Ausrichtung statt horizontal_wrapped (dies platzierte erste Buttons am oberen Rand). Während busy redundantes abgeschnittenes Statuslabel entfernt; Zeit/Prozent/Spinner bleiben. pi-lite gleicher Busy-Text ausgeblendet, flex-align:center erhalten. Beide Tests/Release-Builds erfolgreich, atomar installiert mit Hashgleichheit. CPU-Screenshot erstellt, kein echter Live-Test. Keine Pushfreigabe für diesen Nachtrag.
+
+## Statuszeile und Netz-Seitenleiste – 13. Oktober 2026 (7. Tranche)
+
+- Status (Phase · Laufzeit · ≈%) ist aus der Kopfzeile in eine eigene Zeile direkt über der Eingabe gewandert, flankiert von zwei Pixel-Schlangen (rechte gespiegelt). Links: Runde/Werkzeuge/Fehler/Warteschlange während des Laufs bzw. „Letzter Lauf m:ss · …“ danach; rechts: Pfad/Befehl des laufenden Werkzeugs. Logik rein und getestet: `copi/app/src/run_activity.rs` ↔ `ui/run-activity.js` (gleiche Texte, gleiche Fälle; `scripts/test-statusline-net.cjs`, Rust-Unit-Tests).
+- Rechte Seitenleiste „Netz“ als ehrlicher Platzhalter (sendet/empfängt/speichert nichts). Türkiser Schalter oben rechts, Strg/Cmd+Shift+B; Standard aus, Sichtbarkeit lokal (copi Store `net_visible`, pi-lite `localStorage pi-lite-net-visible`). Kopfzeile bleibt volle Breite; Leiste liegt zwischen Kopfzeile und Statuszeile. pi-lite < 860 px: Overlay.
+- Geprüft: Unit-/Strukturtests beider Frontends, Headless-Renderings (copi `COPI_SCENE=statusline`, pi-lite Chromium mit Tauri-Stub). **Keine Live-Prüfung.** Bekannt (unverändert): in copi liegt die Materialleiste unter der Eingabe, in pi-lite darüber.
+- Nachtrag: copi zeigt keinen zusätzlichen Pixel-Spinner mehr am Ende des Verlaufs (redundant zur Statuszeile; pi-lite hatte keinen). Subagenten: Aufrufe des Werkzeugs `subagent` werden gezählt – laufend „Subagenten fertig/geplant“ (parallel: Ergebnisse mit `exitCode ≠ -1`, Kette: abgeschlossene Schritte, einzeln: 0 bis Ende), danach Gesamtzahl auch in „Letzter Lauf“; rechts Agentnamen statt Rohargumente. Grundlage: `partialResult.details {mode, results}` der lokalen Extension `~/.pi/agent/extensions/subagent`; andere Subagent-Extensions mit abweichendem Format zählen nur als gestartet.
+
+## Bookmark-Persistenz / Mehrinstanz – 14. Oktober 2026
+
+Fehler im Schreibmodell: copi speicherte bei jeder Einstellungsänderung seinen vollständigen fenstereigenen Store, pi-lite hielt lokale Bookmark-/Farbsammlungen ohne Aktualisierung. Ältere Fenster konnten fremde Änderungen löschen. copi jetzt gesperrtes Lesen/Delta-Zusammenführen/atomarer Austausch, regulärer Schreibpfad immer copi (Legacy nur lesen), periodisches Einlesen mit Erhalt lokaler Änderungen. pi-lite aktualisiert Sammlungen vor Zugriff, hört auf storage/Fokus. Kategorienamen ebenfalls pro Farbindex erhalten. Tests mit unabhängigen Instanzen, Datei-Neustart, Löschung und beschädigter JSON-Datei bestanden; alle JS-/Rust-Tests grün. Getrennte App-Ablagen bleiben bestehen. Nutzerfenster nicht beendet, reale Mehrfensterprüfung offen. Alte Binaries vor erneuter Bookmarkpflege regulär schließen: sie haben noch den alten Überschreibfehler. Keine privaten Konfigurationsinhalte in Tests/Doku übernommen.
+
+## Gemeinsame Ablage copi / pi-lite
+
+Bookmarks, Farbzuordnungen und Kategorienamen liegen jetzt gemeinsam in
+`~/.config/pi-frontends/bookmarks.json` (macOS Application Support, Windows APPDATA).
+Beide Apps verwenden `shared/bookmarks.rs`: Dateisperre, Delta je Session/Farbindex,
+atomarer Austausch. pi-lite nutzt Tauri-Kommandos und localStorage nur als Cache;
+Polling jede Sekunde übernimmt Fremdänderungen. copi liest ebenfalls regelmäßig.
+Einmalige Migration übernimmt vorhandene App-Markierungen; gemeinsame Zuordnungen
+haben Vorrang. Migrationsmarker verhindern Wiederbelebung gelöschter Bookmarks.
+Filtermodus, Schriftgröße und andere UI-Einstellungen bleiben appbezogen.
+Alle alten App-Fenster regulär schließen und neue Binaries starten, bevor Bookmarks
+gepflegt werden: alte Versionen nutzen noch die getrennten Ablagen.
+Tests: gemeinsamer Rust-Dateitest läuft in beiden Builds, JS-Brückentest
+`test-shared-bookmarks.cjs`; reale gleichzeitige Fensterbedienung offen.
+
+Statuszeile gestrafft: keine rechte Werkzeugdetail-Anzeige mehr (Befehl/Pfad steht
+bereits im Verlauf); Phase, Laufzeit/Schätzung und kompakte Zähler bleiben.
+Invertierter Chip: Regular statt fett, copi mit expliziter Figtree-Regular-Familie.
+Getestet: alle JS-Tests, copi-Workspace und src-tauri; reale Layoutprüfung offen.

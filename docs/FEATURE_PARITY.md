@@ -25,6 +25,8 @@ Stand: 13. Oktober 2026. Quellcode- und Testabgleich, **keine Behauptung vollst�
 | Extension-Dialoge/Status/Widgets | vorhanden | vorhanden | RPC-API abgebildet, beliebige Extension-Kompatibilität nicht garantiert |
 | Schriftgröße / Hilfe / Sidebar-Toggle | vorhanden | vorhanden | UI-Inhalte und Shortcuts weiter live vergleichen |
 | Laufzeitstatus | invertierte Laufzeit | invertierte Laufzeit | keine fiktiven Gesamtprozente |
+| Statuszeile über der Eingabe | `ui/run-activity.js` | `run_activity.rs` | Phase (wartet/denkt/schreibt/Werkzeug/komprimiert/Wiederholung), Laufzeit, lokale %-Schätzung zwischen zwei Pixel-Schlangen; links Runden/Werkzeuge/Fehler/Subagenten (laufend „Subagenten 2/3 fertig“, aus `tool_execution_update` der Extension `subagent`)/Warteschlange bzw. letzter Lauf, keine wiederholten Werkzeugdetails rechts; Statuschip Regular |
+| Netz-Seitenleiste (Platzhalter) | rechts, Schalter + Strg/Cmd+Shift+B | rechts, Schalter + Strg/Cmd+Shift+B | nur Hinweistext, **keine Netzfunktion**; Sichtbarkeit lokal gespeichert, Standard aus; Kopfzeile bleibt volle Breite |
 | Portabilität | Omarchy-Installer | Linux ARM64 verifiziert | macOS/Windows nicht ausgeführt, Release-Downloadinstallation geplant |
 | Endpunkt-Assistent | Extension + lokale RPC-Adaption | Extension + lokale RPC-Adaption | keine autonome Provider-Migration; pi-udk-Kompatibilität offen |
 | Tastatur, IME, Auswahl, Clipboard | vorhanden | vorhanden | keine vollständige reale Gleichwertigkeit nachgewiesen |
@@ -42,3 +44,5 @@ Stand: 13. Oktober 2026. Quellcode- und Testabgleich, **keine Behauptung vollst�
 Suche in Materialvorbereitung, Browser und Vorschau beider Frontends: kein `fs::copy`, `copy_file`, `copyfile` oder `shutil.copy` zur Materialablage gefunden. Die Auswahl gibt Originalpfade zurück; Referenzvorbereitung kanonisiert sie. Vorschau JPEG/WebP/PDF schreibt ausschließlich in einen privaten temporären Ordner und entfernt diesen danach. PNG/Text werden gelesen. Auswahl und Vorschau kopieren nichts nach DL_Omarchy.
 
 Materialtext enthält jetzt die ausdrückliche Anweisung, Originaldateien nicht zu kopieren/verschieben und Änderungen nur auf Auftrag vorzunehmen. Agenten behalten ihre bestehenden Dateitools: **keine Sandbox-Garantie**. Ohne konkreten Tool-Aufruf/Log der beobachteten Kopie lässt sich deren Verursacher nicht belegen. Keine privaten Sessions ungefragt durchsucht.
+
+Bookmark-Synchronisierung: gemeinsame lokale Datei `pi-frontends/bookmarks.json` für beide Apps, gesperrte Delta-Schreibvorgänge und einmalige Migration; Tests in beiden Backends, Liveprüfung offen.
