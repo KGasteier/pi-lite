@@ -29,3 +29,10 @@ Omarchy/Arch; weitere Plattformen benötigen eigene verifizierte Setup-Pfade.
 
 Die GitHub-Historie beginnt mit einem bereinigten Snapshot; die vorherige lokale
 Entwicklungshistorie wurde aus Datenschutzgründen nicht veröffentlicht.
+
+## Branch cocopi
+
+Explizite Branch-Ausnahme: Kollaboration zunächst nur Rust/egui; gemeinsamer
+frontendunabhängiger `pi-net`-Kern bereitet späteren Tauri-Adapter vor. Keine
+behauptete WebKit-Parität. copi-Grundfunktionen weiter aus denselben Modulen.
+Details: docs/COCOPI.md, externe Aufgaben: docs/COCOPI_DEPLOYMENT.md.

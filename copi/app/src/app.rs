@@ -192,6 +192,8 @@ struct Pending {
 }
 
 pub struct App {
+    #[cfg(feature = "cocopi")]
+    pub(crate) collab: crate::collab_ui::Collab,
     pub(crate) ctx: egui::Context,
     pub(crate) demo: bool,
     pub(crate) store: Store,
@@ -321,6 +323,8 @@ impl App {
         };
         let cwd = locations.first().map(|l| l.path.clone()).unwrap_or_default();
         let mut app = Self {
+            #[cfg(feature = "cocopi")]
+            collab: Default::default(),
             ctx,
             demo,
             store: Store::load(!demo),
@@ -397,7 +401,7 @@ impl App {
             editor_open: false,
             editor_text: String::new(),
             editor_focus: false,
-            title: "copi".into(),
+            title: crate::app_name().into(),
             sent_title: String::new(),
             start_seq: 0,
             card_seq: 0,
@@ -406,6 +410,8 @@ impl App {
             req_seq: 0,
             material: crate::material_ui::MaterialState::default(),
         };
+        #[cfg(feature = "cocopi")]
+        { if !demo { app.store.net_visible = true; } }
         let resume = if demo { None } else { pi_backend::folders::resume_session() };
         app.start(resume, None);
         app.load_media_routes();
@@ -1025,7 +1031,7 @@ impl App {
                 a.refresh_usage();
                 a.title = match a.state["sessionName"].as_str().filter(|s| !s.is_empty()) {
                     Some(n) => format!("copi – {n}"),
-                    None => "copi".into(),
+                    None => crate::app_name().into(),
                 };
             }
             run(a, then);

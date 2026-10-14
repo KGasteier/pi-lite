@@ -226,3 +226,14 @@ Statuszeile gestrafft: keine rechte Werkzeugdetail-Anzeige mehr (Befehl/Pfad ste
 bereits im Verlauf); Phase, Laufzeit/Schätzung und kompakte Zähler bleiben.
 Invertierter Chip: Regular statt fett, copi mit expliziter Figtree-Regular-Familie.
 Getestet: alle JS-Tests, copi-Workspace und src-tauri; reale Layoutprüfung offen.
+
+## cocopi · erster Rust-Prototyp
+
+Branch von copi b3c89a3, separater cocopi-Binary, kein Ersatz laufender copi/pi-lite.
+Frontendfeature und derselbe copi-Code; eigenständiges pi-net mit iroh1.3.0.
+Echte direkte Kartenübertragung zweier lokaler Endpunkte getestet; keine MLS-/
+authentik-/Seminarfreigabe. UI mit expliziter Zustimmung, Status weiter über Eingabe.
+Release gebaut, separat installiert; CPU-Headless-Layout geprüft, kein Live-UI-Test.
+Tauri vorbereitet durch serde-Kern, Adapter noch nicht implementiert.
+Upstream-Abgleich explizit per copi/scripts/update-cocopi.sh, nicht unbeaufsichtigt.
+Stand/Grenzen/Todos: COCOPI.md; Server/authentik/KI-API: COCOPI_DEPLOYMENT.md.

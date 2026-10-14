@@ -1,4 +1,7 @@
-//! copi – native Oberfläche für pi (Rust + egui).
+// copi – native Oberfläche für pi (Rust + egui).
+#[cfg(feature = "cocopi")]
+mod collab_ui;
+fn app_name() -> &'static str { if cfg!(feature = "cocopi") { "cocopi" } else { "copi" } }
 mod app;
 mod bookmark_palette;
 mod commands;
@@ -132,11 +135,11 @@ fn main() {
         return;
     }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_app_id("copi").with_title("copi").with_inner_size([1280.0, 800.0]).with_min_inner_size([640.0, 420.0]),
+        viewport: egui::ViewportBuilder::default().with_app_id(app_name()).with_title(app_name()).with_inner_size([1280.0, 800.0]).with_min_inner_size([640.0, 420.0]),
         ..Default::default()
     };
     let r = eframe::run_native(
-        "copi",
+        app_name(),
         options,
         Box::new(move |cc| {
             setup_ctx(&cc.egui_ctx);

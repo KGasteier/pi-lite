@@ -1136,6 +1136,10 @@ impl App {
     /// Platzhalter der rechten Seitenleiste „Netz“ (menschlicher Chat). Noch ohne Funktion:
     /// nichts wird gesendet, empfangen oder gespeichert.
     fn net_panel(&mut self, ui: &mut Ui) {
+        #[cfg(feature = "cocopi")]
+        { self.collaboration_panel(ui); return; }
+        #[cfg(not(feature = "cocopi"))]
+        {
         ui.horizontal(|ui| {
             ui.add(Label::new(RichText::new("Netz").size(14.0).color(FG).family(egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()))));
             Frame::new().stroke(Stroke::new(1.0, OK)).corner_radius(5).inner_margin(Margin::symmetric(5, 1)).show(ui, |ui| {
@@ -1158,6 +1162,7 @@ impl App {
         ui.add(Label::new(txt(NET_PLACEHOLDER[1], 12.0, DIM)).wrap());
         ui.add_space(6.0);
         ui.add(Label::new(txt(NET_PLACEHOLDER[2], 12.0, DIM)).wrap());
+        }
     }
 
     // ---------- Fußzeile ----------

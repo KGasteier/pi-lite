@@ -5,7 +5,17 @@ edition.workspace = true
 license.workspace = true
 description = "Natives egui-Frontend für pi (Nachfolger-Prototyp von pi-lite)"
 
+[features]
+default = []
+cocopi = ["dep:pi-net"]
+
+[[bin]]
+name = "cocopi"
+path = "src/cocopi.rs"
+required-features = ["cocopi"]
+
 [dependencies]
+pi-net = { path = "../crates/pi-net", optional = true }
 eframe.workspace = true
 egui.workspace = true
 serde.workspace = true
