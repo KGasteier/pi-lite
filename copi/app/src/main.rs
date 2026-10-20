@@ -107,7 +107,13 @@ pub fn setup_ctx(ctx: &egui::Context) {
 struct Main(app::App);
 
 impl eframe::App for Main {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // Wayland: Frame-Callback vor swap_buffers anfordern, damit winit Redraws
+        // drosselt, solange Hyprland das Fenster nicht zeigt. Sonst blockiert
+        // eglSwapBuffers (vsync) den Hauptthread -> ANR-Dialog beim App-Wechsel.
+        if let Some(window) = frame.winit_window() {
+            window.pre_present_notify();
+        }
         self.0.draw(ui);
     }
 

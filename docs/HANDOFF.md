@@ -2,6 +2,15 @@
 
 ## Aktueller Stand
 
+copi-Fix 2026-10-20 (ANR-Dialog beim App-Wechsel): Hyprland zeigte „Application
+Not Responding“, sobald copi auf einem anderen Workspace lag. Ursache eframe
+0.36/glow unter Wayland: swap_buffers mit vsync wartet auf einen Frame-Callback,
+den Hyprland unsichtbaren Fenstern nicht schickt; der Hauptthread beantwortet
+keine Pings. Fix: `Main::ui` ruft `frame.winit_window().pre_present_notify()`,
+winit drosselt damit Redraws, vsync bleibt an. Regressionstest
+`~/.pi/agent/skills/cc-style/scripts/egui-anr-check.sh BINARY`: alte Binary
+Dialog, neue keiner; 145 Workspace-Tests grün. pi-lite (Tauri) nicht betroffen.
+
 Eingabe: Editor-Öffner als kleines Pfeilsymbol oben rechts im Eingabefeld
 (#promptbox, wie Workspace-Editor-Symbol); Senden/Abbrechen 96px breit, Senden
 größer (3fr/2fr). Struktur-Test + Chromium-Screenshot; WebKit live offen.
