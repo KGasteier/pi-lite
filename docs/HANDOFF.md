@@ -10,6 +10,10 @@ keine Pings. Fix: `Main::ui` ruft `frame.winit_window().pre_present_notify()`,
 winit drosselt damit Redraws, vsync bleibt an. Regressionstest
 `~/.pi/agent/skills/cc-style/scripts/egui-anr-check.sh BINARY`: alte Binary
 Dialog, neue keiner; 145 Workspace-Tests grün. pi-lite (Tauri) nicht betroffen.
+In cocopi übernommen (lokaler Merge von refs/heads/copi f4b3e4e, da der Fix noch
+nicht auf origin/copi liegt; update-cocopi.sh holt nur origin): 213 Tests mit
+`--features cocopi` grün, Release gebaut, `~/.local/bin/cocopi` per
+`install-cocopi.sh --skip-build` installiert, ANR-Check ohne Dialog. Nicht gepusht.
 
 Eingabe: Editor-Öffner als kleines Pfeilsymbol oben rechts im Eingabefeld
 (#promptbox, wie Workspace-Editor-Symbol); Senden/Abbrechen 96px breit, Senden
