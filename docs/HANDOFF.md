@@ -266,3 +266,11 @@ Fallback-Schriften, daher fehlte das bereits im Quellcode vorhandene ≈. Jetzt
 Regular mit eingebetteter Fallback-Kette; Regression prüft ≈-Glyphabdeckung.
 JS-Sidebar-/Format-Test, Rust-Workspace, Tauri und Medientests bestanden.
 Status bleibt über der Eingabe. Live-Bedienprüfung nach Neustart offen.
+
+## Multi-Backend (Instances) – Stand 2026-10
+
+- `pi-backend::instances`: Traits `Instances`/`Harness`/`Files`, Transporte `LocalInstances` (Kindprozess) und `HubInstances` (HTTP+SSE, Bearer-Token, `Last-Event-ID`-Replay, Auto-Reconnect). `backends.rs`: `<config>/copi/backends.json` (0600, lokal immer vorhanden).
+- copi: Backend-/Instanzleiste (Strg/Cmd+Shift+B) + Raster (`net.rs`, `net_view.rs`, `COPI_SCENE=net`). Branch `copi-multi` (basiert auf copi), in `cocopi` gemerged (Leiste + P2P-Panel untereinander).
+- pi-lite (Tauri): `src-tauri/src/net.rs`, `ui/net.js`, Strg/Cmd+Shift+G. **Nie kompiliert** (tauri fehlt im Cargo-Cache); `src-tauri/Cargo.lock` muss mit Netz nachgezogen werden.
+- Offen: echtes Fenster bedienen, lokales Backend mit echtem pi, `Instances::harnesses()`, Rückfrage-ID in `InstanceInfo`.
+- Tests: `cargo test --workspace [--features cocopi]`, `tests/hub.rs` startet `~/Work/pi-hub` (Mock), `node scripts/test-*.cjs` im Repo-Root.
