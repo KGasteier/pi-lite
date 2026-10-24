@@ -1,0 +1,99 @@
+/* Multi-Backend-Rasteransicht (ui/net.js). Farben aus index.html: --acc, --err, --ok, --dim, --panel. */
+:root { --warn:#e0a030; }
+#gridtoggle { flex:none; }
+#gridtoggle[aria-pressed=true] { background:var(--acc); color:#fff; }
+#gridtoggle svg { width:18px; height:18px; display:block; }
+
+/* Im Rastermodus ersetzt #netview Chatverlauf, Eingabe und Statuszeilen des Einzel-Chats. */
+#netview { flex:1; min-height:0; display:flex; }
+#netview[hidden] { display:none; }
+body.netmode #workrow, body.netmode #widgets-above, body.netmode #materialbar, body.netmode #statusline,
+body.netmode footer, body.netmode #widgets-below, body.netmode #extstatus, body.netmode #usagebar { display:none !important; }
+body.netmode #side { display:none !important; }
+body.netmode header > :not(#gridtoggle):not(#keyboardhelp) { visibility:hidden; }
+
+#netbar { width:260px; flex:none; overflow:auto; padding:8px; background:var(--panel); border-right:1px solid #3a4046; display:flex; flex-direction:column; gap:10px; }
+.netbarhead { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+.netbarhead button { font-size:12px; padding:4px 9px; }
+.netbackend { display:flex; flex-direction:column; gap:4px; }
+.netbhead { display:flex; align-items:center; gap:6px; min-height:26px; }
+.netbname { font-weight:600; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+.netkind { font-size:10px; color:var(--dim); border:1px solid #3a4046; border-radius:9px; padding:0 6px; white-space:nowrap; }
+.neticon { width:24px; height:24px; padding:3px; display:inline-flex; align-items:center; justify-content:center; background:transparent; color:var(--dim); flex:none; }
+.neticon:hover, .neticon:focus-visible { color:var(--fg); background:#444a52; }
+.neticon.danger:hover { color:var(--err); }
+.neticon svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+.neticon svg rect { fill:currentColor; stroke:none; }
+.netplus { color:var(--fg); }
+
+.netdot { width:9px; height:9px; border-radius:50%; flex:none; background:var(--dim); }
+.netdot.up { background:var(--ok); }
+.netdot.down { background:var(--warn); animation:netpulse 1.2s ease-in-out infinite; }
+.netdot.err { background:var(--err); }
+.netdot.off { background:transparent; box-shadow:inset 0 0 0 1.5px var(--dim); }
+@keyframes netpulse { 50% { opacity:.3; } }
+@media (prefers-reduced-motion: reduce) { .netdot.down { animation:none; } }
+.netwarn { font-size:11px; color:var(--warn); padding:2px 4px; overflow-wrap:anywhere; }
+.netempty { font-size:12px; color:var(--dim); padding:2px 4px; }
+
+.netinst { display:flex; flex-direction:column; gap:3px; width:100%; text-align:left; padding:6px 8px; border-radius:7px; background:#2b3137; border:1px solid transparent; color:var(--fg); }
+.netinst[aria-pressed=true] { border-color:var(--acc); background:color-mix(in srgb, var(--acc) 14%, #2b3137); }
+.netinsttop { display:flex; align-items:center; gap:6px; min-width:0; }
+.netiname { flex:1; min-width:0; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.netlast { font-size:11px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* Zustands-Pille: idle = gedämpft grün, busy = Akzent, waiting = Warnung, exited = Fehler. */
+.netpill { font-size:10px; line-height:16px; padding:0 7px; border-radius:8px; white-space:nowrap; flex:none;
+  color:var(--ok); background:color-mix(in srgb, var(--ok) 16%, transparent); }
+.netpill.starting { color:var(--dim); background:#3a4046; }
+.netpill.busy { color:#fff; background:var(--acc); }
+.netpill.waiting { color:#1e2227; background:var(--warn); }
+.netpill.exited { color:#fff; background:var(--err); }
+.netbadge { min-width:17px; height:17px; padding:0 5px; border-radius:9px; background:var(--warn); color:#1e2227; font-size:11px; font-weight:700; line-height:17px; text-align:center; flex:none; }
+
+#netgrid { flex:1; min-width:0; min-height:0; display:grid; gap:8px; padding:8px; }
+.netgridempty { align-self:center; justify-self:center; max-width:420px; text-align:center; color:var(--dim); }
+.netgridempty strong { color:var(--fg); font-size:16px; }
+.nettile { min-width:0; min-height:0; display:flex; flex-direction:column; background:var(--bg); border:1px solid #3a4046; border-radius:8px; overflow:hidden; }
+.nettile[data-state=waiting] { border-color:var(--warn); }
+.nettile[data-state=busy] { border-color:color-mix(in srgb, var(--acc) 60%, #3a4046); }
+.nettile[data-state=exited] { border-color:color-mix(in srgb, var(--err) 60%, #3a4046); }
+.nettilehead { display:flex; align-items:center; gap:6px; padding:5px 6px 5px 10px; background:var(--panel); border-bottom:1px solid #3a4046; min-width:0; }
+.nettiletitle { font-weight:600; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.netloading { font-size:11px; color:var(--dim); }
+.nettiletools { margin-left:auto; display:flex; gap:2px; }
+.nettilelog { flex:1; min-height:0; overflow:auto; padding:10px; display:flex; flex-direction:column; gap:8px; font-size:14px; }
+.nettilelog .msg { padding:7px 10px; max-width:100%; }
+.nettilelog .tool { font-size:12px; padding:4px 8px; }
+.nettilelog .tool pre { max-height:160px; }
+.netasks { display:flex; flex-direction:column; gap:6px; padding:0 8px; }
+.netasks:not(:empty) { padding:8px; border-top:1px solid var(--warn); background:color-mix(in srgb, var(--warn) 8%, var(--bg)); }
+.netask { display:flex; flex-direction:column; gap:6px; }
+.netaskmsg { font-size:13px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.netask input, .netask textarea, .nettileinput, .netdlg input[type=text], .netdlg input[type=url], .netdlg input[type=password] {
+  background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:6px; padding:5px 8px; font:inherit; font-size:13px; width:100%; }
+.netaskrow { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
+.nettilefoot { display:flex; gap:6px; padding:6px; border-top:1px solid #3a4046; background:var(--panel); }
+.nettileinput { resize:none; flex:1; min-height:40px; }
+.nettilebtns { display:flex; flex-direction:column; gap:4px; }
+.nettilebtns button { padding:4px 10px; font-size:12px; }
+
+.netdlgback { position:fixed; inset:0; z-index:90; background:#0008; display:flex; align-items:center; justify-content:center; }
+.netdlg { width:min(440px,92vw); max-height:88vh; overflow:auto; background:var(--panel); border:1px solid var(--acc); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:8px; box-shadow:0 10px 30px #000a; }
+.netdlg h4 { margin:0 0 4px; }
+.netfield { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--dim); }
+.netfield:has(input[type=checkbox]) { flex-direction:row-reverse; justify-content:flex-end; align-items:center; gap:8px; }
+.netfield select { max-width:none; }
+.nethint { font-size:11px; color:var(--dim); margin:0; }
+.netformerr { color:var(--err); font-size:12px; min-height:1em; overflow-wrap:anywhere; }
+.netformerr:empty { display:none; }
+.netdlgrow { display:flex; gap:6px; justify-content:flex-end; }
+.netdlgrow .danger { margin-right:auto; color:var(--err); }
+.netdirs { display:flex; flex-wrap:wrap; gap:4px; max-height:140px; overflow:auto; }
+.netdirs button { font-size:12px; padding:3px 8px; }
+
+@media (max-width: 760px) {
+  #netbar { width:200px; }
+  #netgrid { grid-template-columns:1fr !important; grid-template-rows:none !important; grid-template-areas:none !important; grid-auto-rows:minmax(260px,1fr); overflow:auto; }
+  .nettile { grid-area:auto !important; }
+}
