@@ -200,10 +200,19 @@ impl App {
                 .show(ui, |ui| {
                     let r = ui.max_rect().expand(12.0);
                     ui.painter().vline(r.left(), r.y_range(), Stroke::new(1.0, BORDER));
-                    self.net_panel(ui);
+                    self.net_bar(ui);
+                    #[cfg(feature = "cocopi")]
+                    {
+                        ui.separator();
+                        self.collaboration_panel(ui);
+                    }
                 });
         }
-        egui::CentralPanel::default().frame(Frame::new().fill(BG)).show(ui, |ui| self.log(ui));
+        if self.store.net_visible && self.net.grid {
+            egui::CentralPanel::default().frame(Frame::new().fill(BG)).show(ui, |ui| self.net_grid(ui));
+        } else {
+            egui::CentralPanel::default().frame(Frame::new().fill(BG)).show(ui, |ui| self.log(ui));
+        }
         let pointer = ctx.input(|i| i.pointer.hover_pos());
         let over_preview = pointer.is_some_and(|p| self.preview_rect.contains(p) || self.preview_anchor.contains(p));
         if over_preview { self.preview_hover_until = std::time::Instant::now() + Duration::from_millis(300); }
@@ -231,6 +240,7 @@ impl App {
         self.picker_overlay(&ctx);
         self.slash_overlay(&ctx);
         self.dialog_overlay(&ctx);
+        self.net_overlays(&ctx);
         self.keyhelp_overlay(&ctx);
         self.editor_overlay(&ctx);
         self.list_menu_overlay(&ctx);
@@ -264,6 +274,16 @@ impl App {
     // ---------- Tastatur ----------
 
     fn keys(&mut self, ctx: &Context) {
+        // 0. Dialoge der Backend-Leiste (eigene Modale, Tasten dort)
+        if self.net.form.is_some() || self.net.new_inst.is_some() {
+            ctx.memory_mut(|m| m.surrender_focus(prompt_id()));
+            if plain(ctx, Key::Escape) {
+                self.net.form = None;
+                self.net.new_inst = None;
+                self.focus_prompt = true;
+            }
+            return;
+        }
         // 1. Dialoge
         if let Some(kind) = self.dialogs.front().map(|d| d.kind) {
             ctx.memory_mut(|m| m.surrender_focus(prompt_id()));
@@ -1130,38 +1150,6 @@ impl App {
             } else {
                 "Zusammenfassung des letzten abgeschlossenen Agentenlaufs"
             });
-        }
-    }
-
-    /// Platzhalter der rechten Seitenleiste „Netz“ (menschlicher Chat). Noch ohne Funktion:
-    /// nichts wird gesendet, empfangen oder gespeichert.
-    fn net_panel(&mut self, ui: &mut Ui) {
-        #[cfg(feature = "cocopi")]
-        { self.collaboration_panel(ui); return; }
-        #[cfg(not(feature = "cocopi"))]
-        {
-        ui.horizontal(|ui| {
-            ui.add(Label::new(RichText::new("Netz").size(14.0).color(FG).family(egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()))));
-            Frame::new().stroke(Stroke::new(1.0, OK)).corner_radius(5).inner_margin(Margin::symmetric(5, 1)).show(ui, |ui| {
-                ui.label(txt("in Vorbereitung", 11.0, OK));
-            });
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let st = IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 12.0, radius: 5 };
-                if icons::icon_button(ui, vec2(24.0, 24.0), true, st, "Netz-Seitenleiste ausblenden", |p, r, c| {
-                    let s = Stroke::new(1.4, c);
-                    p.line_segment([r.left_top(), r.right_bottom()], s);
-                    p.line_segment([r.right_top(), r.left_bottom()], s);
-                }).clicked() {
-                    self.toggle_net();
-                }
-            });
-        });
-        ui.add_space(8.0);
-        ui.add(Label::new(txt(NET_PLACEHOLDER[0], 12.5, FG)).wrap());
-        ui.add_space(6.0);
-        ui.add(Label::new(txt(NET_PLACEHOLDER[1], 12.0, DIM)).wrap());
-        ui.add_space(6.0);
-        ui.add(Label::new(txt(NET_PLACEHOLDER[2], 12.0, DIM)).wrap());
         }
     }
 

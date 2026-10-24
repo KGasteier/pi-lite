@@ -4,9 +4,11 @@
 //! emittieren, schreiben Lese-Threads [`Event`]s in einen `mpsc`-Kanal und rufen
 //! danach einen `notify`-Callback auf (z. B. `ctx.request_repaint()`).
 
+pub mod backends;
 pub mod cli;
 pub mod editor;
 pub mod folders;
+pub mod instances;
 pub mod inventory;
 pub mod material;
 pub mod media;
