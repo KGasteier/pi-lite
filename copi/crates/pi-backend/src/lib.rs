@@ -7,6 +7,7 @@
 pub mod cli;
 pub mod editor;
 pub mod folders;
+pub mod instances;
 pub mod inventory;
 pub mod material;
 pub mod media;
