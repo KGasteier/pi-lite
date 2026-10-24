@@ -5,6 +5,8 @@ mod commands;
 mod headless;
 mod icons;
 mod material_ui;
+mod net;
+mod net_view;
 #[path = "../../../shared/bookmarks.rs"]
 mod shared_bookmarks;
 mod run_activity;
