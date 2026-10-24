@@ -400,3 +400,316 @@ fn duration_percent_matches_js_rules() {
     assert!((p - 100.0 * 21.0 / 30.0).abs() < 1e-9, "Rest = Median längerer Läufe (30−21 = 9)");
     assert_eq!(s.duration_percent(1000.0).0, 100.0 * 1000.0 / 1020.0);
 }
+
+// ---------- Mehrere Backends/Instanzen (net.rs / net_view.rs) ----------
+
+mod net {
+    use crate::net::*;
+    use pi_backend::backends::BackendCfg;
+    use pi_backend::instances::{Ev, InstanceInfo, State, Tagged};
+    use std::sync::Arc;
+
+    fn state() -> NetState {
+        let mut n = NetState::new(Arc::new(|| {}), true);
+        n.demo_scene();
+        n
+    }
+    fn ev(b: &str, i: &str, ev: Ev) -> Tagged {
+        Tagged { backend: b.into(), inst: i.into(), ev }
+    }
+    fn key(b: &str, i: &str) -> InstKey {
+        (b.into(), i.into())
+    }
+
+    #[test]
+    fn demo_scene_has_two_backends_four_instances_one_waiting() {
+        let n = state();
+        assert_eq!(n.backends.len(), 2);
+        assert_eq!(n.backends.iter().map(|b| b.insts.len()).sum::<usize>(), 4);
+        let waiting: Vec<_> = n.backends.iter().flat_map(|b| &b.insts).filter(|i| i.info.state == State::Waiting).collect();
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].chat.asks.len(), 1, "Rückfrage steht inline bereit");
+        assert_eq!(waiting[0].chat.asks[0].kind, AskKind::Confirm);
+    }
+
+    #[test]
+    fn line_events_become_chat_items() {
+        let mut n = state();
+        let k = key("hub-buero", "c3d4");
+        for l in [
+            r#"{"type":"message_start","message":{"role":"user","content":"hallo"}}"#,
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"hm"}}"#,
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Hal"}}"#,
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"lo!"}}"#,
+            r#"{"type":"tool_execution_start","toolCallId":"x","toolName":"bash","args":{"command":"ls -la\nmehr"}}"#,
+            r#"{"type":"tool_execution_end","toolCallId":"x","isError":true}"#,
+            r#"{"type":"extension_ui_request","id":"q1","method":"select","title":"Welche?","options":["a","b"]}"#,
+            r#"{"type":"extension_ui_request","id":"q1","method":"select","title":"doppelt","options":["a"]}"#,
+            "kein json",
+        ] {
+            n.on_ev(ev("hub-buero", "c3d4", Ev::Line(l.into())));
+        }
+        let c = &n.inst(&k).unwrap().chat;
+        assert!(matches!(&c.items[0], NetItem::User(t) if t == "hallo"));
+        assert!(matches!(&c.items[1], NetItem::Thinking(t) if t == "hm"));
+        assert!(matches!(&c.items[2], NetItem::Assistant { text, done: true, .. } if text == "Hallo!"), "Werkzeugstart schließt die Antwort ab");
+        assert!(matches!(&c.items[3], NetItem::Tool { name, detail, done: true, err: true, .. } if name == "bash" && detail == "ls -la…"));
+        assert_eq!(c.items.len(), 4);
+        assert_eq!(c.asks.len(), 1, "gleiche Rückfrage-ID nur einmal");
+        assert_eq!(c.asks[0].options, vec!["a", "b"]);
+        // Abschluss leert die Rückfragen
+        n.on_ev(ev("hub-buero", "c3d4", Ev::Line(r#"{"type":"agent_settled"}"#.into())));
+        assert!(n.inst(&k).unwrap().chat.asks.is_empty());
+    }
+
+    #[test]
+    fn info_updates_pill_and_new_instances_appear() {
+        let mut n = state();
+        let mut info = n.inst(&key("lokal", "l2")).unwrap().info.clone();
+        info.state = State::Busy;
+        info.last = "neu".into();
+        n.on_ev(ev("lokal", "l2", Ev::Info(info.clone())));
+        let i = &n.inst(&key("lokal", "l2")).unwrap().info;
+        assert_eq!((i.state, i.last.as_str()), (State::Busy, "neu"));
+        info.id = "l9".into();
+        n.on_ev(ev("lokal", "l9", Ev::Info(info)));
+        assert_eq!(n.backends[0].insts.len(), 3);
+        // Unbekanntes Backend wird ignoriert
+        let other = InstanceInfo { id: "z".into(), name: "z".into(), harness: "pi".into(), cwd: "/".into(), state: State::Idle, asks: 0, last: String::new(), session: None };
+        n.on_ev(ev("gibts-nicht", "z", Ev::Info(other)));
+        assert_eq!(n.backends.iter().map(|b| b.insts.len()).sum::<usize>(), 5);
+    }
+
+    #[test]
+    fn info_with_fewer_asks_drops_only_old_asks() {
+        let mut n = state();
+        let k = key("hub-buero", "a1b2");
+        let mut info = n.inst(&k).unwrap().info.clone();
+        info.asks = 0;
+        info.state = State::Busy;
+        // Frische Rückfrage (< 2 s) bleibt trotz Info mit 0 offenen stehen (getrennte Streams).
+        n.on_ev(ev("hub-buero", "a1b2", Ev::Info(info)));
+        assert_eq!(n.inst(&k).unwrap().chat.asks.len(), 1);
+        // Erneut gelieferter Verlauf (Live mit 0 offenen) räumt sie ab.
+        n.on_ev(ev("hub-buero", "a1b2", Ev::Live));
+        assert!(n.inst(&k).unwrap().chat.asks.is_empty());
+    }
+
+    #[test]
+    fn gone_removes_instance_and_selection_exit_marks_state() {
+        let mut n = state();
+        let k = key("lokal", "l1");
+        assert!(n.selected.contains(&k));
+        n.on_ev(ev("lokal", "l1", Ev::Gone));
+        assert!(n.inst(&k).is_none());
+        assert!(!n.selected.contains(&k), "entfernte Instanz verlässt das Raster");
+        let w = key("hub-buero", "a1b2");
+        n.on_ev(ev("hub-buero", "a1b2", Ev::Exit));
+        let i = n.inst(&w).unwrap();
+        assert_eq!(i.info.state, State::Exited);
+        assert!(i.chat.asks.is_empty());
+    }
+
+    #[test]
+    fn link_false_sets_hint_and_true_clears_error() {
+        let mut n = state();
+        n.on_ev(ev("hub-buero", "", Ev::Link(false)));
+        assert_eq!(n.backends[1].link, Some(false));
+        n.backends[1].error = Some("x".into());
+        n.on_ev(ev("hub-buero", "", Ev::Link(true)));
+        assert_eq!(n.backends[1].link, Some(true));
+        assert!(n.backends[1].error.is_none());
+    }
+
+    #[test]
+    fn selection_click_and_ctrl_click() {
+        let mut n = state();
+        n.grid = false;
+        n.select(key("lokal", "l2"), false);
+        assert_eq!(n.selected, vec![key("lokal", "l2")]);
+        assert!(n.grid, "Auswahl schaltet aufs Raster");
+        n.select(key("hub-buero", "a1b2"), true);
+        n.select(key("lokal", "l1"), true);
+        assert_eq!(n.selected.len(), 3);
+        n.select(key("hub-buero", "a1b2"), true);
+        assert_eq!(n.selected, vec![key("lokal", "l2"), key("lokal", "l1")], "Strg-Klick nimmt wieder heraus, Reihenfolge bleibt");
+        n.select(key("hub-buero", "c3d4"), false);
+        assert_eq!(n.selected, vec![key("hub-buero", "c3d4")]);
+    }
+
+    #[test]
+    fn grid_dimensions() {
+        assert_eq!(grid_dims(1, 1000.0, 600.0), (1, 600.0, false));
+        assert_eq!(grid_dims(2, 1000.0, 600.0), (2, 600.0, false));
+        assert_eq!(grid_dims(3, 1000.0, 600.0), (2, 300.0, false));
+        assert_eq!(grid_dims(4, 1000.0, 600.0), (2, 300.0, false));
+        let (c, h, s) = grid_dims(5, 1000.0, 600.0);
+        assert!(c == 2 && h == 300.0 && s, "ab 5 scrollbar");
+        let (c, _, s) = grid_dims(2, 500.0, 600.0);
+        assert!(c == 1 && !s, "schmal: einspaltig, 2 Kacheln passen");
+        let (c, h, s) = grid_dims(3, 500.0, 400.0);
+        assert!(c == 1 && h == 260.0 && s, "schmal mit 3: Mindesthöhe, scrollbar");
+    }
+
+    #[test]
+    fn backend_form_validation() {
+        let list = vec![BackendCfg::local(), BackendCfg::hub("hub-buero", "Büro", "http://b:1", "geheim")];
+        let f = |name: &str, url: &str, token: &str, env: &str| BackendForm { name: name.into(), url: url.into(), token: token.into(), token_env: env.into(), ..Default::default() };
+        assert!(validate_form(&f("", "http://x:1", "t", ""), &list).unwrap_err().contains("Namen"));
+        assert!(validate_form(&f("A", "ftp://x", "t", ""), &list).unwrap_err().contains("http://"));
+        assert!(validate_form(&f("A", "http://x :1", "t", ""), &list).unwrap_err().contains("Leerzeichen"));
+        assert!(validate_form(&f("A", "http://x:1", "", ""), &list).unwrap_err().contains("Token"));
+        assert!(validate_form(&f("A", "http://x:1", "t", "ENV"), &list).unwrap_err().contains("nicht beides"));
+        assert!(validate_form(&f("A", "http://x:1", "", "a-b"), &list).unwrap_err().contains("Umgebungsvariable"));
+        assert!(validate_form(&f("büro", "http://x:1", "t", ""), &list).unwrap_err().contains("schon"));
+        let c = validate_form(&f(" Server 2 ", "http://10.0.0.2:8787/", "abc", ""), &list).unwrap();
+        assert_eq!((c.id.as_str(), c.label.as_str(), c.url.as_str(), c.token.as_str(), c.kind.as_str()), ("hub-server-2", "Server 2", "http://10.0.0.2:8787", "abc", "hub"));
+        let c = validate_form(&f("Env", "https://h.example", "", "PI_HUB_TOKEN"), &list).unwrap();
+        assert!(c.token.is_empty() && c.token_env == "PI_HUB_TOKEN");
+        // Bearbeiten: leeres Token behält das gespeicherte, ID bleibt, eigener Name ist erlaubt.
+        let mut e = f("Büro", "http://b:2", "", "");
+        e.edit = Some(1);
+        let c = validate_form(&e, &list).unwrap();
+        assert_eq!((c.id.as_str(), c.token.as_str(), c.url.as_str()), ("hub-buero", "geheim", "http://b:2"));
+        assert_eq!(slug_id("Büro", &["hub-b-ro"]), "hub-b-ro-2");
+    }
+
+    #[test]
+    fn errors_are_friendly_and_never_contain_token() {
+        let m = friendly_err("Hub: Token abgelehnt (401)", "supergeheim");
+        assert!(m.contains("401") && !m.contains("supergeheim"));
+        let m = friendly_err("Hub nicht erreichbar: io: Connection refused", "x");
+        assert!(m.starts_with("Server nicht erreichbar") && m.contains("Connection refused"));
+        let m = friendly_err("http://h/?token=supergeheim kaputt", "supergeheim");
+        assert!(!m.contains("supergeheim"));
+    }
+
+    #[test]
+    fn form_open_never_prefills_token() {
+        let mut n = state();
+        n.backends[1].cfg.token = "supergeheim".into();
+        n.open_form(Some(1));
+        let f = n.form.as_ref().unwrap();
+        assert!(f.token.is_empty() && f.has_token);
+        assert!(!format!("{f:?}").contains("supergeheim"));
+    }
+
+    #[test]
+    fn answer_removes_ask_locally() {
+        let mut n = state();
+        let k = key("hub-buero", "a1b2");
+        n.answer(&k, "ask-1", serde_json::json!({"confirmed": true}));
+        assert!(n.inst(&k).unwrap().chat.asks.is_empty());
+    }
+
+    #[test]
+    fn short_cwd_keeps_last_two_parts() {
+        assert_eq!(short_cwd("/a/b/c/d"), "…/c/d");
+        assert_eq!(short_cwd("/a/b"), "/a/b");
+    }
+}
+
+#[test]
+fn net_scene_frames_render_wide_and_narrow() {
+    for (w, h) in [(1280.0, 800.0), (700.0, 500.0)] {
+        let mut a = demo();
+        crate::setup_ctx(&a.ctx);
+        a.demo_scene("net");
+        assert!(a.store.net_visible && a.net.grid);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+        for frame in 0..3 {
+            let mut out = a.ctx.clone().run_ui(RawInput { screen_rect: Some(screen), time: Some(frame as f64 * 0.1), ..Default::default() }, |ui| a.draw(ui));
+            out.textures_delta.clear();
+        }
+        // Dialoge zeichnen ohne Panik; Esc schließt sie.
+        a.net.open_form(None);
+        a.net.open_new_inst("hub-buero");
+        prompt_frame(&mut a, vec![]);
+        assert!(a.net.new_inst.as_ref().unwrap().error.is_some(), "Demo: keine Ordnerliste, verständlicher Hinweis");
+        prompt_frame(&mut a, vec![Event::Key { key: Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
+        assert!(a.net.form.is_none() && a.net.new_inst.is_none());
+        // Einzel-Chat bleibt erreichbar
+        a.net.grid = false;
+        prompt_frame(&mut a, vec![]);
+    }
+}
+
+/// Live gegen einen laufenden Mock-Hub (nicht im normalen Lauf). Aufruf:
+/// `XDG_CONFIG_HOME=<tmp> COPI_LIVE_HUB=1 cargo test -- --ignored net_live_mock_hub --nocapture`
+/// mit `backends.json` in `<tmp>/copi/`, die genau einen Hub (Harness mock) einträgt.
+#[test]
+#[ignore]
+fn net_live_mock_hub() {
+    use crate::net::*;
+    use pi_backend::instances::State;
+    use std::time::{Duration, Instant};
+    if std::env::var("COPI_LIVE_HUB").is_err() {
+        return;
+    }
+    let mut n = NetState::new(std::sync::Arc::new(|| {}), false);
+    let wait = |n: &mut NetState, what: &str, f: &dyn Fn(&NetState) -> bool| {
+        let t = Instant::now();
+        while !f(n) {
+            assert!(t.elapsed() < Duration::from_secs(10), "Zeitüberschreitung: {what}");
+            n.pump(true);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        eprintln!("ok: {what} ({} ms)", t.elapsed().as_millis());
+    };
+    n.pump(true);
+    let hub = n.backends.iter().find(|b| b.remote()).expect("Hub in backends.json").cfg.id.clone();
+    wait(&mut n, "Hub verbunden", &|n| n.backend(&hub).is_some_and(|b| b.link == Some(true)));
+    let mut keys = Vec::new();
+    for name in ["eins", "zwei"] {
+        n.open_new_inst(&hub);
+        wait(&mut n, "Ordnerliste", &|n| n.new_inst.as_ref().is_some_and(|x| !x.loading));
+        let ni = n.new_inst.as_mut().unwrap();
+        assert!(ni.error.is_none(), "{:?}", ni.error);
+        ni.harness = "mock".into();
+        ni.name = name.into();
+        n.create_inst();
+        wait(&mut n, "Instanz angelegt", &|n| n.new_inst.is_none());
+        keys.push(n.selected.last().unwrap().clone());
+    }
+    assert_eq!(n.selected.len(), 2, "beide im Raster");
+    for k in &keys {
+        wait(&mut n, "Verlauf live", &|n| n.inst(k).is_some_and(|i| i.chat.live && i.info.state == State::Idle));
+    }
+    // Zwei Prompts parallel
+    n.inst_mut(&keys[0]).unwrap().chat.input = "hallo eins".into();
+    n.inst_mut(&keys[1]).unwrap().chat.input = "bitte lösch das".into();
+    n.send_prompt(&keys[0]);
+    n.send_prompt(&keys[1]);
+    wait(&mut n, "Antwort eins", &|n| n.inst(&keys[0]).is_some_and(|i| i.chat.items.iter().any(|x| matches!(x, NetItem::Assistant { done: true, .. }))));
+    wait(&mut n, "Rückfrage zwei", &|n| n.inst(&keys[1]).is_some_and(|i| !i.chat.asks.is_empty() && i.info.state == State::Waiting && i.info.asks == 1));
+    let ask = n.inst(&keys[1]).unwrap().chat.asks[0].clone();
+    assert_eq!(ask.kind, AskKind::Confirm);
+    n.answer(&keys[1], &ask.id, serde_json::json!({"confirmed": true}));
+    wait(&mut n, "Antwort nach Bestätigung", &|n| n.inst(&keys[1]).is_some_and(|i| i.chat.items.iter().any(|x| matches!(x, NetItem::Assistant { text, .. } if text.contains("Erledigt")))));
+    wait(&mut n, "zwei wieder bereit", &|n| n.inst(&keys[1]).is_some_and(|i| i.info.state == State::Idle && i.chat.asks.is_empty()));
+    for k in &keys {
+        let i = n.inst(k).unwrap();
+        eprintln!("{}: {:?}, {} Einträge, last={:?}", i.info.name, i.info.state, i.chat.items.len(), i.info.last);
+    }
+    // Stopp = entfernen
+    n.stop(&keys[0]);
+    wait(&mut n, "eins entfernt", &|n| n.inst(&keys[0]).is_none() && !n.selected.contains(&keys[0]));
+    n.stop(&keys[1]);
+    wait(&mut n, "zwei entfernt", &|n| n.inst(&keys[1]).is_none());
+}
+
+/// Live: Fehlertexte bei falschem Token (Hub auf `COPI_LIVE_HUB_URL`) und geschlossenem Port.
+#[test]
+#[ignore]
+fn net_live_errors() {
+    use crate::net::friendly_err;
+    use pi_backend::backends::BackendCfg;
+    let Ok(url) = std::env::var("COPI_LIVE_HUB_URL") else { return };
+    for (u, tok) in [(url.as_str(), "falsch-geheim"), ("http://127.0.0.1:1", "falsch-geheim")] {
+        let api = BackendCfg::hub("h", "H", u, tok).build().unwrap();
+        let e = api.list().unwrap_err();
+        let m = friendly_err(&e, tok);
+        eprintln!("{u}: {m}");
+        assert!(!m.contains(tok));
+    }
+}

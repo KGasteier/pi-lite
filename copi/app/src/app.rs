@@ -194,6 +194,8 @@ pub struct App {
     pub(crate) ctx: egui::Context,
     pub(crate) demo: bool,
     pub(crate) store: Store,
+    /// Mehrere Backends/Instanzen (rechte Leiste und Raster), siehe `net.rs`.
+    pub(crate) net: crate::net::NetState,
     pi: Pi,
     cli: Cli,
     sink: Sink,
@@ -319,10 +321,12 @@ impl App {
             pi_backend::folders::work_locations()
         };
         let cwd = locations.first().map(|l| l.path.clone()).unwrap_or_default();
+        let net_ctx = ctx.clone();
         let mut app = Self {
             ctx,
             demo,
             store: Store::load(!demo),
+            net: crate::net::NetState::new(Arc::new(move || net_ctx.request_repaint()), demo),
             pi: Pi::default(),
             cli: Cli::default(),
             sink,
@@ -509,6 +513,7 @@ impl App {
             if Instant::now() >= deadline { self.ctx.request_repaint(); break; }
         }
         self.drain();
+        self.net.pump(self.store.net_visible);
         let now = Instant::now();
         let expired: Vec<String> = self.pending.iter().filter(|(_, p)| p.deadline.is_some_and(|d| d <= now)).map(|(k, _)| k.clone()).collect();
         for id in expired {
@@ -2224,6 +2229,10 @@ impl App {
             "dialog" => self.ask(DialogKind::Select, "Ab welcher Nachricht abzweigen?", "", vec!["1. Wie ist das Projekt aufgebaut?".into(), "2. Zweite Beispielnachricht".into()], "", |_, _| {}),
             "confirm" => self.ask(DialogKind::Confirm, "Session löschen?", "Beispiel-Session\n\nDie Datei wird endgültig gelöscht.", vec![], "", |_, _| {}),
             "keyhelp" => self.keyhelp = true,
+            "net" => {
+                self.store.net_visible = true;
+                self.net.demo_scene();
+            }
             "start" => {
                 self.clear_log();
                 self.render_start_card();
