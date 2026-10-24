@@ -15,6 +15,7 @@ mod editor;
 mod material;
 mod media;
 mod cli;
+mod net;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
@@ -185,18 +186,94 @@ fn stop(state: &Pi) {
     }
 }
 
+// ---------- Multi-Backend (lokal + pi-hub), siehe net.rs ----------
+// Alle Befehle laufen in einem Blocking-Thread: list/create/dirs … sprechen HTTP und dürfen
+// weder den UI- noch den Async-Thread aufhalten.
+type NetState = std::sync::Arc<net::Net>;
+
+async fn net_run<T: Send + 'static>(state: State<'_, NetState>, f: impl FnOnce(&net::Net) -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    let n = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        n.ensure_started();
+        f(&n)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn net_backends(state: State<'_, NetState>) -> Result<serde_json::Value, String> {
+    net_run(state, |n| Ok(n.backends())).await
+}
+#[tauri::command]
+async fn net_save_backend(state: State<'_, NetState>, form: net::BackendForm) -> Result<serde_json::Value, String> {
+    net_run(state, move |n| n.save_backend(form)).await
+}
+#[tauri::command]
+async fn net_delete_backend(state: State<'_, NetState>, backend: String) -> Result<(), String> {
+    net_run(state, move |n| n.delete_backend(&backend)).await
+}
+#[tauri::command]
+async fn net_list(state: State<'_, NetState>, backend: String) -> Result<serde_json::Value, String> {
+    net_run(state, move |n| n.list(&backend)).await
+}
+#[tauri::command]
+async fn net_create(state: State<'_, NetState>, backend: String, spec: serde_json::Value) -> Result<serde_json::Value, String> {
+    net_run(state, move |n| n.create(&backend, &spec)).await
+}
+#[tauri::command]
+async fn net_remove(state: State<'_, NetState>, backend: String, inst: String) -> Result<(), String> {
+    net_run(state, move |n| n.remove(&backend, &inst)).await
+}
+#[tauri::command]
+async fn net_restart(state: State<'_, NetState>, backend: String, inst: String) -> Result<(), String> {
+    net_run(state, move |n| n.restart(&backend, &inst)).await
+}
+#[tauri::command]
+async fn net_send(state: State<'_, NetState>, backend: String, inst: String, cmd: serde_json::Value) -> Result<(), String> {
+    net_run(state, move |n| n.send(&backend, &inst, &cmd)).await
+}
+#[tauri::command]
+async fn net_dirs(state: State<'_, NetState>, backend: String, path: Option<String>) -> Result<serde_json::Value, String> {
+    net_run(state, move |n| n.dirs(&backend, path.as_deref())).await
+}
+#[tauri::command]
+async fn net_subscribe(state: State<'_, NetState>, backend: String, inst: String, tag: String) -> Result<(), String> {
+    net_run(state, move |n| n.subscribe(&backend, &inst, &tag)).await
+}
+#[tauri::command]
+async fn net_unsubscribe(state: State<'_, NetState>, backend: String, inst: String) -> Result<(), String> {
+    net_run(state, move |n| {
+        n.unsubscribe(&backend, &inst);
+        Ok(())
+    })
+    .await
+}
+
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            // Ereignisse aus Hintergrund-Threads als Tauri-Event "net-ev" an die Oberfläche.
+            let h = app.handle().clone();
+            let emit: net::Emit = std::sync::Arc::new(move |v| {
+                let _ = h.emit("net-ev", v);
+            });
+            app.manage::<NetState>(std::sync::Arc::new(net::Net::new(emit, true)));
+            Ok(())
+        })
         .manage(Pi::default())
         .manage(preview::CacheLock::default())
         .manage(InfoCache::default())
         .manage(cli::Cli::default())
-        .invoke_handler(tauri::generate_handler![shared_bookmarks_read, shared_bookmarks_update, shared_bookmarks_seed, start_pi, send, list_sessions, delete_session, inventory::inventory, inventory::read_config, inventory::save_config, preview::preview, preview::cached_purpose, preview::clear_previews, preview::explain_usage, folders::resume_session, folders::work_locations, folders::list_folders, editor::open_in_editor, editor::existing_paths, material::material_browser, material::material_preview, material::pick_material, material::prepare_material, media::media_routes, media::analyze_media, cli::pi_cli, cli::pi_cli_cancel, cli::startup_info, cli::latest_version, cli::open_changelog, cli::quit_app])
+        .invoke_handler(tauri::generate_handler![shared_bookmarks_read, shared_bookmarks_update, shared_bookmarks_seed, start_pi, send, list_sessions, delete_session, inventory::inventory, inventory::read_config, inventory::save_config, preview::preview, preview::cached_purpose, preview::clear_previews, preview::explain_usage, folders::resume_session, folders::work_locations, folders::list_folders, editor::open_in_editor, editor::existing_paths, material::material_browser, material::material_preview, material::pick_material, material::prepare_material, media::media_routes, media::analyze_media, cli::pi_cli, cli::pi_cli_cancel, cli::startup_info, cli::latest_version, cli::open_changelog, cli::quit_app, net_backends, net_save_backend, net_delete_backend, net_list, net_create, net_remove, net_restart, net_send, net_dirs, net_subscribe, net_unsubscribe])
         .build(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen")
         .run(|app, ev| {
             if let tauri::RunEvent::Exit = ev {
                 stop(&app.state::<Pi>());
+                if let Some(n) = app.try_state::<NetState>() {
+                    n.shutdown();
+                }
             }
         });
 }

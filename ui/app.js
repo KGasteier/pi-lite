@@ -1518,7 +1518,8 @@ document.addEventListener("keydown", e => {
     let n = e.key === "Home" ? 0 : e.key === "End" ? controls.length - 1 : (i + (["ArrowUp", "ArrowLeft"].includes(e.key) ? controls.length - 1 : 1)) % controls.length;
     e.preventDefault(); e.stopImmediatePropagation(); controls[n]?.focus(); return;
   }
-  if (dialog) return;
+  // Rasteransicht (net.js) behandelt Esc/Alt-Kürzel selbst; Einzel-Chat-Kürzel ruhen dort.
+  if (dialog || document.body.classList.contains("netmode")) return;
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
     const actions = { "1": () => $("prompt").focus(), "2": focusSide, "3": () => $("log").focus(), "4": () => $("toggle").focus(), "5": focusPreview,
       n: () => $("newsess").click(), a: () => $("abort").click(), f: () => $("fork").click(), m: () => $("modelbutton").focus(), t: () => $("thinkbutton").focus(),
