@@ -461,6 +461,7 @@ impl App {
                 }
                 if f.ssh {
                     field(ui, "Host", &mut f.host, "z. B. 194.95.203.142 oder mein-server.tailnet.ts.net", false);
+                    ui.add(Label::new(txt("Tailscale ist optional: Einfach die 100.x-Adresse oder den MagicDNS-Namen als Host eintragen – der Zugang läuft weiter per SSH (kein Hub-Port nach außen). Die bisherige Adresse bleibt als Rückfall nutzbar.", 11.0, DIM)).wrap());
                     field(ui, "Benutzer", &mut f.user, "z. B. medienhaus", false);
                     field(ui, "Schlüsseldatei (optional)", &mut f.identity_file, "~/.ssh/id_ed25519", false);
                 } else {

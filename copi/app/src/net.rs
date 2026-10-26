@@ -60,6 +60,9 @@ pub struct Chat {
     pub input: String,
     /// Verlauf ist nachgeliefert (`Ev::Live`).
     pub live: bool,
+    /// Modelle und Zustand des pi hinter dieser Instanz (für Modellwahl/Kopfzeile im Remote-Modus).
+    pub models: Vec<Value>,
+    pub state: Value,
 }
 
 impl Chat {
@@ -196,6 +199,12 @@ impl Chat {
                 }
                 let options = v["options"].as_array().map(|a| a.iter().map(|o| o.as_str().map(String::from).unwrap_or_else(|| o.to_string())).collect()).unwrap_or_default();
                 self.asks.push(Ask { id, kind, title: s("title"), message: s("message"), options, text: s("prefill"), since: std::time::Instant::now() });
+            }
+            "response" if v["success"] == true && v["command"] == "get_available_models" => {
+                self.models = v["data"]["models"].as_array().cloned().unwrap_or_default();
+            }
+            "response" if v["success"] == true && v["command"] == "get_state" => {
+                self.state = v["data"].clone();
             }
             "response" if v["success"] == false => {
                 let c = v["command"].as_str().unwrap_or("");
@@ -648,6 +657,30 @@ impl NetState {
     /// Ein Ereignis eines Backends einarbeiten.
     pub fn on_ev(&mut self, t: Tagged) {
         let key = (t.backend.clone(), t.inst.clone());
+        let live = matches!(t.ev, Ev::Live);
+        self.on_ev_inner(t);
+        if live {
+            self.request_meta(&key);
+        }
+    }
+
+    /// Modelle und Zustand des pi hinter einer Instanz abfragen (kein Modellaufruf).
+    pub fn request_meta(&mut self, k: &InstKey) {
+        self.send(k, json!({"type": "get_available_models", "id": "copi-models"}));
+        self.send(k, json!({"type": "get_state", "id": "copi-state"}));
+    }
+
+    /// Instanz, die im Hauptbereich gezeigt wird, wenn sie auf einem Remote-Backend läuft.
+    pub fn remote_ctx(&self) -> Option<InstKey> {
+        let k = self.selected.first()?;
+        if !self.grid || !self.backend(&k.0)?.remote() {
+            return None;
+        }
+        self.inst(k).map(|_| k.clone())
+    }
+
+    fn on_ev_inner(&mut self, t: Tagged) {
+        let key = (t.backend.clone(), t.inst.clone());
         let Some(b) = self.backend_mut(&t.backend) else { return };
         match t.ev {
             Ev::Link(up) => {
@@ -734,7 +767,7 @@ impl NetState {
     }
 
     /// RPC-Befehl an eine Instanz (im Thread; beim Hub ist das HTTP).
-    fn send(&mut self, k: &InstKey, cmd: Value) {
+    pub(crate) fn send(&mut self, k: &InstKey, cmd: Value) {
         let Some(b) = self.backend(&k.0) else { return };
         let Some(api) = b.api.clone() else {
             let msg = if self.demo { "Demo: nichts gesendet." } else { "Backend ist nicht verbunden." };

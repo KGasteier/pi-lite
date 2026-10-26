@@ -833,3 +833,29 @@ fn remotecolors_scene_opens_ten_color_picker_for_remote_card() {
     assert!(egui::Popup::is_id_open(&a.ctx, egui::Id::new(("bookmark-color", &r)).with("popup")));
     prompt_frame(&mut a, vec![]);
 }
+
+/// Remote-Modus: Eine gewählte Remote-Instanz bestimmt Workspace, Modelle und Modus-Button im Hauptbereich.
+#[test]
+fn remote_instance_drives_workspace_and_models() {
+    let mut a = demo();
+    a.demo_scene("net");
+    assert!(a.net.remote_ctx().is_none());
+    let k = ("hub-buero".to_string(), "a1b2".to_string());
+    a.net.select(k.clone(), false);
+    assert_eq!(a.net.remote_ctx(), Some(k.clone()));
+    let i = a.net.inst_mut(&k).unwrap();
+    i.chat.line(r#"{"type":"response","command":"get_available_models","success":true,"data":{"models":[{"provider":"udk2","id":"m1","name":"Udk-Modell"}]}}"#);
+    i.chat.line(r#"{"type":"response","command":"get_state","success":true,"data":{"model":{"provider":"udk2","id":"m1"},"thinkingLevel":"high"}}"#);
+    assert_eq!(a.model_label(), "Udk-Modell (udk2)");
+    let (rows, _) = a.picker_rows(crate::app::PickerKind::Model);
+    assert_eq!(rows, vec!["Udk-Modell (udk2)".to_string()]);
+    let (ws, _) = a.picker_rows(crate::app::PickerKind::Workspace);
+    assert!(ws[0].contains("/srv/demo/website") && ws[0].contains("Server Büro"));
+    // Einzel-Chat: wieder lokal
+    a.net.grid = false;
+    assert!(a.net.remote_ctx().is_none());
+    assert_ne!(a.model_label(), "Udk-Modell (udk2)");
+    a.net.grid = true;
+    crate::setup_ctx(&a.ctx);
+    prompt_frame(&mut a, vec![]);
+}

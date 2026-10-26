@@ -1071,7 +1071,11 @@ impl App {
                     }
                 });
             });
-            let ws = format!("Workspace: {}", if self.cwd.is_empty() { "—".into() } else { pi_backend::tilde(&self.cwd) });
+            let rctx = self.net.remote_ctx();
+            let ws = match &rctx {
+                Some(k) => format!("{}: {}", self.net.backend(&k.0).map(|b| b.cfg.label.clone()).unwrap_or_default(), self.net.inst(k).map(|i| i.info.cwd.clone()).unwrap_or_default()),
+                None => format!("Workspace: {}", if self.cwd.is_empty() { "—".into() } else { pi_backend::tilde(&self.cwd) }),
+            };
             let w = (ui.available_width() - 32.0) * 0.30;
             Frame::new().stroke(Stroke::new(1.0, BORDER)).corner_radius(7).inner_margin(Margin::same(2)).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
@@ -1083,7 +1087,10 @@ impl App {
             });
             let ml = self.model_label();
             self.pick_button(ui, PickerKind::Model, &ml, 260.0, "Modell wählen (Alt+M)");
-            let tl = self.thinking_level();
+            let tl = match &rctx {
+                Some(k) => self.net.inst(k).and_then(|i| i.chat.state["thinkingLevel"].as_str()).unwrap_or("").to_string(),
+                None => self.thinking_level(),
+            };
             self.pick_button(ui, PickerKind::Thinking, &format!("Denken: {}", if tl.is_empty() { "—" } else { &tl }), 160.0, "Denkstufe wählen (Alt+T)");
             if btn(ui, "⑂ Fork", 13.0, vec2(10.0, 4.0), vec2(0.0, 28.0), false, true).on_hover_text("Ab einer früheren Nachricht abzweigen (Alt+F)").clicked() {
                 self.fork_from_here();
@@ -1104,8 +1111,8 @@ impl App {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let net_on = self.store.net_visible;
-                let tip = if net_on { "Netz-Seitenleiste ausblenden" } else { "Netz-Seitenleiste einblenden (menschlicher Chat, in Vorbereitung)" };
-                if icons::icon_button(ui, vec2(32.0, 30.0), true, IconStyle { icon: 28.0, fg: OK, ..Default::default() }, tip, |p, r, c| {
+                let tip = if rctx.is_some() { "Remote-Modus aktiv – Workspace und Modelle kommen vom Server. Klick blendet die Netz-Leiste aus." } else if net_on { "Netz-Seitenleiste ausblenden" } else { "Netz-Seitenleiste einblenden (menschlicher Chat, in Vorbereitung)" };
+                if icons::icon_button(ui, vec2(32.0, 30.0), true, IconStyle { icon: 28.0, fg: if rctx.is_some() { REMOTE } else { OK }, ..Default::default() }, tip, |p, r, c| {
                     let box_rect = r.shrink(0.5);
                     p.rect_stroke(box_rect, 2, Stroke::new(1.2, c), StrokeKind::Inside);
                     let x = box_rect.right() - box_rect.width() * 0.3;

@@ -86,12 +86,14 @@ D="$HOME/.local/share/pi-hub"; mkdir -p "$D"
 command -v node >/dev/null 2>&1 || {{ echo "ERR:node nicht gefunden" >&2; exit 3; }}
 node -e 'process.exit(+process.versions.node.split(".")[0] < 20 ? 1 : 0)' || {{ echo "ERR:Node 20 oder neuer nötig" >&2; exit 3; }}
 cat > "$D/server.mjs.new"
+sd() {{ command -v systemctl >/dev/null 2>&1 && systemctl --user is-active -q pi-hub.service 2>/dev/null; }}
 alive() {{ [ -f "$D/pid" ] && kill -0 "$(cat "$D/pid")" 2>/dev/null; }}
 if [ -f "$D/server.mjs" ] && cmp -s "$D/server.mjs" "$D/server.mjs.new"; then rm -f "$D/server.mjs.new"; else
   mv "$D/server.mjs.new" "$D/server.mjs"
-  if alive; then kill "$(cat "$D/pid")" 2>/dev/null || true; sleep 1; fi
+  if sd; then systemctl --user restart pi-hub.service; sleep 1
+  elif alive; then kill "$(cat "$D/pid")" 2>/dev/null || true; sleep 1; fi
 fi
-if ! alive; then
+if ! sd && ! alive; then
   HUB_HOST=127.0.0.1 HUB_PORT={port} nohup node "$D/server.mjs" >"$D/hub.log" 2>&1 </dev/null &
   echo $! > "$D/pid"
 fi

@@ -1107,6 +1107,14 @@ impl App {
     }
 
     pub fn model_label(&self) -> String {
+        if let Some(i) = self.net.remote_ctx().and_then(|k| self.net.inst(&k)) {
+            let m = &i.chat.state["model"];
+            if !m.is_object() {
+                return "Modell (Server)".into();
+            }
+            let found = i.chat.models.iter().find(|x| x["provider"] == m["provider"] && x["id"] == m["id"]).unwrap_or(m);
+            return model_text(found);
+        }
         let m = &self.state["model"];
         if !m.is_object() {
             return "Modell auswählen".into();
@@ -1733,6 +1741,27 @@ impl App {
     // ---------- Picker ----------
 
     pub fn picker_rows(&self, kind: PickerKind) -> (Vec<String>, usize) {
+        if let Some(k) = self.net.remote_ctx() {
+            let label = self.net.backend(&k.0).map(|b| b.cfg.label.clone()).unwrap_or_default();
+            let inst = self.net.inst(&k);
+            match kind {
+                PickerKind::Workspace => {
+                    let cwd = inst.map(|i| i.info.cwd.clone()).unwrap_or_default();
+                    return (vec![format!("{label} · {cwd}"), format!("Ordner auf {label} wählen … (neue Instanz)")], 0);
+                }
+                PickerKind::Model => {
+                    let Some(i) = inst else { return (vec![], 0) };
+                    let m = &i.chat.state["model"];
+                    let cur = i.chat.models.iter().position(|x| x["provider"] == m["provider"] && x["id"] == m["id"]).unwrap_or(0);
+                    return (i.chat.models.iter().map(model_text).collect(), cur);
+                }
+                PickerKind::Thinking => {
+                    let t = inst.and_then(|i| i.chat.state["thinkingLevel"].as_str()).unwrap_or("").to_string();
+                    return (THINKING.iter().map(|l| format!("Denken: {l}")).collect(), THINKING.iter().position(|l| *l == t).unwrap_or(0));
+                }
+                _ => {}
+            }
+        }
         match kind {
             PickerKind::Workspace => {
                 let mut rows: Vec<String> = self.locations.iter().map(|l| format!("{} · {}", l.name, pi_backend::tilde(&l.path))).collect();
@@ -1769,6 +1798,28 @@ impl App {
 
     pub fn choose_pick(&mut self, kind: PickerKind, idx: usize) {
         self.picker = None;
+        if let Some(k) = self.net.remote_ctx() {
+            match kind {
+                PickerKind::Workspace => {
+                    if idx == 1 {
+                        self.net.open_new_inst(&k.0);
+                    }
+                    return;
+                }
+                PickerKind::Model => {
+                    let Some(m) = self.net.inst(&k).and_then(|i| i.chat.models.get(idx).cloned()) else { return };
+                    self.net.send(&k, json!({"type": "set_model", "provider": m["provider"], "modelId": m["id"]}));
+                    self.net.request_meta(&k);
+                    return;
+                }
+                PickerKind::Thinking => {
+                    self.net.send(&k, json!({"type": "set_thinking_level", "level": THINKING[idx.min(THINKING.len() - 1)]}));
+                    self.net.request_meta(&k);
+                    return;
+                }
+                _ => {}
+            }
+        }
         match kind {
             PickerKind::Workspace => {
                 if let Some(l) = self.locations.get(idx) {
