@@ -916,11 +916,11 @@ impl App {
             icons::paint_icon_button(ui, act_rect, &act_resp, true, st, icons::pencil);
         }
         // Farbmenü muss Klicks und Textbearbeitung innen erlauben.
-        let color_resp = ui.interact(color_rect, Id::new(("bookmark-color", &s.path)), Sense::click()).on_hover_text("Bookmark-Farbe · acht Standardfarben");
+        let color_resp = ui.interact(color_rect, Id::new(("bookmark-color", &s.path)), Sense::click()).on_hover_text("Bookmark-Farbe · zehn Standardfarben");
         if bm {
             ui.painter().circle_filled(color_rect.center(), 5.0, crate::bookmark_palette::color(self.store.bookmark_color(&s.path)));
             egui::Popup::menu(&color_resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-                for i in 0..8 {
+                for i in 0..crate::bookmark_palette::LEN {
                     ui.horizontal(|ui| {
                         let (r, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
                         ui.painter().circle_filled(r.center(), 8.0, crate::bookmark_palette::color(i));

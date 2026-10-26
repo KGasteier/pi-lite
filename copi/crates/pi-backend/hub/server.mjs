@@ -264,7 +264,14 @@ const server = http.createServer(async (req, res) => {
         res.on('close', () => globalClients.delete(res)); return;
       }
       if (p[0] === 'dirs') return json(res, 200, listDirs(url.searchParams.get('path')));
-      if (p[0] === 'sessions') return json(res, 200, listSessions());
+      if (p[0] === 'sessions' && req.method === 'GET') return json(res, 200, listSessions());
+      if (p[0] === 'sessions' && req.method === 'DELETE') {
+        const f = path.resolve(url.searchParams.get('path') || '');
+        if (!f.endsWith('.jsonl') || !f.startsWith(path.resolve(SESSIONS_DIR) + path.sep)) return json(res, 403, { error: 'Session außerhalb' });
+        if ([...instances.values()].some(i => i.session === f && i.state !== 'exited')) return json(res, 409, { error: 'Session ist in einer laufenden Instanz offen' });
+        try { fs.unlinkSync(f); } catch { return json(res, 404, { error: 'unbekannte Session' }); }
+        return json(res, 200, { ok: true });
+      }
       if (p[0] === 'instances') {
         if (p.length === 1 && req.method === 'GET') return json(res, 200, [...instances.values()].map(i => i.summary()));
         if (p.length === 1 && req.method === 'POST') {

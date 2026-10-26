@@ -655,7 +655,7 @@ function renderSessions() {
     const marked = sessionBookmarks.has(s.path);
     bookmark.style.color = marked ? BookmarkPalette.hex(sessionBookmarks.colorOf(s.path)) : "";
     if (marked) {
-      const colorButton = mk("", "Bookmark-Farbe · acht Standardfarben", () => openBookmarkColorPicker(s, colorButton));
+      const colorButton = mk("", "Bookmark-Farbe · zehn Standardfarben", () => openBookmarkColorPicker(s, colorButton));
       colorButton.setAttribute("aria-label", "Bookmark-Farbe wählen");
       colorButton.style.cssText = "position:absolute;right:31px;bottom:6px;width:21px;height:21px;padding:0;background:transparent";
       colorButton.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="5" fill="${BookmarkPalette.hex(sessionBookmarks.colorOf(s.path))}"/></svg>`;

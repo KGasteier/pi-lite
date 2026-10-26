@@ -4,7 +4,7 @@ function createSharedBookmarkSync(invoke, storage, changed, error) {
   const empty = () => ({bookmarks:[],bookmark_colors:{},category_names:[]});
   const snapshot = () => {
     const names=JSON.parse(storage.getItem(keys[2])||'{}');
-    return {bookmarks:JSON.parse(storage.getItem(keys[0])||'[]'),bookmark_colors:JSON.parse(storage.getItem(keys[1])||'{}'),category_names:Array.from({length:8},(_,i)=>names[i]||'')};
+    return {bookmarks:JSON.parse(storage.getItem(keys[0])||'[]'),bookmark_colors:JSON.parse(storage.getItem(keys[1])||'{}'),category_names:Array.from({length:10},(_,i)=>names[i]||'')};
   };
   const apply = v => {
     if (!v || !Array.isArray(v.bookmarks)) throw Error('Ungültige gemeinsame Bookmark-Antwort');

@@ -4,9 +4,9 @@ const path = require('node:path');
 // ---------- ui/bookmark-palette.js ----------
 const { BookmarkPalette, BOOKMARK_PALETTE_COLORS, normalizeBookmarkColor, bookmarkColorHex, bookmarkColorName } = require('../ui/bookmark-palette.js');
 
-assert.equal(BOOKMARK_PALETTE_COLORS.length, 8, 'Palette muss genau acht Farben haben');
-assert.equal(new Set(BOOKMARK_PALETTE_COLORS.map(c => c.name)).size, 8, 'Farbnamen müssen eindeutig sein');
-assert.equal(new Set(BOOKMARK_PALETTE_COLORS.map(c => c.hex)).size, 8, 'Hex-Codes müssen eindeutig sein');
+assert.equal(BOOKMARK_PALETTE_COLORS.length, 10, 'Palette muss genau zehn Farben haben');
+assert.equal(new Set(BOOKMARK_PALETTE_COLORS.map(c => c.name)).size, 10, 'Farbnamen müssen eindeutig sein');
+assert.equal(new Set(BOOKMARK_PALETTE_COLORS.map(c => c.hex)).size, 10, 'Hex-Codes müssen eindeutig sein');
 for (const c of BOOKMARK_PALETTE_COLORS) assert.match(c.hex, /^#[0-9a-f]{6}$/i, `ungültiger Hex-Code: ${c.hex}`);
 assert.throws(() => { BOOKMARK_PALETTE_COLORS.push({ name: 'x', hex: '#000000' }); }, 'Palette sollte eingefroren (Object.freeze) sein');
 BOOKMARK_PALETTE_COLORS[0].hex = '#000000'; // kein Strict-Mode hier -> stiller No-Op statt Exception
@@ -14,7 +14,11 @@ assert.equal(BOOKMARK_PALETTE_COLORS[0].hex, '#6aa5e8', 'einzelne Einträge soll
 
 assert.equal(normalizeBookmarkColor(0), 0);
 assert.equal(normalizeBookmarkColor(7), 7);
-assert.equal(normalizeBookmarkColor(8), 0, 'außerhalb der Palette -> Vorgabe');
+assert.equal(normalizeBookmarkColor(8), 8, 'angehängte Farbe 9 gültig');
+assert.equal(normalizeBookmarkColor(9), 9, 'angehängte Farbe 10 gültig');
+assert.equal(normalizeBookmarkColor(10), 0, 'außerhalb der Palette -> Vorgabe');
+// Regression: Anhängen darf alte Indizes 0..7 nicht verschieben.
+assert.deepEqual(BOOKMARK_PALETTE_COLORS.slice(0, 8).map(c => c.hex), ['#6aa5e8', '#5ec2a0', '#e0b25a', '#b08cf0', '#e68f6e', '#ef476f', '#18a999', '#e454c4']);
 assert.equal(normalizeBookmarkColor(-1), 0);
 assert.equal(normalizeBookmarkColor(1.5), 0, 'keine Fließkommazahl als Index');
 assert.equal(normalizeBookmarkColor('3'), 0, 'kein String als Index');
@@ -104,4 +108,4 @@ const bmOrphan = context.createSessionBookmarks(orphanStorage);
 assert.equal(bmOrphan.colorOf('kept'), 3);
 assert.equal(bmOrphan.colorOf('removed-long-ago'), 0);
 
-console.log('Bookmark-Farben: Palette (8 feste Farben, Index-Normalisierung, Rust-Parität) sowie Farbpersistenz/-aufräumen in session-bookmarks.js passed.');
+console.log('Bookmark-Farben: Palette (10 feste Farben, Index-Normalisierung, Rust-Parität) sowie Farbpersistenz/-aufräumen in session-bookmarks.js passed.');

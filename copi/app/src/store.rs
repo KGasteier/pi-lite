@@ -14,7 +14,7 @@ use std::path::PathBuf;
 pub struct Store {
     pub output_size: f32,
     pub bookmarks: Vec<String>,
-    /// Bookmark-Farbindex (0..=7, siehe `crate::bookmark_palette::PALETTE`) je Session-Pfad.
+    /// Bookmark-Farbindex (0..=9, siehe `crate::bookmark_palette::PALETTE`) je Session-Pfad.
     /// Nur Einträge mit einem Pfad in `bookmarks` sind bedeutsam; ein fehlender Eintrag für
     /// einen markierten Pfad bedeutet Index 0 (Vorgabefarbe). Einträge für inzwischen nicht
     /// mehr markierte Pfade werden beim nächsten `toggle_bookmark`-Entfernen aufgeräumt, sind
@@ -165,7 +165,10 @@ impl Store {
         self.category_names.get(i as usize).filter(|n| !n.trim().is_empty()).cloned().unwrap_or_else(|| crate::bookmark_palette::name(i).into())
     }
     pub fn set_category_name(&mut self, i: u8, name: &str) {
-        self.category_names.resize(8, String::new());
+        let n = crate::bookmark_palette::LEN as usize;
+        if self.category_names.len() < n {
+            self.category_names.resize(n, String::new());
+        }
         self.category_names[crate::bookmark_palette::normalize(i) as usize] = name.trim().chars().take(48).collect();
     }
     pub fn record_duration(&mut self, seconds: f64) {
@@ -211,7 +214,7 @@ impl Store {
             self.bookmarks.push(path.into());
         }
     }
-    /// Farbindex eines Bookmarks (0..=7, normalisiert); 0 (Vorgabe) auch für nicht markierte
+    /// Farbindex eines Bookmarks (0..=9, normalisiert); 0 (Vorgabe) auch für nicht markierte
     /// Pfade oder Pfade ohne eigenen Eintrag.
     ///
     /// Verwendet von Session-Karten und Farbwähler.
@@ -265,8 +268,9 @@ fn merge_state(base: &Value, local: &Value, disk: &Value) -> Value {
             }
             "category_names" => {
                 let mut names = disk[key].as_array().cloned().unwrap_or_default();
-                names.resize(8, Value::String(String::new()));
-                for (i, name) in value.as_array().unwrap().iter().enumerate().take(8) {
+                let n = crate::bookmark_palette::LEN as usize;
+                if names.len() < n { names.resize(n, Value::String(String::new())); }
+                for (i, name) in value.as_array().unwrap().iter().enumerate().take(n) {
                     let before = base[key].get(i).and_then(Value::as_str).unwrap_or("");
                     if name.as_str().unwrap_or("") != before { names[i] = name.clone(); }
                 }
@@ -376,6 +380,20 @@ mod tests {
         s.toggle_bookmark("/a");
         s.set_bookmark_color("/a", 200);
         assert_eq!(s.bookmark_color("/a"), 0);
+    }
+
+    #[test]
+    fn appended_colors_8_and_9_are_stored_and_named() {
+        // Regression 8 -> 10 Farben: Index 8/9 wird gespeichert, alte 8er-Namensliste wächst mit.
+        let mut s = Store { category_names: vec!["x".into(); 8], ..Default::default() };
+        s.toggle_bookmark("/a");
+        s.set_bookmark_color("/a", 9);
+        assert_eq!(s.bookmark_color("/a"), 9);
+        s.set_bookmark_color("/a", 10);
+        assert_eq!(s.bookmark_color("/a"), 0);
+        assert_eq!(s.category_name(8), "Limette");
+        s.set_category_name(9, "Archiv");
+        assert_eq!((s.category_names.len(), s.category_name(9).as_str(), s.category_name(0).as_str()), (10, "Archiv", "x"));
     }
 
     #[test]

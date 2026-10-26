@@ -128,6 +128,10 @@ pub trait Harness: Send + Sync {
 pub struct SessionRef {
     pub path: String,
     pub modified_ms: u64,
+    /// Arbeitsordner aus der Kopfzeile (leer, wenn unbekannt).
+    pub cwd: String,
+    /// Erste Nutzer-Nachricht (gekürzt) bzw. vergebener Name.
+    pub title: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -141,6 +145,8 @@ pub struct DirList {
 pub trait Files: Send + Sync {
     fn dirs(&self, path: Option<&str>) -> Result<DirList, String>;
     fn sessions(&self) -> Result<Vec<SessionRef>, String>;
+    /// Sessiondatei löschen (nur innerhalb des Session-Ordners des Backends).
+    fn delete_session(&self, path: &str) -> Result<(), String>;
 }
 
 /// Ein Backend mit beliebig vielen Instanzen.
@@ -306,7 +312,10 @@ impl Files for LocalFiles {
     }
     fn sessions(&self) -> Result<Vec<SessionRef>, String> {
         let mut c = crate::sessions::InfoCache::default();
-        Ok(c.list().into_iter().map(|s| SessionRef { path: s.path, modified_ms: s.modified * 1000 }).collect())
+        Ok(c.list().into_iter().map(|s| SessionRef { title: if s.name.is_empty() { s.title } else { s.name }, path: s.path, modified_ms: s.modified * 1000, cwd: s.cwd }).collect())
+    }
+    fn delete_session(&self, path: &str) -> Result<(), String> {
+        crate::sessions::InfoCache::default().delete(path)
     }
 }
 
@@ -667,8 +676,21 @@ impl Files for HubFiles {
     }
     fn sessions(&self) -> Result<Vec<SessionRef>, String> {
         let v = get_json(&self.base, &self.token.get(), "/api/sessions")?;
-        Ok(v.as_array().into_iter().flatten().filter_map(|s| Some(SessionRef { path: s["path"].as_str()?.into(), modified_ms: s["modified"].as_f64()? as u64 })).collect())
+        Ok(parse_sessions(&v))
     }
+    fn delete_session(&self, path: &str) -> Result<(), String> {
+        call_json("DELETE", &self.base, &self.token.get(), &format!("/api/sessions?path={}", enc(path)), None).map(|_| ())
+    }
+}
+
+/// Antwort von `GET /api/sessions`; Einträge ohne Pfad oder Zeit werden übersprungen.
+pub fn parse_sessions(v: &Value) -> Vec<SessionRef> {
+    let s = |x: &Value| x.as_str().unwrap_or("").to_string();
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| Some(SessionRef { path: e["path"].as_str()?.into(), modified_ms: e["modified"].as_f64()? as u64, cwd: s(&e["cwd"]), title: s(&e["title"]) }))
+        .collect()
 }
 
 impl Instances for HubInstances {
@@ -717,6 +739,16 @@ impl Instances for HubInstances {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_sessions_reads_cwd_title_and_skips_broken() {
+        let v = json!([{"path":"/s/a.jsonl","modified":1500.0,"cwd":"/p","title":"T"},{"path":"/s/b.jsonl","modified":2},{"modified":3},{"path":"/s/c.jsonl"}]);
+        let r = parse_sessions(&v);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0], SessionRef { path: "/s/a.jsonl".into(), modified_ms: 1500, cwd: "/p".into(), title: "T".into() });
+        assert_eq!((r[1].cwd.as_str(), r[1].title.as_str()), ("", ""));
+        assert!(parse_sessions(&json!({"error":"x"})).is_empty());
+    }
 
     #[test]
     fn sse_parser_events_comments_multiline() {

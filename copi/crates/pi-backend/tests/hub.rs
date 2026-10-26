@@ -71,6 +71,20 @@ fn hub_transport_end_to_end() {
     assert!(root.dirs.iter().any(|d| d == "proj"));
     assert!(be.files().dirs(Some("/")).is_err(), "Sandbox muss greifen");
 
+    // Remote-Sessions: Liste mit cwd/Titel, Löschen nur im Session-Ordner.
+    let sdir = tmp.join("sess").join("p");
+    std::fs::create_dir_all(&sdir).unwrap();
+    let sf = sdir.join("a.jsonl");
+    let cwd = std::fs::canonicalize(tmp.join("proj")).unwrap().to_string_lossy().to_string();
+    std::fs::write(&sf, format!("{{\"type\":\"session\",\"cwd\":\"{cwd}\"}}\n{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":\"Remote-Titel\"}}}}\n")).unwrap();
+    let ss = be.files().sessions().unwrap();
+    assert_eq!(ss.len(), 1);
+    assert_eq!((ss[0].cwd.as_str(), ss[0].title.as_str()), (cwd.as_str(), "Remote-Titel"));
+    assert!(be.files().delete_session("/etc/passwd").unwrap_err().contains("403"));
+    assert!(bad.files().delete_session(&ss[0].path).unwrap_err().contains("401"));
+    be.files().delete_session(&ss[0].path).unwrap();
+    assert!(!sf.exists() && be.files().sessions().unwrap().is_empty());
+
     let ev: Arc<Mutex<Vec<Tagged>>> = Default::default();
     let e2 = ev.clone();
     let sink: EvSink = Arc::new(move |t| e2.lock().unwrap().push(t));

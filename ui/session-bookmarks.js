@@ -9,15 +9,15 @@
 //              innerhalb gleicher Farbe nach letzter Nutzung (Zeit).
 // Reihenfolge des Zyklus: off -> on -> colors -> off. Zustand ist lokal persistent.
 //
-// Bookmark-Farben: `colors` speichert einen Palette-Index (0..=7, siehe
-// `ui/bookmark-palette.js` für die acht festen Hex-Codes/Namen) je markiertem Pfad. Diese
+// Bookmark-Farben: `colors` speichert einen Palette-Index (0..=9, siehe
+// `ui/bookmark-palette.js` für die zehn festen Hex-Codes/Namen) je markiertem Pfad. Diese
 // Datei kennt bewusst keine Hex-Werte/Namen selbst (Trennung Persistenz/Darstellung) – nur
-// die Palettengröße (8), um ungültige Indizes (fremd editierter localStorage-Inhalt,
+// die Palettengröße (10), um ungültige Indizes (fremd editierter localStorage-Inhalt,
 // künftig verkleinerte Palette) sicher auf 0 (Vorgabefarbe) zurückzufallen, statt eine
 // ungültige Farbe zu persistieren. Index 0 wird nie explizit gespeichert (spart Platz,
 // entspricht dem Verhalten vor Einführung der Farbauswahl: ein Bookmark ohne eigenen
 // Eintrag ist die Vorgabefarbe).
-const PALETTE_SIZE = 8;
+const PALETTE_SIZE = 10;
 const FILTER_MODES = ["off", "on", "colors"];
 function normalizeColorIndex(index) {
   return Number.isInteger(index) && index >= 0 && index < PALETTE_SIZE ? index : 0;
@@ -91,7 +91,7 @@ function createSessionBookmarks(storage) {
         (filterMode === "colors" ? this.colorOf(a.path) - this.colorOf(b.path) : 0) ||
         b.modified - a.modified || a.path.localeCompare(b.path));
     },
-    // Farbindex eines Bookmarks (0..=7, normalisiert); 0 (Vorgabe) auch für nicht markierte
+    // Farbindex eines Bookmarks (0..=9, normalisiert); 0 (Vorgabe) auch für nicht markierte
     // Pfade oder Pfade ohne eigenen Eintrag.
     colorOf(path) {
       reload();

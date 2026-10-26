@@ -1,6 +1,6 @@
-// Editierbare, persistente Namen für die acht globalen Sidebar-Kategoriefarben (pi-lite).
+// Editierbare, persistente Namen für die zehn globalen Sidebar-Kategoriefarben (pi-lite).
 //
-// Getrennt von bookmark-palette.js: die acht Hex-Codes dort sind fix (Parität mit
+// Getrennt von bookmark-palette.js: die zehn Hex-Codes dort sind fix (Parität mit
 // copi/app/src/bookmark_palette.rs), aber ihre *Namen* dürfen hier vom Nutzer umbenannt
 // werden (z. B. "Blau" -> "Dringend"), ohne die Hex-Werte selbst zu ändern. Das betrifft
 // sowohl die Bookmark-Farbwahl als auch jede Stelle, die einen Farbnamen anzeigt (Label im

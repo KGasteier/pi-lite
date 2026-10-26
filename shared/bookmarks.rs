@@ -2,6 +2,8 @@
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+/// Anzahl der Kategorienamen = Länge der Bookmark-Palette (10; 8 und 9 wurden angehängt).
+pub const CATEGORY_COUNT: usize = 10;
 pub fn empty() -> Value { json!({"bookmarks":[],"bookmark_colors":{},"category_names":[]}) }
 pub fn path() -> Result<PathBuf,String> {
     #[cfg(target_os="macos")]
@@ -38,8 +40,9 @@ pub fn merge(base:&Value, local:&Value, disk:&Value) -> Value {
     colors.retain(|k,_|out["bookmarks"].as_array().unwrap().contains(&Value::String(k.clone())));
     out["bookmark_colors"]=Value::Object(colors);
     let mut names=disk["category_names"].as_array().cloned().unwrap_or_default();
-    names.resize(8,Value::String(String::new()));
-    for (i,n) in local["category_names"].as_array().into_iter().flatten().enumerate().take(8) {
+    // Nur verlängern, nie kürzen: Namen künftiger Paletteneinträge bleiben erhalten.
+    if names.len()<CATEGORY_COUNT { names.resize(CATEGORY_COUNT,Value::String(String::new())); }
+    for (i,n) in local["category_names"].as_array().into_iter().flatten().enumerate().take(CATEGORY_COUNT) {
         if n.as_str().unwrap_or("") != base["category_names"].get(i).and_then(Value::as_str).unwrap_or("") { names[i]=n.clone(); }
     }
     out["category_names"]=Value::Array(names); out
@@ -80,5 +83,15 @@ pub fn update_at(p:&Path,base:&Value,local:&Value,seed:bool) -> Result<Value,Str
         update_at(&p,&saved,&changed,false).unwrap();
         assert_eq!(read_at(&p).unwrap()["bookmarks"],json!(["/synthetic/b"]));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test] fn ten_colors_and_old_eight_name_files() {
+        // Regression 8 -> 10 Farben: alte Datei mit 8 Namen wird verlängert, Index 9 bleibt erhalten.
+        let disk=json!({"bookmarks":["/s/a"],"bookmark_colors":{"/s/a":7},"category_names":["a","b","c","d","e","f","g","h"]});
+        let mut local=disk.clone(); local["bookmark_colors"]["/s/a"]=json!(9);
+        let mut names=disk["category_names"].as_array().unwrap().clone(); names.resize(CATEGORY_COUNT,json!("")); names[9]=json!("Neu"); local["category_names"]=Value::Array(names);
+        let out=merge(&disk,&local,&disk);
+        assert_eq!(out["bookmark_colors"]["/s/a"],9);
+        let n=out["category_names"].as_array().unwrap();
+        assert_eq!(n.len(),CATEGORY_COUNT); assert_eq!(n[0],"a"); assert_eq!(n[9],"Neu");
     }
 }

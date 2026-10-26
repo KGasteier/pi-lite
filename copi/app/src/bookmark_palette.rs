@@ -1,4 +1,4 @@
-//! Acht feste Bookmark-Standardfarben für Session-Lesezeichen (copi).
+//! Zehn feste Bookmark-Standardfarben für Session-Lesezeichen (copi).
 //!
 //! Getrennt von `theme.rs` (Kategorie-/UI-Farben), weil diese Palette ausschließlich für
 //! Bookmark-Farbindizes gilt, die in `Store::bookmark_colors` persistiert werden. Die Werte
@@ -7,7 +7,7 @@
 //! von `view.rs` und im Farbwähler von `ui/app.js`.
 //!
 //! Index `0` ist die Standardfarbe neuer Bookmarks (entspricht der bisherigen, einfarbigen
-//! Kategoriefarbe `CAT`), Indizes `1..=7` sind frei wählbare Zusatzfarben. Ein ungültiger
+//! Kategoriefarbe `CAT`), Indizes `1..=9` sind frei wählbare Zusatzfarben. Ein ungültiger
 //! gespeicherter Index (z. B. durch manuell editierte `state.json` oder eine künftig
 //! verkleinerte Palette) fällt sicher auf Index `0` zurück statt zu einem Panic zu führen.
 use egui::Color32;
@@ -20,11 +20,11 @@ pub struct BookmarkColor {
     pub hex: &'static str,
 }
 
-/// Die acht festen Standardfarben, Index 0 = Vorgabe. Reihenfolge ist Teil der gespeicherten
-/// Bedeutung (Index in `Store::bookmark_colors`) – **nicht** umsortieren, nur anhängen wäre
-/// ohnehin durch die feste Länge 8 ausgeschlossen; stattdessen Hex-Werte nur gemeinsam mit
+/// Die zehn festen Standardfarben, Index 0 = Vorgabe. Reihenfolge ist Teil der gespeicherten
+/// Bedeutung (Index in `Store::bookmark_colors`) – **nie umsortieren, nur anhängen** (8 und 9
+/// kamen nachträglich dazu; alte Indizes 0..=7 bleiben gültig). Hex-Werte nur gemeinsam mit
 /// `ui/bookmark-palette.js` ändern.
-pub const PALETTE: [BookmarkColor; 8] = [
+pub const PALETTE: [BookmarkColor; 10] = [
     BookmarkColor { name: "Blau", hex: "#6aa5e8" },
     BookmarkColor { name: "Grün", hex: "#5ec2a0" },
     BookmarkColor { name: "Gelb", hex: "#e0b25a" },
@@ -33,9 +33,11 @@ pub const PALETTE: [BookmarkColor; 8] = [
     BookmarkColor { name: "Rot", hex: "#ef476f" },
     BookmarkColor { name: "Türkis", hex: "#18a999" },
     BookmarkColor { name: "Pink", hex: "#e454c4" },
+    BookmarkColor { name: "Limette", hex: "#a3c94f" },
+    BookmarkColor { name: "Braun", hex: "#b8865b" },
 ];
 
-/// Anzahl der Farben in [`PALETTE`] (8). Zentrale Konstante statt verstreuter Literale.
+/// Anzahl der Farben in [`PALETTE`] (10). Zentrale Konstante statt verstreuter Literale.
 pub const LEN: u8 = PALETTE.len() as u8;
 
 /// Normalisiert einen (ggf. aus gespeicherten Daten stammenden, potenziell ungültigen)
@@ -76,9 +78,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn palette_has_exactly_eight_entries() {
-        assert_eq!(PALETTE.len(), 8);
-        assert_eq!(LEN, 8);
+    fn palette_has_exactly_ten_entries() {
+        assert_eq!(PALETTE.len(), 10);
+        assert_eq!(LEN, 10);
+    }
+
+    #[test]
+    fn old_indices_keep_their_colors_after_append() {
+        // Regression: Erweiterung von 8 auf 10 darf gespeicherte Indizes 0..=7 nicht verschieben.
+        let old = ["#6aa5e8", "#5ec2a0", "#e0b25a", "#b08cf0", "#e68f6e", "#ef476f", "#18a999", "#e454c4"];
+        for (i, h) in old.iter().enumerate() {
+            assert_eq!(PALETTE[i].hex, *h);
+        }
+        assert_eq!(normalize(8), 8);
+        assert_eq!(normalize(9), 9);
     }
 
     #[test]
@@ -100,7 +113,7 @@ mod tests {
 
     #[test]
     fn normalize_falls_back_to_zero_for_out_of_range_index() {
-        assert_eq!(normalize(8), 0);
+        assert_eq!(normalize(10), 0);
         assert_eq!(normalize(255), 0);
     }
 

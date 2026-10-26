@@ -1,4 +1,4 @@
-// Acht feste Bookmark-Standardfarben für Session-Lesezeichen (pi-lite).
+// Zehn feste Bookmark-Standardfarben für Session-Lesezeichen (pi-lite).
 //
 // Getrennt von session-bookmarks.js, weil diese Palette ausschließlich Hex-Codes/Namen
 // definiert und von mehreren Stellen gebraucht wird (Sidebar-Karte, Kontextmenü,
@@ -8,7 +8,7 @@
 // sie für die Session-Karten und den Farbwähler.
 //
 // Index 0 ist die Standardfarbe neuer Bookmarks (entspricht der bisherigen, einfarbigen
-// Kategoriefarbe --cat), Indizes 1..=7 sind frei wählbare Zusatzfarben. Ein ungültiger
+// Kategoriefarbe --cat), Indizes 1..=9 sind (8 und 9 nachträglich angehängt – nie umsortieren) frei wählbare Zusatzfarben. Ein ungültiger
 // gespeicherter Index (z. B. durch manuell editierten localStorage-Inhalt oder eine
 // künftig verkleinerte Palette) fällt sicher auf Index 0 zurück statt eine ungültige
 // Farbe zu rendern.
@@ -21,10 +21,12 @@ const BOOKMARK_PALETTE_COLORS = Object.freeze([
   Object.freeze({ name: "Rot", hex: "#ef476f" }),
   Object.freeze({ name: "Türkis", hex: "#18a999" }),
   Object.freeze({ name: "Pink", hex: "#e454c4" }),
+  Object.freeze({ name: "Limette", hex: "#a3c94f" }),
+  Object.freeze({ name: "Braun", hex: "#b8865b" }),
 ]);
 
 // Normalisiert einen (ggf. aus localStorage stammenden, potenziell ungültigen) Farbindex
-// auf einen gültigen Palette-Index: alles außer einer ganzen Zahl 0..7 fällt auf 0 zurück.
+// auf einen gültigen Palette-Index: alles außer einer ganzen Zahl 0..9 fällt auf 0 zurück.
 function normalizeBookmarkColor(index) {
   return Number.isInteger(index) && index >= 0 && index < BOOKMARK_PALETTE_COLORS.length ? index : 0;
 }
