@@ -563,14 +563,18 @@ mod net {
         n.grid = false;
         n.select(key("lokal", "l2"), false);
         assert_eq!(n.selected, vec![key("lokal", "l2")]);
-        assert!(n.grid, "Auswahl schaltet aufs Raster");
+        assert!(!n.grid && !n.remote_main, "lokale Auswahl führt zum lokalen Chat");
         n.select(key("hub-buero", "a1b2"), true);
         n.select(key("lokal", "l1"), true);
         assert_eq!(n.selected.len(), 3);
+        assert!(n.grid && !n.remote_main);
+        assert!(n.remote_ctx().is_none());
         n.select(key("hub-buero", "a1b2"), true);
         assert_eq!(n.selected, vec![key("lokal", "l2"), key("lokal", "l1")], "Strg-Klick nimmt wieder heraus, Reihenfolge bleibt");
         n.select(key("hub-buero", "c3d4"), false);
         assert_eq!(n.selected, vec![key("hub-buero", "c3d4")]);
+        assert!(!n.grid && n.remote_main);
+        assert_eq!(n.remote_ctx(), Some(key("hub-buero", "c3d4")));
     }
 
     #[test]
@@ -888,10 +892,10 @@ fn remote_instance_drives_workspace_and_models() {
     let (ws, _) = a.picker_rows(crate::app::PickerKind::Workspace);
     assert!(ws[0].contains("/srv/demo/website") && ws[0].contains("Server Büro"));
     // Einzel-Chat: wieder lokal
-    a.net.grid = false;
+    a.net.set_grid(false);
     assert!(a.net.remote_ctx().is_none());
     assert_ne!(a.model_label(), "Udk-Modell (udk2)");
-    a.net.grid = true;
+    a.net.select(k, false);
     crate::setup_ctx(&a.ctx);
     prompt_frame(&mut a, vec![]);
 }
@@ -902,16 +906,69 @@ fn remote_mode_switches_signal_color_and_routes_input() {
     assert!(a.remote_single().is_none());
     a.demo_scene("remote");
     let k = a.remote_single().expect("eine Remote-Instanz gewählt");
+    assert!(!a.net.inst(&k).unwrap().chat.items.iter().any(|it| matches!(it, crate::net::NetItem::Note { text, .. } if text == "Demo: nichts gesendet.")), "Metadatenabfrage erzeugt in der Demo keine Senden-Notizen");
     crate::theme::set_remote_mode(true);
     assert_eq!(crate::theme::acc(), crate::theme::REMOTE);
     crate::theme::set_remote_mode(false);
     assert_eq!(crate::theme::acc(), crate::theme::ACC);
     // Normales Eingabefeld → Remote-Instanz (Rückfrage Confirm bleibt unberührt, Prompt wird gesendet).
+    let local_items = a.items.len();
     a.prompt = "weiter".into();
     a.submit();
     assert!(a.prompt.is_empty());
-    assert!(a.net.inst(&k).is_some());
+    assert_eq!(a.items.len(), local_items, "lokaler Verlauf bleibt unverändert");
+    assert!(a.net.inst(&k).unwrap().chat.items.iter().any(|it| matches!(it, crate::net::NetItem::Note { text, .. } if text == "Demo: nichts gesendet.")));
     // Zwei gewählte Instanzen = Raster, kein Einzel-Chat.
     a.net.selected.push(("lokal".into(), "l1".into()));
     assert!(a.remote_single().is_none());
+}
+
+#[test]
+fn remote_main_survives_hidden_sidebar_and_routes_escape() {
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    a.demo_scene("remote");
+    let k = a.remote_single().unwrap();
+    assert!(!a.net.grid && a.net.remote_main);
+    a.store.net_visible = false;
+    let local_items = a.items.len();
+    let remote_items = a.net.inst(&k).unwrap().chat.items.len();
+    prompt_frame(&mut a, vec![Event::Key { key: Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
+    assert_eq!(a.remote_single(), Some(k.clone()));
+    assert_eq!(a.items.len(), local_items);
+    assert_eq!(a.net.inst(&k).unwrap().chat.items.len(), remote_items + 1, "Esc an Remote");
+    a.net.set_grid(true);
+    assert!(a.remote_single().is_none(), "Raster bleibt auch mit einer Instanz Raster");
+    prompt_frame(&mut a, vec![]);
+    a.net.select(k.clone(), false);
+    a.net.set_grid(false);
+    assert!(a.remote_single().is_none(), "Einzel-Chat ist lokal");
+    a.net.select(k, false);
+    a.net.select(("lokal".into(), "l1".into()), false);
+    assert!(a.remote_single().is_none(), "lokale Instanzauswahl verlässt Remote");
+    prompt_frame(&mut a, vec![]);
+}
+
+#[test]
+fn remote_session_selects_main_and_disconnected_backend_has_hint() {
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    a.demo_scene("net");
+    let s = a.net.remote_sessions[0].clone();
+    let k = ("hub-buero".into(), "a1b2".into());
+    a.net.inst_mut(&k).unwrap().info.session = Some(s.path.clone());
+    a.net.open_remote_session(&s);
+    assert_eq!(a.remote_single(), Some(k.clone()));
+    assert!(!a.net.grid);
+    // Nur den Hinweis ohne Netz prüfen: kein pump(), kein Start eines Backends.
+    a.net.demo = false;
+    let b = a.net.backends.iter_mut().find(|b| b.cfg.id == k.0).unwrap();
+    b.cfg.enabled = false;
+    assert!(a.net.remote_connection_hint(&k).unwrap().contains("Häkchen"));
+    prompt_frame(&mut a, vec![]);
+    let b = a.net.backends.iter_mut().find(|b| b.cfg.id == k.0).unwrap();
+    b.cfg.enabled = true;
+    b.link = Some(false);
+    assert!(a.net.remote_connection_hint(&k).unwrap().contains("nicht verbunden"));
+    prompt_frame(&mut a, vec![]);
 }

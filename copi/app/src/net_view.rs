@@ -92,7 +92,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let grid = self.net.grid;
-            if btn(ui, "Einzel-Chat", 12.0, vec2(8.0, 3.0), Vec2Zero::z(), !grid, true).on_hover_text("Bisheriger Chat mit dem lokalen pi").clicked() {
+            if btn(ui, "Einzel-Chat", 12.0, vec2(8.0, 3.0), Vec2Zero::z(), !grid && !self.net.remote_main, true).on_hover_text("Bisheriger Chat mit dem lokalen pi").clicked() {
                 acts.push(Act::Grid(false));
             }
             if btn(ui, "Raster", 12.0, vec2(8.0, 3.0), Vec2Zero::z(), grid, true).on_hover_text("Gewählte Instanzen nebeneinander").clicked() {
@@ -401,7 +401,7 @@ impl App {
                 Act::Select(k, m) => self.net.select(k, m),
                 Act::Deselect(k) => self.net.selected.retain(|s| *s != k),
                 Act::Grid(g) => {
-                    self.net.grid = g;
+                    self.net.set_grid(g);
                     if !g {
                         self.focus_prompt = true;
                     }

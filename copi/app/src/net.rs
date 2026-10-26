@@ -362,6 +362,8 @@ pub struct NetState {
     pub selected: Vec<InstKey>,
     /// Raster statt Einzel-Chat.
     pub grid: bool,
+    /// Genau eine Remote-Instanz in der Standard-UI (unabhängig von der sichtbaren Leiste).
+    pub remote_main: bool,
     pub form: Option<BackendForm>,
     pub new_inst: Option<NewInst>,
     /// Meldungen für Toasts (Text, Fehler?) – nie mit Token.
@@ -537,7 +539,7 @@ pub fn grid_dims(n: usize, w: f32, h: f32) -> (usize, f32, bool) {
 impl NetState {
     pub fn new(repaint: Arc<dyn Fn() + Send + Sync>, demo: bool) -> Self {
         let (tx, rx) = mpsc::channel();
-        Self { backends: Vec::new(), selected: Vec::new(), grid: false, form: None, new_inst: None, notices: Vec::new(), started: false, remote_sessions: Vec::new(), demo, tx, rx, repaint }
+        Self { backends: Vec::new(), selected: Vec::new(), grid: false, remote_main: false, form: None, new_inst: None, notices: Vec::new(), started: false, remote_sessions: Vec::new(), demo, tx, rx, repaint }
     }
 
     fn notice(&mut self, text: impl Into<String>, err: bool) {
@@ -685,6 +687,9 @@ impl NetState {
 
     /// Modelle und Zustand des pi hinter einer Instanz abfragen (kein Modellaufruf).
     pub fn request_meta(&mut self, k: &InstKey) {
+        if self.demo {
+            return;
+        }
         self.send(k, json!({"type": "get_available_models", "id": "copi-models"}));
         self.send(k, json!({"type": "get_state", "id": "copi-state"}));
     }
@@ -692,7 +697,7 @@ impl NetState {
     /// Instanz, die im Hauptbereich gezeigt wird, wenn sie auf einem Remote-Backend läuft.
     pub fn remote_ctx(&self) -> Option<InstKey> {
         let k = self.selected.first()?;
-        if !self.grid || !self.backend(&k.0)?.remote() {
+        if !self.remote_main || self.grid || self.selected.len() != 1 || !self.backend(&k.0)?.remote() {
             return None;
         }
         self.inst(k).map(|_| k.clone())
@@ -746,9 +751,9 @@ impl NetState {
         }
     }
 
-    /// Klick auf eine Instanz: ohne `multi` genau diese wählen, mit `multi` (Strg/Cmd) hinzu-
-    /// bzw. wegnehmen. Schaltet auf das Raster und abonniert neu gewählte Instanzen.
+    /// Klick: Remote im Hauptchat, lokal zurück zum lokalen Chat; Strg/Cmd wählt fürs Raster.
     pub fn select(&mut self, k: InstKey, multi: bool) {
+        let remote = self.backend(&k.0).is_some_and(Backend::remote);
         if multi {
             if let Some(p) = self.selected.iter().position(|s| *s == k) {
                 self.selected.remove(p);
@@ -758,10 +763,33 @@ impl NetState {
         } else {
             self.selected = vec![k];
         }
-        if !self.selected.is_empty() {
-            self.grid = true;
-        }
+        self.remote_main = !multi && remote;
+        self.grid = multi;
         self.ensure_subs();
+        if let Some(k) = self.remote_ctx() {
+            self.request_meta(&k);
+        }
+    }
+
+    /// Explizite Ansichtswahl: Einzel-Chat ist immer lokal, Raster bleibt Kachelansicht.
+    pub fn set_grid(&mut self, grid: bool) {
+        self.remote_main = false;
+        self.grid = grid;
+    }
+
+    /// Sichtbarer Hinweis im Hauptchat, ohne die Backend-Konfiguration zu verändern.
+    pub fn remote_connection_hint(&self, k: &InstKey) -> Option<String> {
+        let b = self.backend(&k.0)?;
+        if self.demo {
+            return None;
+        }
+        if !b.cfg.enabled {
+            Some(format!("{} ist deaktiviert. Bitte das Häkchen in der Backends-Leiste setzen.", b.cfg.label))
+        } else if b.api.is_none() || b.link != Some(true) {
+            Some(format!("{} ist nicht verbunden. Verbindung und Häkchen in der Backends-Leiste prüfen.", b.cfg.label))
+        } else {
+            None
+        }
     }
 
     /// Für alle gewählten Instanzen ein Abonnement (Verlauf + live) halten.

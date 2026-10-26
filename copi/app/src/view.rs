@@ -1146,11 +1146,11 @@ impl App {
         let remote = self.remote_single().and_then(|k| self.net.inst(&k).map(|i| i.info.state));
         let busy = if remote.is_some() { false } else { self.busy };
         let remote_moving = matches!(remote, Some(State::Busy | State::Waiting));
-        let job = match &self.active_job {
+        let job = if remote.is_some() { None } else { match &self.active_job {
             Some(Job::Bash(_)) => Some("Shell-Befehl läuft"),
             Some(Job::Cli(_)) => Some("pi-Befehl läuft"),
             None => None,
-        };
+        }};
         let moving = busy || job.is_some() || remote_moving;
         let chip_w: f32 = if busy { 320.0 } else { 200.0 };
         let total: f32 = chip_w + if moving { 2.0 * (7.5 + 10.0) } else { 0.0 };
@@ -1203,7 +1203,7 @@ impl App {
         // Seitentext nur, wenn neben dem Chip Platz bleibt; keine Werkzeug-Rohdetails.
         let left = Rect::from_min_max(r.min, pos2(center.left() - 12.0, r.max.y));
         let counts = self.activity.counts_label();
-        if left.width() > 60.0 && !counts.is_empty() {
+        if remote.is_none() && left.width() > 60.0 && !counts.is_empty() {
             let mut l = ui.new_child(egui::UiBuilder::new().max_rect(left).layout(Layout::left_to_right(Align::Center)));
             l.add(Label::new(txt(counts, 12.0, DIM)).truncate()).on_hover_text(if self.activity.active {
                 "Dieser Lauf: Runden (Modellantworten), abgeschlossene Werkzeugaufrufe, Fehler und wartende Nachrichten"
@@ -1396,9 +1396,6 @@ impl App {
 
     /// Genau eine Remote-Instanz im Hauptbereich: der Einzel-Chat zeigt dann sie (statt des lokalen pi).
     pub fn remote_single(&self) -> Option<crate::net::InstKey> {
-        if !self.store.net_visible || self.net.selected.len() != 1 {
-            return None;
-        }
         self.net.remote_ctx()
     }
 
@@ -1452,14 +1449,18 @@ impl App {
                 self.net.answer(k, &aid, r);
             }
         }
+        let connection_hint = self.net.remote_connection_hint(k);
         let Some(inst) = self.net.inst_mut(k) else { return };
         let items = &mut inst.chat.items;
         ScrollArea::vertical().id_salt(("rlog", &k.0, &k.1)).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
             Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 12.0;
                 let maxw = ui.available_width().min(900.0);
+                if let Some(hint) = &connection_hint {
+                    ui.add(Label::new(txt(hint, 13.0, WARN)).wrap());
+                }
                 if items.is_empty() {
-                    ui.add(Label::new(txt(if live { "Noch kein Verlauf." } else { "Verlauf wird geladen …" }, 13.0, DIM)));
+                    ui.add(Label::new(txt(if connection_hint.is_some() { "Verlauf derzeit nicht verfügbar." } else if live { "Noch kein Verlauf." } else { "Verlauf wird geladen …" }, 13.0, DIM)));
                 }
                 let n = items.len();
                 for (i, it) in items.iter_mut().enumerate() {

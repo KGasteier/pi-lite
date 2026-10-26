@@ -1307,6 +1307,7 @@ impl App {
             self.net.open_remote_session(s);
             return;
         }
+        self.net.set_grid(false);
         if self.busy {
             self.note("pi arbeitet noch – erst abbrechen.", true);
             return;
@@ -2003,6 +2004,10 @@ impl App {
     }
 
     pub fn abort_current(&mut self) {
+        if let Some(k) = self.remote_single() {
+            self.net.abort(&k);
+            return;
+        }
         match self.active_job.clone() {
             Some(Job::Cli(_)) => self.cli.cancel(),
             Some(Job::Bash(_)) => self.send(json!({"type": "abort_bash"})),
@@ -2428,8 +2433,7 @@ impl App {
                 // Eine Server-Instanz im Hauptbereich: gleiche Optik wie der Einzel-Chat, Signalfarbe Cyan.
                 self.store.net_visible = true;
                 self.net.demo_scene();
-                self.net.selected = vec![("hub-buero".into(), "a1b2".into())];
-                self.net.grid = true;
+                self.net.select(("hub-buero".into(), "a1b2".into()), false);
                 self.local_speech_ok = true;
                 self.local_speech_on = true;
                 for l in [
