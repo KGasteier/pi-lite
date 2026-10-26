@@ -234,6 +234,14 @@ async fn net_send(state: State<'_, NetState>, backend: String, inst: String, cmd
     net_run(state, move |n| n.send(&backend, &inst, &cmd)).await
 }
 #[tauri::command]
+async fn net_sessions(state: State<'_, NetState>, backend: String) -> Result<serde_json::Value, String> {
+    net_run(state, move |n| n.sessions(&backend)).await
+}
+#[tauri::command]
+async fn net_delete_session(state: State<'_, NetState>, backend: String, path: String) -> Result<(), String> {
+    net_run(state, move |n| n.delete_session(&backend, &path)).await
+}
+#[tauri::command]
 async fn net_dirs(state: State<'_, NetState>, backend: String, path: Option<String>) -> Result<serde_json::Value, String> {
     net_run(state, move |n| n.dirs(&backend, path.as_deref())).await
 }
@@ -265,7 +273,7 @@ fn main() {
         .manage(preview::CacheLock::default())
         .manage(InfoCache::default())
         .manage(cli::Cli::default())
-        .invoke_handler(tauri::generate_handler![shared_bookmarks_read, shared_bookmarks_update, shared_bookmarks_seed, start_pi, send, list_sessions, delete_session, inventory::inventory, inventory::read_config, inventory::save_config, preview::preview, preview::cached_purpose, preview::clear_previews, preview::explain_usage, folders::resume_session, folders::work_locations, folders::list_folders, editor::open_in_editor, editor::existing_paths, material::material_browser, material::material_preview, material::pick_material, material::prepare_material, media::media_routes, media::analyze_media, cli::pi_cli, cli::pi_cli_cancel, cli::startup_info, cli::latest_version, cli::open_changelog, cli::quit_app, net_backends, net_save_backend, net_delete_backend, net_list, net_create, net_remove, net_restart, net_send, net_dirs, net_subscribe, net_unsubscribe])
+        .invoke_handler(tauri::generate_handler![shared_bookmarks_read, shared_bookmarks_update, shared_bookmarks_seed, start_pi, send, list_sessions, delete_session, inventory::inventory, inventory::read_config, inventory::save_config, preview::preview, preview::cached_purpose, preview::clear_previews, preview::explain_usage, folders::resume_session, folders::work_locations, folders::list_folders, editor::open_in_editor, editor::existing_paths, material::material_browser, material::material_preview, material::pick_material, material::prepare_material, media::media_routes, media::analyze_media, cli::pi_cli, cli::pi_cli_cancel, cli::startup_info, cli::latest_version, cli::open_changelog, cli::quit_app, net_backends, net_save_backend, net_delete_backend, net_list, net_create, net_remove, net_restart, net_send, net_dirs, net_sessions, net_delete_session, net_subscribe, net_unsubscribe])
         .build(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen")
         .run(|app, ev| {

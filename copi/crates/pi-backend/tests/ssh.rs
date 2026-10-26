@@ -110,3 +110,45 @@ fn ssh_failure_is_reported_not_hung() {
     assert!(e.contains("Permission denied") && e.contains("ssh-copy-id"), "{e}");
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// Live gegen einen echten Server: `SSH_LIVE=medienhaus@host cargo test -p pi-backend --test ssh -- --ignored live --nocapture`.
+/// Nutzt nur den Mock-Harness (keine Modellkosten) und beendet den Hub danach per PID.
+#[test]
+#[ignore]
+fn live_server_bootstrap_sessions_and_mock_chat() {
+    let _g = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(t) = std::env::var("SSH_LIVE") else { return };
+    let (user, host) = t.split_once('@').unwrap_or(("", &t));
+    let mut cfg = BackendCfg::ssh("live", "Live", host, user);
+    cfg.hub_port = 19500 + (std::process::id() % 300) as u16;
+    let be = cfg.build().unwrap();
+    let listed = be.list();
+    eprintln!("list: {listed:?}");
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        listed.as_ref().unwrap();
+        let dirs = be.files().dirs(None).unwrap();
+        eprintln!("Wurzel: {} ({} Ordner)", dirs.path, dirs.dirs.len());
+        let sessions = be.files().sessions().unwrap();
+        eprintln!("Sessions: {}", sessions.len());
+        let ev: Arc<Mutex<Vec<Tagged>>> = Default::default();
+        let e2 = ev.clone();
+        let sink: EvSink = Arc::new(move |t| e2.lock().unwrap().push(t));
+        let inst = be.create(&Spec { harness: Some("mock".into()), cwd: dirs.path.clone(), ..Default::default() }).unwrap();
+        let _s = be.subscribe(&inst.id, sink).unwrap();
+        be.harness(&inst.id).unwrap().send(&serde_json::json!({"type":"prompt","message":"Hallo"})).unwrap();
+        for _ in 0..200 {
+            if ev.lock().unwrap().iter().any(|t| matches!(&t.ev, Ev::Line(l) if l.contains("agent_settled"))) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(ev.lock().unwrap().iter().any(|t| matches!(&t.ev, Ev::Line(l) if l.contains("agent_settled"))));
+        be.remove(&inst.id).unwrap();
+    }));
+    drop(be);
+    // Hub auf dem Server per PID beenden (nur unseren, über die pid-Datei).
+    let _ = std::process::Command::new("ssh").args(["-o", "BatchMode=yes", &t, "kill $(cat ~/.local/share/pi-hub/pid) 2>/dev/null; true"]).status();
+    if let Err(e) = res {
+        std::panic::resume_unwind(e);
+    }
+}

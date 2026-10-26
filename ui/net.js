@@ -220,7 +220,24 @@
     // Kacheln, deren Instanz es nicht mehr gibt, verschwinden.
     selected = selected.filter(k => { const [b, i] = splitKey(k); return model.insts[b]?.[i]; });
     renderBar(); renderGrid();
+    if (typeof loadRemoteSessions === "function") loadRemoteSessions();
   }
+
+  // ---------- Remote-Sessions aus der Sessionliste (app.js) ----------
+  root.PiNet.isStarted = () => started;
+  root.PiNet.model = model;
+  // Läuft die Session schon in einer Instanz → diese Kachel; sonst Instanz mit `session` anlegen
+  // (der Hub prüft, dass der Pfad im Session-Ordner liegt). Danach Rasteransicht zeigen.
+  root.PiNet.openRemoteSession = async (s) => {
+    let info = root.RemoteSessions?.openInstance(model.insts, s);
+    if (!info) {
+      try { info = await call("net_create", { backend: s.backend, spec: { harness: "pi", cwd: s.cwd, session: s.path } }); }
+      catch (e) { say("Remote-Session öffnen: " + e, "error"); return; }
+      (model.insts[s.backend] ??= {})[info.id] = info;
+    }
+    const k = tileKey(s.backend, info.id); if (!selected.includes(k)) selected = toggleTile(selected, k);
+    setMode(true); renderBar(); renderGrid();
+  };
 
   on("net-ev", (msg) => {
     const e = msg.payload;

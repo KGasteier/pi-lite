@@ -85,6 +85,18 @@ fn hub_transport_end_to_end() {
     be.files().delete_session(&ss[0].path).unwrap();
     assert!(!sf.exists() && be.files().sessions().unwrap().is_empty());
 
+    // Remote-Session öffnen (copi/pi-lite: create mit `session`): außerhalb → 403;
+    // offen in einer Instanz → Löschen 409; nach dem Entfernen der Instanz löschbar.
+    let outside = Spec { harness: Some("mock".into()), cwd: cwd.clone(), session: Some("/etc/passwd".into()), ..Default::default() };
+    assert!(be.create(&outside).unwrap_err().contains("403"));
+    std::fs::write(&sf, "{\"type\":\"session\"}\n").unwrap();
+    let sp = std::fs::canonicalize(&sf).unwrap().to_string_lossy().to_string();
+    let open = be.create(&Spec { harness: Some("mock".into()), cwd: cwd.clone(), session: Some(sp.clone()), ..Default::default() }).unwrap();
+    assert_eq!(open.session.as_deref(), Some(sp.as_str()));
+    assert!(be.files().delete_session(&sp).unwrap_err().contains("409"));
+    be.remove(&open.id).unwrap();
+    be.files().delete_session(&sp).unwrap();
+
     let ev: Arc<Mutex<Vec<Tagged>>> = Default::default();
     let e2 = ev.clone();
     let sink: EvSink = Arc::new(move |t| e2.lock().unwrap().push(t));

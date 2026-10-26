@@ -789,3 +789,15 @@ fn remote_session_delete_confirms_and_protects_open_ones() {
     assert!(a.dialogs.is_empty(), "keine Rückfrage für offene Session");
     assert!(a.net.remote_sessions.iter().any(|s| s.path == open.path));
 }
+
+/// Szene `remotecolors` (Screenshot-Grundlage): Remote-Bookmark Limette, Farbwähler offen, zeichnet ohne Panik.
+#[test]
+fn remotecolors_scene_opens_ten_color_picker_for_remote_card() {
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    a.demo_scene("remotecolors");
+    let r = a.net.remote_sessions[0].key();
+    assert_eq!(a.store.bookmark_color(&r), 8);
+    assert!(egui::Popup::is_id_open(&a.ctx, egui::Id::new(("bookmark-color", &r)).with("popup")));
+    prompt_frame(&mut a, vec![]);
+}

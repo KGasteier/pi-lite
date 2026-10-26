@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="net.css">
 <style>
   :root { --bg:#1e2227; --panel:#262b30; --fg:#e6edf3; --dim:#8b949e; --acc:#e454c4; --user:var(--acc); --err:#ef476f; --ok:#18a999;
-    --cat:#6aa5e8; }
+    --cat:#6aa5e8; --remote:#4fb8d8; }
   body[data-cat=sessions] { --cat:#6aa5e8; } body[data-cat=extensions] { --cat:#5ec2a0; } body[data-cat=skills] { --cat:#e0b25a; }
   body[data-cat=agents] { --cat:#b08cf0; } body[data-cat=harnesses] { --cat:#e68f6e; }
   * { box-sizing:border-box; }
@@ -24,6 +24,13 @@
   #bookmarkfilter[data-mode=on], #bookmarkfilter[data-mode=colors] { color:var(--cat); background:color-mix(in srgb, var(--cat) 22%, #2b3137); box-shadow:inset 0 0 0 1px var(--cat); }
   #bookmarkfilter[data-mode=on] svg path, #bookmarkfilter[data-mode=colors] svg path { fill:currentColor; }
   .sessempty { color:var(--dim); font-size:12px; padding:10px 4px; }
+  #sidetools #originfilter { width:auto; padding:0 7px; font-size:11px; color:var(--dim); margin-left:auto; white-space:nowrap; }
+  #sidetools #originfilter:not([data-origin=all]) { color:var(--remote); background:color-mix(in srgb, var(--remote) 22%, #2b3137); box-shadow:inset 0 0 0 1px var(--remote); }
+  #sidetools #originfilter + #bookmarkfilter { margin-left:0; }
+  /* Remote-Sessions: eigene Farbe, Streifen links, Badge mit dem Servernamen (wie copi). */
+  .sess.remote { --cat:var(--remote); }
+  .sess.remote::before { content:""; position:absolute; left:1px; top:8px; bottom:8px; width:3px; border-radius:2px; background:var(--remote); }
+  .sess .srv { display:inline-block; max-width:90px; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; margin-right:6px; padding:0 5px; border-radius:6px; background:var(--remote); color:#1e2227; font-size:10px; line-height:14px; }
   #sidehint { font-size:11px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #sessions { flex:1; overflow:auto; padding:4px 8px; }
   #inventory { flex:1; overflow:auto; padding:8px; }
@@ -92,7 +99,8 @@
   .sess .bookmark { position:absolute; right:6px; bottom:5px; padding:3px; width:23px; height:23px; display:flex; align-items:center; justify-content:center; background:transparent; color:var(--dim); }
   .sess .bookmark[aria-pressed=true] { color:var(--cat); }
   .sess .bookmark svg { width:13px; height:16px; }
-  .sess .m { padding-right:52px; }
+  /* Platz für Aktionen (right:56px, 2×23px) + Bookmark/Farbe, sonst überlappt der Stift die Metazeile. */
+  .sess .m { padding-right:104px; }
   .sess { padding:8px 12px; cursor:pointer; margin:5px 0; }
   .sess.active { border-color:var(--cat); background:color-mix(in srgb, var(--cat) 22%, #2b3137); }
   .sess .t { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -356,6 +364,7 @@
   <div id="sidetools" role="group" aria-label="Seitenleistenaktionen">
     <button id="newsess" title="Neue Session (Alt+N)">+ Neu</button>
     <span id="sidehint" hidden>Lokale Einträge</span>
+ <button id="originfilter" data-origin="all" title="Lokale und Remote-Sessions · Klick: nur lokal" aria-label="Herkunftsfilter umschalten">Alle Orte</button>
     <button id="bookmarkfilter" class="iconbutton" data-mode="off" aria-pressed="false" title="Bookmark-Filter: alle Sessions, reine Zeitsortierung" aria-label="Bookmark-Filter umschalten"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.5h7v11L8 11l-3.5 2.5z"/></svg><span class="filterlabel">Alle</span></button>
   </div>
   </div>
@@ -457,6 +466,7 @@ Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhal
 <script src="run-activity.js"></script>
 <script src="shared-bookmarks.js"></script>
 <script src="session-bookmarks.js"></script>
+<script src="remote-sessions.js"></script>
 <script src="commands.js"></script>
 <script src="slash.js"></script>
 <script src="dialog-selection.js"></script>

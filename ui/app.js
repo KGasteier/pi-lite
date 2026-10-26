@@ -536,6 +536,33 @@ const cwdPicker = makePicker("cwd", $("cwdoptions"), () => {
 
 // ---------- Sessions ----------
 let sessionList = [];
+// Remote-Sessions je Backend (net_sessions); erst geladen, wenn die Netzansicht verbunden
+// hat oder der Herkunftsfilter „Remote“ gewählt wird – der Einzel-Chat baut sonst keine
+// Verbindungen zu Servern auf.
+let remoteSessions = [];
+const ORIGIN_KEY = "pi-lite.session-origin.v1";
+const sessionOrigin = () => RemoteSessions.normalizeOrigin(localStorage.getItem(ORIGIN_KEY));
+function syncOriginButton() {
+  const o = sessionOrigin(), b = $("originfilter");
+  b.dataset.origin = o; b.textContent = RemoteSessions.ORIGIN_LABELS[o]; b.title = RemoteSessions.ORIGIN_TITLES[o];
+}
+async function loadRemoteSessions() {
+  let backends = [];
+  try { backends = (await invoke("net_backends")).filter(b => b.remote && b.connected); } catch (e) { console.warn(e); return; }
+  const lists = await Promise.all(backends.map(async b => {
+    try { return RemoteSessions.fromHub(b.id, b.label, await invoke("net_sessions", { backend: b.id })); }
+    catch (e) { console.warn("net_sessions", b.id, e); return []; }
+  }));
+  remoteSessions = lists.flat();
+  renderSessions();
+}
+$("originfilter").onclick = () => {
+  const next = RemoteSessions.nextOrigin(sessionOrigin());
+  try { localStorage.setItem(ORIGIN_KEY, next); } catch {}
+  syncOriginButton(); renderSessions();
+  if (next === "remote") loadRemoteSessions();
+};
+syncOriginButton();
 const bookmarkSync = createSharedBookmarkSync(invoke, window.localStorage,
   () => { syncBookmarkFilterButton(); renderSessions(); },
   message => toast("Bookmark-Synchronisierung fehlgeschlagen: " + message, "error"));
@@ -569,9 +596,10 @@ $("bookmarkfilter").onclick = () => {
 };
 function toggleSessionBookmark(s) {
   try {
-    sessionBookmarks.toggle(s.path);
+    const key = RemoteSessions.sessionKey(s);
+    sessionBookmarks.toggle(key);
     renderSessions();
-    const row = [...$("sessions").children].find(el => el.dataset.path === s.path);
+    const row = [...$("sessions").children].find(el => el.dataset.key === key);
     (row?.querySelector(".bookmark") || $("bookmarkfilter")).focus();
   } catch(e) { toast("Bookmark konnte nicht gespeichert werden.", "error"); }
 }
@@ -586,9 +614,9 @@ function openBookmarkColorPicker(s, anchor) {
   BookmarkPalette.COLORS.forEach((color, i) => {
     const button = document.createElement("button");
     button.title = categoryNames.nameOf(i); button.setAttribute("aria-label", categoryNames.nameOf(i));
-    button.setAttribute("role", "menuitemradio"); button.setAttribute("aria-checked", String(sessionBookmarks.colorOf(s.path) === i));
+    button.setAttribute("role", "menuitemradio"); button.setAttribute("aria-checked", String(sessionBookmarks.colorOf(RemoteSessions.sessionKey(s)) === i));
     button.style.cssText = `background:${color.hex};width:26px;height:26px;border-radius:50%`;
-    button.onclick = () => { try { sessionBookmarks.setColor(s.path, i); closeMenu(false); renderSessions(); } catch { toast("Farbe konnte nicht gespeichert werden.", "error"); } };
+    button.onclick = () => { try { sessionBookmarks.setColor(RemoteSessions.sessionKey(s), i); closeMenu(false); renderSessions(); } catch { toast("Farbe konnte nicht gespeichert werden.", "error"); } };
     menu.appendChild(button);
     const input = document.createElement("input"); input.value = categoryNames.nameOf(i); input.maxLength = 48;
     input.setAttribute("aria-label", "Kategorie " + (i + 1) + " benennen");
@@ -609,7 +637,7 @@ function openBookmarkColorPicker(s, anchor) {
     const buttons = [...menu.querySelectorAll("button")], i = buttons.indexOf(document.activeElement);
     if (e.key === "Escape") { e.preventDefault(); closeMenu(); }
     if (i >= 0 && ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.key)) {
-      e.preventDefault(); buttons[(i + (e.key === "ArrowLeft" || e.key === "ArrowUp" ? 7 : 1)) % 8].focus();
+      e.preventDefault(); buttons[(i + (e.key === "ArrowLeft" || e.key === "ArrowUp" ? buttons.length - 1 : 1)) % buttons.length].focus();
     }
   };
 }
@@ -621,26 +649,39 @@ function fmtDate(sec) {
 }
 function markActive() {
   for (const el of $("sessions").children)
-    el.classList.toggle("active", el.dataset.path === state.sessionFile);
+    el.classList.toggle("active", el.dataset.backend ? remoteOpen({ backend: el.dataset.backend, path: el.dataset.path }) : el.dataset.path === state.sessionFile);
 }
 async function loadSessions() {
   try { sessionList = await invoke("list_sessions"); } catch (e) { console.warn(e); return; }
   renderSessions();
+  if (remoteSessions.length || sessionOrigin() === "remote" || window.PiNet?.isStarted?.()) loadRemoteSessions();
 }
+const isRemote = s => !!s.backend;
+const remoteOpen = s => isRemote(s) && !!RemoteSessions.openInstance(window.PiNet?.model?.insts, s);
+const sessActive = s => isRemote(s) ? remoteOpen(s) : s.path === state.sessionFile;
 function renderSessions() {
   const box = $("sessions"); box.innerHTML = "";
-  const filtered = sessionBookmarks.visible(sessionList);
-  syncBookmarkFilterButton();
-  if (!filtered.length && sessionList.length) {
+  const all = RemoteSessions.filterOrigin(sessionList.concat(remoteSessions), sessionOrigin());
+  const filtered = sessionBookmarks.visible(all);
+  syncBookmarkFilterButton(); syncOriginButton();
+  if (!all.length && sessionOrigin() === "remote") {
+    const e = document.createElement("div"); e.className = "sessempty";
+    e.textContent = "Keine Remote-Sessions. Backend in der Rasteransicht hinzufügen bzw. verbinden."; box.appendChild(e);
+  }
+  if (!filtered.length && all.length) {
     const e = document.createElement("div"); e.className = "sessempty";
     e.textContent = "Keine Bookmarks. Lesezeichen-Knopf oben zeigt wieder alle Sessions."; box.appendChild(e);
   }
   for (const s of sessionBookmarks.sort(filtered)) {
     const d = document.createElement("div");
-    d.className = "sess"; d.dataset.path = s.path;
+    const key = RemoteSessions.sessionKey(s), remote = isRemote(s);
+    d.className = remote ? "sess remote" : "sess"; d.dataset.path = s.path; d.dataset.key = key;
+    if (remote) d.dataset.backend = s.backend;
     const t = document.createElement("div"); t.className = "t"; t.textContent = s.name || s.title || "(leer)";
     const m = document.createElement("div"); m.className = "m";
-    m.textContent = `${fmtDate(s.modified)} · ${s.cwd.replace(/^\/home\/[^/]+/, "~")}`;
+    if (remote) { const srv = document.createElement("span"); srv.className = "srv"; srv.textContent = s.backendLabel; m.appendChild(srv); }
+    m.append(`${fmtDate(s.modified)} · ${s.cwd.replace(/^\/home\/[^/]+/, "~")}`);
+    if (remote) d.title = `Remote-Session auf „${s.backendLabel}“\n${s.path}`;
     const act = document.createElement("span"); act.className = "act";
     const mk = (txt, tip, fn) => { const b = document.createElement("button"); b.textContent = txt; b.title = tip;
       b.onclick = (e) => { e.stopPropagation(); fn(); }; b.onkeydown = (e) => e.stopPropagation(); return b; };
@@ -648,18 +689,18 @@ function renderSessions() {
     // Umbenennen-Button ist auf jeder Sessionkarte dauerhaft sichtbar (nicht nur bei Hover
     // oder nur für die aktive Session); Löschen bleibt eine separate Aktion und ist nur für
     // nicht-aktive Sessions verfügbar (die aktive Session kann nicht gelöscht werden).
-    act.append(icon(mk("", "Umbenennen (F2)", () => renameSession(s)), "rename", "Session umbenennen", '<path d="M3 13l1-3.5L10.5 3 13 5.5 6.5 12z M9.5 4l2.5 2.5"/>'));
-    if (s.path !== state.sessionFile) act.append(icon(mk("", "Löschen (Entf)", () => removeSession(s)), "delete", "Session löschen", '<path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.6 8.5h4.8l.6-8.5"/>'));
+    act.append(icon(mk("", remote ? "Umbenennen ist für Remote-Sessions noch nicht verfügbar" : "Umbenennen (F2)", () => renameSession(s)), "rename", "Session umbenennen", '<path d="M3 13l1-3.5L10.5 3 13 5.5 6.5 12z M9.5 4l2.5 2.5"/>'));
+    if (!sessActive(s)) act.append(icon(mk("", remote ? "Remote-Session auf dem Server löschen" : "Löschen (Entf)", () => removeSession(s)), "delete", "Session löschen", '<path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.6 8.5h4.8l.6-8.5"/>'));
     const bookmark = mk("", "Bookmark", () => toggleSessionBookmark(s));
     bookmark.className = "bookmark";
-    const marked = sessionBookmarks.has(s.path);
-    bookmark.style.color = marked ? BookmarkPalette.hex(sessionBookmarks.colorOf(s.path)) : "";
+    const marked = sessionBookmarks.has(key);
+    bookmark.style.color = marked ? BookmarkPalette.hex(sessionBookmarks.colorOf(key)) : "";
     if (marked) {
       const colorButton = mk("", "Bookmark-Farbe · zehn Standardfarben", () => openBookmarkColorPicker(s, colorButton));
       colorButton.setAttribute("aria-label", "Bookmark-Farbe wählen");
       colorButton.style.cssText = "position:absolute;right:31px;bottom:6px;width:21px;height:21px;padding:0;background:transparent";
-      colorButton.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="5" fill="${BookmarkPalette.hex(sessionBookmarks.colorOf(s.path))}"/></svg>`;
-      colorButton.title = categoryNames.nameOf(sessionBookmarks.colorOf(s.path)) + " · Kategorie wählen/benennen";
+      colorButton.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="5" fill="${BookmarkPalette.hex(sessionBookmarks.colorOf(key))}"/></svg>`;
+      colorButton.title = categoryNames.nameOf(sessionBookmarks.colorOf(key)) + " · Kategorie wählen/benennen";
       d.appendChild(colorButton);
     }
     bookmark.setAttribute("aria-pressed", String(marked));
@@ -672,7 +713,7 @@ function renderSessions() {
     d.onclick = () => openSession(s);
     d.oncontextmenu = (e) => { e.preventDefault(); sessMenu(s, e.clientX, e.clientY, d); };
     d.onkeydown = (e) => sessKey(e, s, d);
-    bindPreview(d, { path: s.path, name: s.name || s.title || "Session" });
+    if (!remote) bindPreview(d, { path: s.path, name: s.name || s.title || "Session" });
     box.appendChild(d);
   }
   markActive();
@@ -686,7 +727,7 @@ function closeMenu(refocus = true) {
 }
 function sessMenu(s, x, y, from) {
   closeMenu(false); ctxFrom = from;
-  const active = s.path === state.sessionFile;
+  const active = sessActive(s);
   const m = document.createElement("div"); m.id = "ctx"; m.setAttribute("role", "menu");
   const item = (label, hint, fn) => {
     const b = document.createElement("button"); b.setAttribute("role", "menuitem");
@@ -694,7 +735,7 @@ function sessMenu(s, x, y, from) {
     b.onclick = () => { closeMenu(false); fn(); }; m.appendChild(b);
   };
   if (!active) item("Öffnen", "↵", () => openSession(s));
-  item(sessionBookmarks.has(s.path) ? "Bookmark entfernen" : "Als Bookmark markieren", "", () => toggleSessionBookmark(s));
+  item(sessionBookmarks.has(RemoteSessions.sessionKey(s)) ? "Bookmark entfernen" : "Als Bookmark markieren", "", () => toggleSessionBookmark(s));
   item("Session umbenennen", "R", () => renameSession(s));
   if (!active) item("Löschen …", "⌫", () => removeSession(s));
   document.body.appendChild(m);
@@ -716,7 +757,7 @@ addEventListener("blur", () => closeMenu(false));
 function sessKey(e, s, el) {
   if (e.target !== el || e.metaKey && e.key !== "Backspace" || e.altKey) return;
   const rows = [...$("sessions").querySelectorAll(".sess")], i = rows.indexOf(el);
-  const active = s.path === state.sessionFile;
+  const active = sessActive(s);
   switch (e.key) {
     case "Enter": case " ": e.preventDefault(); openSession(s); break;
     case "ArrowDown": e.preventDefault(); rows[Math.min(i + 1, rows.length - 1)].focus(); break;
@@ -752,6 +793,7 @@ document.addEventListener("keydown", (e) => {
   }
 });
 async function renameSession(s) {
+  if (isRemote(s)) { toast("Umbenennen ist für Remote-Sessions noch nicht verfügbar.", "warning"); return; }
   if (s.path !== state.sessionFile) {
     if (busy) { note("pi arbeitet noch – erst abbrechen.", true); return; }
     await openSession(s);
@@ -767,6 +809,15 @@ async function renameCurrent() {
   await refreshState(); loadSessions();
 }
 async function removeSession(s) {
+  if (isRemote(s)) {
+    if (remoteOpen(s)) { toast("Session ist auf dem Server noch in einer Instanz offen.", "warning"); return; }
+    const r = await ask({ method: "confirm", title: "Remote-Session löschen?", message: (s.title || "(leer)") + `\n\nDie Datei auf „${s.backendLabel}“ wird endgültig gelöscht.` });
+    if (!r || !r.confirmed) return;
+    try { await invoke("net_delete_session", { backend: s.backend, path: s.path }); }
+    catch (e) { toast(/409/.test(String(e)) ? "Session ist auf dem Server noch in einer Instanz offen." : String(e), "error"); }
+    loadRemoteSessions();
+    return;
+  }
   const r = await ask({ method: "confirm", title: "Session löschen?", message: (s.name || s.title || "(leer)") + "\n\nDie Datei wird endgültig gelöscht." });
   if (!r || !r.confirmed) return;
   try { await invoke("delete_session", { path: s.path }); } catch (e) { note(String(e), true); }
@@ -806,6 +857,7 @@ $("toggle").onclick = () => {
 };
 async function openSession(s) {
   document.body.classList.remove("side-open");
+  if (isRemote(s)) { await window.PiNet?.openRemoteSession?.(s); return; }
   if (busy) { note("pi arbeitet noch – erst abbrechen.", true); return; }
   // Der Arbeitsordner gehört zur Session, daher pi dort neu starten.
   $("cwd").value = s.cwd; cwdPicker.sync();
@@ -1027,6 +1079,7 @@ async function changeSideView() {
   $("inventory").hidden = view === "sessions";
   $("newsess").hidden = view !== "sessions";
   $("bookmarkfilter").hidden = view !== "sessions";
+  $("originfilter").hidden = view !== "sessions";
   $("sidehint").hidden = view === "sessions";
   $("sidetitle").textContent = $("sideview").selectedOptions[0].textContent;
   if (view === "sessions") return;

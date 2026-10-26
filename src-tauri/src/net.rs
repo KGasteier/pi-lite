@@ -325,6 +325,24 @@ impl Net {
         Ok(json!({"path": d.path, "parent": d.parent, "dirs": d.dirs}))
     }
 
+    /// Sessions eines Remote-Backends (`[{path, modified, cwd, title}]`, `modified` in ms).
+    /// Das lokale Backend liefert hier nichts – lokale Sessions kommen über `list_sessions`.
+    pub fn sessions(&self, backend: &str) -> Result<Value, String> {
+        if backend == "lokal" {
+            return Ok(json!([]));
+        }
+        let list = self.get(backend)?.files().sessions()?;
+        Ok(Value::Array(list.into_iter().map(|s| json!({"path": s.path, "modified": s.modified_ms, "cwd": s.cwd, "title": s.title})).collect()))
+    }
+
+    /// Remote-Session löschen; der Hub prüft Sandbox, Token und offene Instanzen (409).
+    pub fn delete_session(&self, backend: &str, path: &str) -> Result<(), String> {
+        if backend == "lokal" {
+            return Err("lokale Sessions über delete_session löschen".into());
+        }
+        self.get(backend)?.files().delete_session(path)
+    }
+
     /// Verlauf + Live-Ereignisse einer Instanz; ersetzt ein bestehendes Abo derselben Instanz.
     /// `tag` stammt von der Oberfläche und steht in jedem Ereignis (alte Abos bleiben so erkennbar).
     pub fn subscribe(&self, backend: &str, inst: &str, tag: &str) -> Result<(), String> {
@@ -378,6 +396,17 @@ mod tests {
         let v = tagged_json(&t(Ev::Info(info)), "watch", None);
         assert_eq!((v["kind"].as_str(), v["info"]["state"].as_str(), v["info"]["asks"].as_u64()), (Some("info"), Some("waiting"), Some(2)));
         assert!(v.get("tag").is_none());
+    }
+
+    #[test]
+    fn sessions_local_is_empty_and_unknown_backend_errors() {
+        let (e, _) = collect();
+        let net = Net::new(e, false);
+        net.start(vec![BackendCfg::local()]);
+        assert_eq!(net.sessions("lokal").unwrap(), json!([]));
+        assert!(net.delete_session("lokal", "/x.jsonl").is_err(), "lokal nie über net_delete_session");
+        assert!(net.sessions("gibt-es-nicht").unwrap_err().contains("nicht verbunden"));
+        assert!(net.delete_session("gibt-es-nicht", "/x.jsonl").is_err());
     }
 
     #[test]

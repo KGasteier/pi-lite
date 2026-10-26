@@ -2297,6 +2297,16 @@ impl App {
                 self.store.net_visible = true;
                 self.net.demo_scene();
             }
+            "remotecolors" => {
+                // Remote-Sessions in der Liste, eine mit Bookmark (Limette) und offenem Farbwähler (10 Farben).
+                self.net.demo_scene();
+                self.net.grid = false;
+                if let Some(r) = self.net.remote_sessions.first().cloned() {
+                    self.store.toggle_bookmark(&r.key());
+                    self.store.set_bookmark_color(&r.key(), 8);
+                    egui::Popup::open_id(&self.ctx, egui::Id::new(("bookmark-color", &r.key())).with("popup"));
+                }
+            }
             "start" => {
                 self.clear_log();
                 self.render_start_card();

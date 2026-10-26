@@ -17,6 +17,10 @@
 // ungültige Farbe zu persistieren. Index 0 wird nie explizit gespeichert (spart Platz,
 // entspricht dem Verhalten vor Einführung der Farbauswahl: ein Bookmark ohne eigenen
 // Eintrag ist die Vorgabefarbe).
+// Remote-Sessions tragen `key` (`remote:<backend>:<pfad>`, siehe ui/remote-sessions.js);
+// Filter/Sortierung nutzen ihn statt `path`, damit gleiche Pfade auf zwei Rechnern nicht
+// dasselbe Bookmark teilen. Lokale Sessions haben keinen `key` → weiterhin der Pfad.
+const keyOf = s => s.key || s.path;
 const PALETTE_SIZE = 10;
 const FILTER_MODES = ["off", "on", "colors"];
 function normalizeColorIndex(index) {
@@ -69,7 +73,7 @@ function createSessionBookmarks(storage) {
       const next = FILTER_MODES[(FILTER_MODES.indexOf(filterMode) + 1) % FILTER_MODES.length];
       return this.setFilterMode(next);
     },
-    visible: sessions => { reload(); return filterMode === "off" ? [...sessions] : sessions.filter(s => paths.has(s.path)); },
+    visible: sessions => { reload(); return filterMode === "off" ? [...sessions] : sessions.filter(s => paths.has(keyOf(s))); },
     toggle(path) {
       reload();
       const next = new Set(paths);
@@ -88,8 +92,8 @@ function createSessionBookmarks(storage) {
     sort(sessions) {
       reload();
       return [...sessions].sort((a, b) =>
-        (filterMode === "colors" ? this.colorOf(a.path) - this.colorOf(b.path) : 0) ||
-        b.modified - a.modified || a.path.localeCompare(b.path));
+        (filterMode === "colors" ? this.colorOf(keyOf(a)) - this.colorOf(keyOf(b)) : 0) ||
+        b.modified - a.modified || keyOf(a).localeCompare(keyOf(b)));
     },
     // Farbindex eines Bookmarks (0..=9, normalisiert); 0 (Vorgabe) auch für nicht markierte
     // Pfade oder Pfade ohne eigenen Eintrag.

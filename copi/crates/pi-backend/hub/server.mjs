@@ -172,7 +172,7 @@ class PiInstance extends Instance {
 
 // --- Harness: mock (Demo/Tests ohne Modellkosten) ---
 class MockInstance extends Instance {
-  start() { this.timers = new Set(); this.setState('idle'); this.emit({ type: 'response', id: 'hub-state', command: 'get_state', success: true, data: { model: { id: 'mock-1', provider: 'demo' }, sessionName: this.name, sessionFile: path.join(SESSIONS_DIR, 'mock', this.id + '.jsonl'), isStreaming: false } }); }
+  start() { this.timers = new Set(); this.setState('idle'); this.emit({ type: 'response', id: 'hub-state', command: 'get_state', success: true, data: { model: { id: 'mock-1', provider: 'demo' }, sessionName: this.name, sessionFile: this.session || path.join(SESSIONS_DIR, 'mock', this.id + '.jsonl'), isStreaming: false } }); }
   later(ms, fn) { const t = setTimeout(() => { this.timers.delete(t); fn(); }, ms); this.timers.add(t); }
   write(cmd) {
     if (cmd.type === 'abort') { for (const t of this.timers) clearTimeout(t); this.timers.clear(); this.emit({ type: 'agent_end', messages: [], willRetry: false }); this.emit({ type: 'agent_settled', aborted: true }); return; }
