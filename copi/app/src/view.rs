@@ -1328,11 +1328,12 @@ impl App {
         let inner = prompt.shrink2(vec2(8.0, 6.0));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::Min)));
         let size = self.store.output_size.min(16.0);
+        let hint = if self.remote_single().is_some() { REMOTE_PLACEHOLDER } else { PLACEHOLDER };
         let out = ScrollArea::vertical().id_salt("prompt-scroll").auto_shrink([false, false]).max_height(inner.height()).show(&mut child, |ui| {
             egui::TextEdit::multiline(&mut self.prompt)
                 .id(prompt_id())
                 .frame(Frame::NONE)
-                .hint_text(txt(if self.remote_single().is_some() { REMOTE_PLACEHOLDER } else { PLACEHOLDER }, size, DIM))
+                .hint_text(txt(hint, size, DIM))
                 .font(FontId::proportional(size))
                 .text_color(FG)
                 .desired_width(inner.width() - 26.0)
