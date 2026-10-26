@@ -144,6 +144,25 @@ fn live_server_bootstrap_sessions_and_mock_chat() {
         }
         assert!(ev.lock().unwrap().iter().any(|t| matches!(&t.ev, Ev::Line(l) if l.contains("agent_settled"))));
         be.remove(&inst.id).unwrap();
+
+        // Echtes pi (RPC-Start + get_state, KEIN Prompt → keine Modellkosten, keine vorhandene Session).
+        let ev2: Arc<Mutex<Vec<Tagged>>> = Default::default();
+        let e3 = ev2.clone();
+        let sink2: EvSink = Arc::new(move |t| e3.lock().unwrap().push(t));
+        let pi = be.create(&Spec { harness: Some("pi".into()), cwd: dirs.path.clone(), ..Default::default() }).unwrap();
+        let _s2 = be.subscribe(&pi.id, sink2).unwrap();
+        be.harness(&pi.id).unwrap().send(&serde_json::json!({"id":"live","type":"get_state"})).unwrap();
+        let got = |ev: &Arc<Mutex<Vec<Tagged>>>| ev.lock().unwrap().iter().any(|t| matches!(&t.ev, Ev::Line(l) if l.contains("\"get_state\"") && l.contains("\"success\":true")));
+        for _ in 0..300 {
+            if got(&ev2) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let info = be.list().unwrap().into_iter().find(|i| i.id == pi.id);
+        eprintln!("pi get_state: {} · Instanz {:?}", got(&ev2), info.map(|i| i.state));
+        assert!(got(&ev2), "echtes pi antwortet nicht auf get_state");
+        be.remove(&pi.id).unwrap();
     }));
     drop(be);
     // Hub auf dem Server per PID beenden (nur unseren, über die pid-Datei).

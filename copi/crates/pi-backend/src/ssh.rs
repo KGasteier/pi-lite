@@ -71,10 +71,16 @@ pub fn hub_port(c: &BackendCfg) -> u16 {
     if c.hub_port == 0 { 8787 } else { c.hub_port }
 }
 
+/// Über `ssh host befehl` fehlt die Login-Umgebung: Versionsmanager (mise, asdf), npm-global und
+/// ~/.local/bin stehen dann nicht im PATH, `pi` wäre für den Hub unsichtbar. Angehängt, damit ein
+/// System-Node nicht überschattet wird.
+pub const REMOTE_PATH: &str = r#"for d in "$HOME/.local/share/mise/shims" "$HOME/.asdf/shims" "$HOME/.local/bin" "$HOME/.npm-global/bin" "$HOME/.volta/bin" "$HOME/.bun/bin" "$HOME/.cargo/bin"; do [ -d "$d" ] && case ":$PATH:" in *":$d:"*) ;; *) PATH="$PATH:$d" ;; esac; done; export PATH"#;
+
 /// Skript für die entfernte Shell: Hub installieren (stdin = server.mjs), starten, Token melden.
 pub fn remote_script(port: u16) -> String {
     format!(
         r#"set -e
+{path}
 D="$HOME/.local/share/pi-hub"; mkdir -p "$D"
 command -v node >/dev/null 2>&1 || {{ echo "ERR:node nicht gefunden" >&2; exit 3; }}
 node -e 'process.exit(+process.versions.node.split(".")[0] < 20 ? 1 : 0)' || {{ echo "ERR:Node 20 oder neuer nötig" >&2; exit 3; }}
@@ -91,7 +97,8 @@ fi
 T="${{XDG_CONFIG_HOME:-$HOME/.config}}/pi-hub/token"
 i=0; while [ ! -s "$T" ] && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i+1)); done
 echo "TOKEN:$(cat "$T")"
-"#
+"#,
+        path = REMOTE_PATH
     )
 }
 
@@ -285,6 +292,26 @@ impl Instances for SshInstances {
 
 #[cfg(test)]
 mod tests {
+    /// Regression: `pi` aus mise/asdf/npm-global muss über die Nicht-Login-Shell von `ssh host cmd` auffindbar sein.
+    #[test]
+    fn remote_path_finds_pi_in_version_manager_shims() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = std::env::temp_dir().join(format!("pi-path-{}", std::process::id()));
+        let shims = home.join(".local/share/mise/shims");
+        std::fs::create_dir_all(&shims).unwrap();
+        let pi = shims.join("pi");
+        std::fs::write(&pi, "#!/bin/sh\necho pi\n").unwrap();
+        std::fs::set_permissions(&pi, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let run = |script: &str| {
+            let o = std::process::Command::new("sh").arg("-c").arg(script).env("HOME", &home).env("PATH", "/usr/bin:/bin").output().unwrap();
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        assert_eq!(run("command -v pi || echo FEHLT"), "FEHLT", "Ausgangslage: ohne Erweiterung unsichtbar");
+        assert_eq!(run(&format!("set -e\n{REMOTE_PATH}\ncommand -v pi")), shims.join("pi").to_string_lossy());
+        assert!(remote_script(1234).contains(REMOTE_PATH), "Bootstrap setzt den PATH vor dem Hub-Start");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     use super::*;
 
     #[test]
