@@ -15,6 +15,7 @@ pub mod media;
 pub mod preview;
 pub mod rpc;
 pub mod sessions;
+pub mod ssh;
 #[cfg(test)]
 mod test_support;
 pub mod winshim;
@@ -65,6 +66,14 @@ pub fn agent_dir() -> Option<std::path::PathBuf> {
 
 pub fn home() -> Option<std::path::PathBuf> {
     std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok().map(Into::into)
+}
+
+/// `~/…` zu einem absoluten Pfad auflösen.
+pub fn tilde_expand(path: &str) -> String {
+    match (path.strip_prefix("~/"), home()) {
+        (Some(rest), Some(h)) => h.join(rest).to_string_lossy().into(),
+        _ => path.to_string(),
+    }
 }
 
 /// `~` für das Home-Verzeichnis einsetzen (Anzeige).

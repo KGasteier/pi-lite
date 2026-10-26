@@ -575,6 +575,20 @@ mod net {
     }
 
     #[test]
+    fn ssh_form_validation() {
+        let list = vec![BackendCfg::local()];
+        let f = |name: &str, host: &str, user: &str| BackendForm { ssh: true, name: name.into(), host: host.into(), user: user.into(), ..Default::default() };
+        assert!(validate_form(&f("", "h", "u"), &list).unwrap_err().contains("Namen"));
+        assert!(validate_form(&f("A", "", "u"), &list).unwrap_err().contains("Host"));
+        assert!(validate_form(&f("A", "-oProxyCommand=x", "u"), &list).unwrap_err().contains("Host"));
+        assert!(validate_form(&f("A", "u@h", ""), &list).unwrap_err().contains("Host"));
+        assert!(validate_form(&f("A", "h", "-oX"), &list).unwrap_err().contains("Benutzer"));
+        let c = validate_form(&f("Uni Server", " 194.95.203.142 ", "medienhaus"), &list).unwrap();
+        assert_eq!((c.kind.as_str(), c.id.as_str(), c.host.as_str(), c.user.as_str()), ("ssh", "ssh-uni-server", "194.95.203.142", "medienhaus"));
+        assert!(c.token.is_empty() && c.url.is_empty(), "SSH-Backends speichern kein Token");
+    }
+
+    #[test]
     fn errors_are_friendly_and_never_contain_token() {
         let m = friendly_err("Hub: Token abgelehnt (401)", "supergeheim");
         assert!(m.contains("401") && !m.contains("supergeheim"));

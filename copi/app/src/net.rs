@@ -296,6 +296,11 @@ pub struct BackendForm {
     pub url: String,
     pub token: String,
     pub token_env: String,
+    /// `true` = SSH-Server (Host/Benutzer/Schlüssel), sonst Hub per URL.
+    pub ssh: bool,
+    pub host: String,
+    pub user: String,
+    pub identity_file: String,
     /// Ein Token ist bereits gespeichert (leeres Feld = unverändert).
     pub has_token: bool,
     pub error: Option<String>,
@@ -394,8 +399,47 @@ pub fn slug_id(name: &str, taken: &[&str]) -> String {
     id
 }
 
+/// SSH-Variante des Formulars: kein Token (der Hub erzeugt es auf dem Server), nur Zugangsdaten für `ssh`.
+fn validate_ssh(f: &BackendForm, list: &[BackendCfg]) -> Result<BackendCfg, String> {
+    let (name, host, user, key) = (f.name.trim(), f.host.trim(), f.user.trim(), f.identity_file.trim());
+    if name.is_empty() {
+        return Err("Bitte einen Namen angeben.".into());
+    }
+    if host.is_empty() || host.contains(char::is_whitespace) || host.starts_with('-') || host.contains('@') {
+        return Err("Bitte einen Host angeben (IP, Name, Tailscale-Name oder Alias aus ~/.ssh/config), ohne Benutzer und Leerzeichen.".into());
+    }
+    if user.contains(char::is_whitespace) || user.starts_with('-') || user.contains('@') {
+        return Err("Der Benutzername ist ungültig.".into());
+    }
+    if key.starts_with('-') {
+        return Err("Der Schlüsselpfad ist ungültig.".into());
+    }
+    if list.iter().enumerate().any(|(i, b)| Some(i) != f.edit && b.label.trim().eq_ignore_ascii_case(name)) {
+        return Err(format!("Es gibt schon ein Backend „{name}“."));
+    }
+    let old = f.edit.and_then(|i| list.get(i));
+    let id = match old {
+        Some(o) => o.id.clone(),
+        None => {
+            let taken: Vec<&str> = list.iter().map(|b| b.id.as_str()).collect();
+            slug_id(name, &taken).replacen("hub-", "ssh-", 1)
+        }
+    };
+    let mut cfg = BackendCfg::ssh(&id, name, host, user);
+    cfg.identity_file = key.into();
+    if let Some(o) = old {
+        cfg.enabled = o.enabled;
+        cfg.ssh_port = o.ssh_port;
+        cfg.hub_port = o.hub_port;
+    }
+    Ok(cfg)
+}
+
 /// Prüft das Formular und baut die Konfiguration. `list` ist die aktuelle Backendliste.
 pub fn validate_form(f: &BackendForm, list: &[BackendCfg]) -> Result<BackendCfg, String> {
+    if f.ssh {
+        return validate_ssh(f, list);
+    }
     let name = f.name.trim();
     let url = f.url.trim().trim_end_matches('/');
     let token = f.token.trim();
@@ -793,7 +837,7 @@ impl NetState {
 
     pub fn open_form(&mut self, edit: Option<usize>) {
         let f = match edit.and_then(|i| self.backends.get(i)) {
-            Some(b) => BackendForm { edit, name: b.cfg.label.clone(), url: b.cfg.url.clone(), token: String::new(), token_env: b.cfg.token_env.clone(), has_token: !b.cfg.token.is_empty(), error: None },
+            Some(b) => BackendForm { edit, ssh: b.cfg.kind == "ssh", host: b.cfg.host.clone(), user: b.cfg.user.clone(), identity_file: b.cfg.identity_file.clone(), name: b.cfg.label.clone(), url: b.cfg.url.clone(), token: String::new(), token_env: b.cfg.token_env.clone(), has_token: !b.cfg.token.is_empty(), error: None },
             None => BackendForm { url: "http://".into(), ..Default::default() },
         };
         self.form = Some(f);

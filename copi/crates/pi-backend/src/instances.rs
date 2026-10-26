@@ -454,17 +454,32 @@ fn enc(s: &str) -> String {
     o
 }
 
+/// Zugangstoken, das sich nachträglich setzen lässt (SSH-Backends kennen es erst nach dem Aufbau).
+#[derive(Clone, Default)]
+pub struct Tok(Arc<Mutex<String>>);
+impl Tok {
+    pub fn new(s: &str) -> Self {
+        Tok(Arc::new(Mutex::new(s.into())))
+    }
+    pub fn get(&self) -> String {
+        self.0.lock().unwrap().clone()
+    }
+    pub fn set(&self, s: &str) {
+        *self.0.lock().unwrap() = s.into();
+    }
+}
+
 pub struct HubInstances {
     id: String,
     label: String,
     base: String,
-    token: String,
+    token: Tok,
     files: HubFiles,
 }
 
 struct HubFiles {
     base: String,
-    token: String,
+    token: Tok,
 }
 
 fn http_agent(streaming: bool) -> ureq::Agent {
@@ -507,8 +522,12 @@ fn hub_err(e: ureq::Error) -> String {
 impl HubInstances {
     /// `base`: z. B. `http://127.0.0.1:8787` (ohne Schrägstrich am Ende).
     pub fn new(id: &str, label: &str, base: &str, token: &str) -> Self {
+        Self::with_tok(id, label, base, Tok::new(token))
+    }
+
+    pub fn with_tok(id: &str, label: &str, base: &str, token: Tok) -> Self {
         let base = base.trim_end_matches('/').to_string();
-        Self { id: id.into(), label: label.into(), base: base.clone(), token: token.into(), files: HubFiles { base, token: token.into() } }
+        Self { id: id.into(), label: label.into(), base: base.clone(), token: token.clone(), files: HubFiles { base, token } }
     }
 
     /// Liest einen SSE-Stream bis zum Ende; `on` bekommt (id, JSON). Fehler = Verbindung weg.
@@ -539,13 +558,14 @@ impl HubInstances {
 
     /// Hält einen Stream mit Wiederaufbau am Leben (Backoff 0,5 s … 5 s), bis `stop` gesetzt ist.
     fn keep(&self, path: String, inst: String, sink: EvSink, stop: Arc<AtomicBool>, instance_stream: bool) {
-        let (base, token, backend) = (self.base.clone(), self.token.clone(), self.id.clone());
+        let (base, tok, backend) = (self.base.clone(), self.token.clone(), self.id.clone());
         std::thread::spawn(move || {
             let mut last: Option<String> = None;
             let mut delay = 500u64;
             let tag = |inst: &str, ev| Tagged { backend: backend.clone(), inst: inst.to_string(), ev };
             let mut up = false;
             while !stop.load(Ordering::SeqCst) {
+                let token = tok.get();
                 // Stand des Hubs vor dem Aufbau: bis dahin ist es Verlauf, danach live.
                 let target = if instance_stream {
                     get_json(&base, &token, "/api/instances").ok().and_then(|l| l.as_array()?.iter().find(|i| i["id"] == inst.as_str())?["seq"].as_u64())
@@ -626,19 +646,19 @@ impl HubInstances {
 
 struct HubHarness {
     base: String,
-    token: String,
+    token: Tok,
     id: String,
 }
 impl Harness for HubHarness {
     fn send(&self, cmd: &Value) -> Result<(), String> {
-        call_json("POST", &self.base, &self.token, &format!("/api/instances/{}/rpc", enc(&self.id)), Some(cmd)).map(|_| ())
+        call_json("POST", &self.base, &self.token.get(), &format!("/api/instances/{}/rpc", enc(&self.id)), Some(cmd)).map(|_| ())
     }
 }
 
 impl Files for HubFiles {
     fn dirs(&self, path: Option<&str>) -> Result<DirList, String> {
         let q = path.map(|p| format!("?path={}", enc(p))).unwrap_or_default();
-        let v = get_json(&self.base, &self.token, &format!("/api/dirs{q}"))?;
+        let v = get_json(&self.base, &self.token.get(), &format!("/api/dirs{q}"))?;
         Ok(DirList {
             path: v["path"].as_str().unwrap_or("").into(),
             parent: v["parent"].as_str().map(String::from),
@@ -646,7 +666,7 @@ impl Files for HubFiles {
         })
     }
     fn sessions(&self) -> Result<Vec<SessionRef>, String> {
-        let v = get_json(&self.base, &self.token, "/api/sessions")?;
+        let v = get_json(&self.base, &self.token.get(), "/api/sessions")?;
         Ok(v.as_array().into_iter().flatten().filter_map(|s| Some(SessionRef { path: s["path"].as_str()?.into(), modified_ms: s["modified"].as_f64()? as u64 })).collect())
     }
 }
@@ -662,19 +682,19 @@ impl Instances for HubInstances {
         true
     }
     fn list(&self) -> Result<Vec<InstanceInfo>, String> {
-        let v = get_json(&self.base, &self.token, "/api/instances")?;
+        let v = get_json(&self.base, &self.token.get(), "/api/instances")?;
         Ok(v.as_array().into_iter().flatten().filter_map(InstanceInfo::from_json).collect())
     }
     fn create(&self, spec: &Spec) -> Result<InstanceInfo, String> {
         let b = json!({"name": spec.name, "harness": spec.harness, "cwd": spec.cwd, "session": spec.session});
-        let v = call_json("POST", &self.base, &self.token, "/api/instances", Some(&b))?;
+        let v = call_json("POST", &self.base, &self.token.get(), "/api/instances", Some(&b))?;
         InstanceInfo::from_json(&v).ok_or_else(|| "Hub: ungültige Antwort".into())
     }
     fn remove(&self, id: &str) -> Result<(), String> {
-        call_json("DELETE", &self.base, &self.token, &format!("/api/instances/{}", enc(id)), None).map(|_| ())
+        call_json("DELETE", &self.base, &self.token.get(), &format!("/api/instances/{}", enc(id)), None).map(|_| ())
     }
     fn restart(&self, id: &str) -> Result<(), String> {
-        call_json("POST", &self.base, &self.token, &format!("/api/instances/{}/restart", enc(id)), None).map(|_| ())
+        call_json("POST", &self.base, &self.token.get(), &format!("/api/instances/{}/restart", enc(id)), None).map(|_| ())
     }
     fn subscribe(&self, id: &str, sink: EvSink) -> Result<Subscription, String> {
         let stop = Arc::new(AtomicBool::new(false));

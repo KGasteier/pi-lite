@@ -437,7 +437,13 @@ impl App {
                 ui.set_width(width - 32.0);
                 ui.spacing_mut().item_spacing.y = 8.0;
                 ui.add(Label::new(bold(if f.edit.is_some() { "Backend bearbeiten" } else { "Backend hinzufügen" }, 16.0, FG)));
-                ui.add(Label::new(txt("pi-hub-Server: Adresse und Zugangstoken. Das Token wird nur in backends.json (Modus 0600) gespeichert.", 12.0, DIM)).wrap());
+                if f.edit.is_none() {
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut f.ssh, true, "SSH-Server");
+                        ui.radio_value(&mut f.ssh, false, "pi-hub per URL");
+                    });
+                }
+                ui.add(Label::new(txt(if f.ssh { "SSH-Server (auch Tailscale-Name): copi richtet den pi-hub dort selbst ein und verbindet über einen Tunnel. Zugang nur per Schlüssel/ssh-agent – Passwörter fragt copi nie ab." } else { "pi-hub-Server: Adresse und Zugangstoken. Das Token wird nur in backends.json (Modus 0600) gespeichert." }, 12.0, DIM)).wrap());
                 let field = |ui: &mut Ui, label: &str, v: &mut String, hint: &str, pw: bool| {
                     ui.label(txt(label, 12.0, FG));
                     ui.add(egui::TextEdit::singleline(v).hint_text(hint).password(pw).desired_width(f32::INFINITY).font(FontId::proportional(13.5)))
@@ -446,10 +452,16 @@ impl App {
                 if f.edit.is_none() && f.name.is_empty() && !r.has_focus() && !ui.memory(|m| m.focused().is_some()) {
                     r.request_focus();
                 }
-                field(ui, "URL", &mut f.url, "http://127.0.0.1:8787", false);
-                let hint = if f.has_token { "gespeichert – leer lassen für unverändert" } else { "Token des Hubs" };
-                field(ui, "Token", &mut f.token, hint, true);
-                field(ui, "oder Umgebungsvariable mit dem Token", &mut f.token_env, "z. B. PI_HUB_TOKEN", false);
+                if f.ssh {
+                    field(ui, "Host", &mut f.host, "z. B. 194.95.203.142 oder mein-server.tailnet.ts.net", false);
+                    field(ui, "Benutzer", &mut f.user, "z. B. medienhaus", false);
+                    field(ui, "Schlüsseldatei (optional)", &mut f.identity_file, "~/.ssh/id_ed25519", false);
+                } else {
+                    field(ui, "URL", &mut f.url, "http://127.0.0.1:8787", false);
+                    let hint = if f.has_token { "gespeichert – leer lassen für unverändert" } else { "Token des Hubs" };
+                    field(ui, "Token", &mut f.token, hint, true);
+                    field(ui, "oder Umgebungsvariable mit dem Token", &mut f.token_env, "z. B. PI_HUB_TOKEN", false);
+                }
                 if let Some(e) = &f.error {
                     ui.add(Label::new(txt(e.clone(), 12.5, ERR)).wrap());
                 }

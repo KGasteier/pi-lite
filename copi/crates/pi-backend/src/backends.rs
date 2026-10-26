@@ -1,4 +1,4 @@
-//! Konfiguration der Backends (lokal und Hub-Server), gemeinsam für copi, pi-lite und cocopi.
+//! Konfiguration der Backends (lokal, Hub-Server, SSH), gemeinsam für copi, pi-lite und cocopi.
 //! Datei: `<config>/copi/backends.json`. Das Token steht im Klartext in der Datei (Modus 0600);
 //! alternativ `token_env` mit dem Namen einer Umgebungsvariable.
 use crate::instances::{HubInstances, Instances, LocalInstances};
@@ -9,7 +9,7 @@ use std::sync::Arc;
 pub struct BackendCfg {
     pub id: String,
     pub label: String,
-    /// "local" oder "hub"
+    /// "local", "hub" oder "ssh"
     pub kind: String,
     #[serde(default)]
     pub url: String,
@@ -20,6 +20,18 @@ pub struct BackendCfg {
     /// Beim Start verbinden und anzeigen.
     #[serde(default = "yes")]
     pub enabled: bool,
+    /// Nur `kind == "ssh"`: Host (oder Alias/Tailscale-Name), Benutzer, optionaler Schlüssel,
+    /// SSH-Port (0 = Standard) und Hub-Port auf dem Server (0 = 8787).
+    #[serde(default)]
+    pub host: String,
+    #[serde(default)]
+    pub user: String,
+    #[serde(default)]
+    pub identity_file: String,
+    #[serde(default)]
+    pub ssh_port: u16,
+    #[serde(default)]
+    pub hub_port: u16,
 }
 fn yes() -> bool {
     true
@@ -27,10 +39,14 @@ fn yes() -> bool {
 
 impl BackendCfg {
     pub fn local() -> Self {
-        Self { id: "lokal".into(), label: "Dieser Rechner".into(), kind: "local".into(), url: String::new(), token: String::new(), token_env: String::new(), enabled: true }
+        Self { id: "lokal".into(), label: "Dieser Rechner".into(), kind: "local".into(), url: String::new(), token: String::new(), token_env: String::new(), enabled: true, host: String::new(), user: String::new(), identity_file: String::new(), ssh_port: 0, hub_port: 0 }
     }
     pub fn hub(id: &str, label: &str, url: &str, token: &str) -> Self {
-        Self { id: id.into(), label: label.into(), kind: "hub".into(), url: url.into(), token: token.into(), token_env: String::new(), enabled: true }
+        Self { id: id.into(), label: label.into(), kind: "hub".into(), url: url.into(), token: token.into(), token_env: String::new(), enabled: true, host: String::new(), user: String::new(), identity_file: String::new(), ssh_port: 0, hub_port: 0 }
+    }
+    /// SSH-Backend: Hub wird auf dem Server eingerichtet, Zugang per Tunnel.
+    pub fn ssh(id: &str, label: &str, host: &str, user: &str) -> Self {
+        Self { id: id.into(), label: label.into(), kind: "ssh".into(), host: host.into(), user: user.into(), ..Self::local() }
     }
     /// Baut das Backend; Hub-Konfiguration ohne URL ist ein Fehler.
     pub fn build(&self) -> Result<Arc<dyn Instances>, String> {
@@ -43,6 +59,7 @@ impl BackendCfg {
                 let token = if self.token_env.is_empty() { self.token.clone() } else { std::env::var(&self.token_env).unwrap_or_default() };
                 Ok(Arc::new(HubInstances::new(&self.id, &self.label, &self.url, &token)))
             }
+            "ssh" => Ok(Arc::new(crate::ssh::SshInstances::new(self)?)),
             k => Err(format!("unbekannte Backend-Art: {k}")),
         }
     }
@@ -108,8 +125,9 @@ mod tests {
     fn build_rejects_bad_url_and_kind() {
         assert!(BackendCfg::hub("h", "H", "server:8787", "t").build().is_err());
         let mut c = BackendCfg::local();
-        c.kind = "ssh".into();
+        c.kind = "ftp".into();
         assert!(c.build().is_err());
+        assert!(BackendCfg::ssh("s", "S", "", "u").build().is_err());
         assert!(BackendCfg::hub("h", "H", "http://server:8787/", "t").build().unwrap().is_remote());
     }
 
