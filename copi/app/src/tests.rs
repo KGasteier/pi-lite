@@ -433,6 +433,42 @@ mod net {
     }
 
     #[test]
+    fn tool_output_is_kept_for_the_block_view() {
+        let mut n = state();
+        let k = key("hub-buero", "c3d4");
+        for l in [
+            r#"{"type":"tool_execution_start","toolCallId":"x","toolName":"read","args":{"path":"a.rs"}}"#,
+            r#"{"type":"tool_execution_update","toolCallId":"x","partialResult":{"content":[{"type":"text","text":"teil"}]}}"#,
+            r#"{"type":"tool_execution_end","toolCallId":"x","isError":false,"result":{"content":[{"type":"text","text":"fertig"}]}}"#,
+        ] {
+            n.on_ev(ev("hub-buero", "c3d4", Ev::Line(l.into())));
+        }
+        let c = &n.inst(&k).unwrap().chat;
+        assert!(matches!(&c.items[0], NetItem::Tool { out, done: true, path: Some(p), .. } if out == "fertig" && p == "a.rs"));
+    }
+
+    #[test]
+    fn answer_is_queued_for_speech_only_when_live_and_not_aborted() {
+        let mut n = state();
+        let k = key("hub-buero", "c3d4");
+        let run = |n: &mut NetState, lines: &[&str]| {
+            for l in lines {
+                n.on_ev(ev("hub-buero", "c3d4", Ev::Line((*l).into())));
+            }
+        };
+        let msg = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Fertig."}]}}"#;
+        let user = r#"{"type":"message_start","message":{"role":"user","content":"x"}}"#;
+        // Verlauf wird nachgeladen (noch nicht live): nichts sprechen.
+        run(&mut n, &[user, msg, r#"{"type":"agent_settled"}"#]);
+        assert_eq!(n.inst(&k).unwrap().chat.speak, None);
+        n.on_ev(ev("hub-buero", "c3d4", Ev::Live));
+        run(&mut n, &[user, msg, r#"{"type":"agent_settled"}"#]);
+        assert_eq!(n.inst_mut(&k).unwrap().chat.speak.take().as_deref(), Some("Fertig."));
+        run(&mut n, &[user, msg, r#"{"type":"agent_settled","aborted":true}"#]);
+        assert_eq!(n.inst(&k).unwrap().chat.speak, None);
+    }
+
+    #[test]
     fn line_events_become_chat_items() {
         let mut n = state();
         let k = key("hub-buero", "c3d4");
@@ -858,4 +894,24 @@ fn remote_instance_drives_workspace_and_models() {
     a.net.grid = true;
     crate::setup_ctx(&a.ctx);
     prompt_frame(&mut a, vec![]);
+}
+
+#[test]
+fn remote_mode_switches_signal_color_and_routes_input() {
+    let mut a = demo();
+    assert!(a.remote_single().is_none());
+    a.demo_scene("remote");
+    let k = a.remote_single().expect("eine Remote-Instanz gewählt");
+    crate::theme::set_remote_mode(true);
+    assert_eq!(crate::theme::acc(), crate::theme::REMOTE);
+    crate::theme::set_remote_mode(false);
+    assert_eq!(crate::theme::acc(), crate::theme::ACC);
+    // Normales Eingabefeld → Remote-Instanz (Rückfrage Confirm bleibt unberührt, Prompt wird gesendet).
+    a.prompt = "weiter".into();
+    a.submit();
+    assert!(a.prompt.is_empty());
+    assert!(a.net.inst(&k).is_some());
+    // Zwei gewählte Instanzen = Raster, kein Einzel-Chat.
+    a.net.selected.push(("lokal".into(), "l1".into()));
+    assert!(a.remote_single().is_none());
 }

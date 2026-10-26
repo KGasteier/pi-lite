@@ -12,6 +12,7 @@ use crate::commands::*;
 use crate::icons::{self, IconStyle};
 use crate::run_activity;
 use crate::theme::*;
+use pi_backend::instances::State;
 use crate::virtual_log;
 
 type Act = Box<dyn FnOnce(&mut App)>;
@@ -29,6 +30,7 @@ pub const NET_PLACEHOLDER: [&str; 3] = [
     "Noch ohne Funktion – es wird nichts gesendet, empfangen oder gespeichert.",
     "Geplant: Präsenz, Dateien, Code und Prompts als Karten. Prompts landen nur nach ausdrücklicher Übernahme in der Eingabe.",
 ];
+const REMOTE_PLACEHOLDER: &str = "Nachricht an die Server-Instanz … (Enter = senden, Alt+Enter = Zeilenumbruch)";
 const PLACEHOLDER: &str = "Nachricht, /Befehl, !Shell oder pi update … (Enter = senden, Alt+Enter = Zeilenumbruch)";
 
 fn prompt_id() -> Id {
@@ -74,11 +76,11 @@ pub fn btn(ui: &mut Ui, text: &str, size: f32, pad: Vec2, min: Vec2, primary: bo
     let want = vec2((galley.size().x + 2.0 * pad.x).max(min.x), (galley.size().y + 2.0 * pad.y).max(min.y));
     let (rect, resp) = ui.allocate_exact_size(want, if enabled { Sense::click() } else { Sense::hover() });
     if ui.is_rect_visible(rect) {
-        let base = if primary { ACC } else { BTN };
+        let base = if primary { acc() } else { BTN };
         let hov = enabled && resp.hovered();
         let bg = if hov {
             if primary {
-                brighten(ACC, 1.12)
+                brighten(acc(), 1.12)
             } else {
                 Color32::from_rgb(0x55, 0x5c, 0x66)
             }
@@ -88,7 +90,7 @@ pub fn btn(ui: &mut Ui, text: &str, size: f32, pad: Vec2, min: Vec2, primary: bo
         let p = ui.painter();
         p.rect_filled(rect, 6, if enabled { bg } else { alpha(bg, 0.55) });
         if resp.has_focus() {
-            p.rect_stroke(rect.expand(2.0), 8, Stroke::new(2.0, ACC), StrokeKind::Outside);
+            p.rect_stroke(rect.expand(2.0), 8, Stroke::new(2.0, acc()), StrokeKind::Outside);
         }
         let pos = rect.center() - galley.size() / 2.0;
         p.galley_with_override_text_color(pos, galley, if enabled { fg } else { alpha(fg, 0.55) });
@@ -116,7 +118,7 @@ fn snake(ui: &mut Ui, mirror: bool) {
         let phase = ((t - n as f32 * 0.1).rem_euclid(0.8)) / 0.8;
         let a = if phase < 0.375 { 1.0 } else { 0.18 };
         let r = Rect::from_min_size(rect.min + vec2(cx * 4.5, cy * 4.5), vec2(3.0, 3.0));
-        ui.painter().rect_filled(r, 0, alpha(ACC, a));
+        ui.painter().rect_filled(r, 0, alpha(acc(), a));
     }
 }
 
@@ -133,6 +135,8 @@ impl App {
     pub fn draw(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         self.pump();
+        // Signalfarbe: Cyan, solange der Hauptbereich eine Server-Instanz zeigt (sonst Magenta).
+        set_remote_mode(self.remote_single().is_some());
         self.keys(&ctx);
 
         if self.store.side_visible {
@@ -208,7 +212,9 @@ impl App {
                     }
                 });
         }
-        if self.store.net_visible && self.net.grid {
+        if let Some(k) = self.remote_single() {
+            egui::CentralPanel::default().frame(Frame::new().fill(BG)).show(ui, |ui| self.remote_log(ui, &k));
+        } else if self.store.net_visible && self.net.grid {
             egui::CentralPanel::default().frame(Frame::new().fill(BG)).show(ui, |ui| self.net_grid(ui));
         } else {
             egui::CentralPanel::default().frame(Frame::new().fill(BG)).show(ui, |ui| self.log(ui));
@@ -582,7 +588,9 @@ impl App {
         }
         // 6. Globale Kürzel
         if plain(ctx, Key::Escape) {
-            if self.busy || self.active_job.is_some() {
+            if let Some(k) = self.remote_single() {
+                self.net.abort(&k);
+            } else if self.busy || self.active_job.is_some() {
                 self.abort_current();
             }
         } else if plain(ctx, Key::F1) {
@@ -818,7 +826,7 @@ impl App {
                 if ai_loading {
                     spinner(ui);
                 }
-                Frame::new().fill(mix(ACC, 0.10, PANEL)).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
+                Frame::new().fill(mix(acc(), 0.10, PANEL)).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
                     ui.add(Label::new(txt(ai_text, 12.5, FG)).wrap());
                     if !ai_method.is_empty() { ui.add(Label::new(txt(format!("LLM: {ai_method}"), 9.0, DIM)).wrap()); }
                 });
@@ -1038,7 +1046,7 @@ impl App {
         ui.allocate_ui_with_layout(vec2(ui.available_width(), 34.0), Layout::left_to_right(Align::Center), |ui| {
             ui.set_min_height(30.0);
             let side_on = self.store.side_visible;
-            if icons::icon_button(ui, vec2(32.0, 30.0), true, IconStyle { icon: 28.0, fg: ACC, ..Default::default() }, "Seitenleiste ein-/ausblenden", |p, r, c| {
+            if icons::icon_button(ui, vec2(32.0, 30.0), true, IconStyle { icon: 28.0, fg: acc(), ..Default::default() }, "Seitenleiste ein-/ausblenden", |p, r, c| {
                 let box_rect = r.shrink(0.5);
                 p.rect_stroke(box_rect, 2, Stroke::new(1.2, c), StrokeKind::Inside);
                 let x = box_rect.left() + box_rect.width() * 0.3;
@@ -1059,7 +1067,7 @@ impl App {
                     entries.push("skill:".into()); entries.sort_by_key(|s| s.to_lowercase()); entries.dedup();
                     for entry in entries {
                         if entry == "skill:" {
-                            ui.menu_button(RichText::new("/skill:").italics().color(ACC), |ui| {
+                            ui.menu_button(RichText::new("/skill:").italics().color(acc()), |ui| {
                                 for command in commands.iter().filter(|c| c.name.starts_with("skill:")) {
                                     if ui.button(format!("/{}", command.name)).clicked() { self.set_prompt(format!("/{} ", command.name)); ui.close(); }
                                 }
@@ -1135,23 +1143,36 @@ impl App {
     /// laufende Shell-/pi-Befehle und die Warteschlange.
     fn status_line(&mut self, ui: &mut Ui) {
         let r = ui.max_rect();
-        let busy = self.busy;
+        let remote = self.remote_single().and_then(|k| self.net.inst(&k).map(|i| i.info.state));
+        let busy = if remote.is_some() { false } else { self.busy };
+        let remote_moving = matches!(remote, Some(State::Busy | State::Waiting));
         let job = match &self.active_job {
             Some(Job::Bash(_)) => Some("Shell-Befehl läuft"),
             Some(Job::Cli(_)) => Some("pi-Befehl läuft"),
             None => None,
         };
-        let moving = busy || job.is_some();
+        let moving = busy || job.is_some() || remote_moving;
         let chip_w: f32 = if busy { 320.0 } else { 200.0 };
         let total: f32 = chip_w + if moving { 2.0 * (7.5 + 10.0) } else { 0.0 };
         let center = Rect::from_center_size(r.center(), vec2(total.min(r.width()), r.height()));
         let mut c = ui.new_child(egui::UiBuilder::new().max_rect(center).layout(Layout::left_to_right(Align::Center)));
         c.spacing_mut().item_spacing.x = 10.0;
         if moving { snake(&mut c, false); }
-        let phase = if busy { self.activity.phase_label(&self.status) } else { job.map(String::from).unwrap_or_else(|| self.status.clone()) };
-        let (fill, fg) = if busy { (ACC, BG) } else if job.is_some() { (mix(ACC, 0.18, PANEL), FG) } else { (PANEL, DIM) };
+        let phase = if busy {
+            self.activity.phase_label(&self.status)
+        } else if let Some(st) = remote {
+            match st {
+                State::Busy => "Remote arbeitet".to_string(),
+                State::Waiting => "Remote wartet auf Antwort".to_string(),
+                State::Exited => "Remote-Instanz beendet".to_string(),
+                _ => "Remote bereit".to_string(),
+            }
+        } else {
+            job.map(String::from).unwrap_or_else(|| self.status.clone())
+        };
+        let (fill, fg) = if busy { (acc(), BG) } else if job.is_some() || remote_moving { (mix(acc(), 0.18, PANEL), FG) } else { (PANEL, DIM) };
         let chip_inner = (chip_w - 2.0 * 8.0).min(c.available_width() - if moving { 17.5 } else { 0.0 }).max(40.0);
-        Frame::new().fill(fill).stroke(Stroke::new(1.0, if busy { ACC } else { BORDER })).corner_radius(6).inner_margin(Margin::symmetric(8, 2)).show(&mut c, |ui| {
+        Frame::new().fill(fill).stroke(Stroke::new(1.0, if busy { acc() } else { BORDER })).corner_radius(6).inner_margin(Margin::symmetric(8, 2)).show(&mut c, |ui| {
             ui.style_mut().override_font_id = Some(egui::FontId::new(12.0, egui::FontFamily::Name("status-regular".into())));
             ui.set_width(chip_inner);
             ui.set_height(18.0);
@@ -1214,14 +1235,16 @@ impl App {
                 self.ask(DialogKind::Editor, "Tokens & Kontext", "", vec![], &details, |_, _| {});
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let en = self.speech_available;
-                let st = IconStyle { bg: None, fg: if self.speech_on { ACC } else { DIM }, hover_fg: FG, icon: 14.0, radius: 5 };
-                let tip = if en { "Vorlesen stoppen" } else { "Keine Vorlesen-Extension geladen" };
+                let remote = self.remote_single().is_some();
+                let en = if remote { self.local_speech_ok } else { self.speech_available };
+                let speech_on = if remote { self.local_speech_on } else { self.speech_on };
+                let st = IconStyle { bg: None, fg: if speech_on { acc() } else { DIM }, hover_fg: FG, icon: 14.0, radius: 5 };
+                let tip = if en { "Vorlesen stoppen" } else if remote { "Piper oder Stimme fehlt lokal" } else { "Keine Vorlesen-Extension geladen" };
                 if icons::icon_button(ui, vec2(26.0, 22.0), en, IconStyle { fg: DIM, ..st }, tip, icons::stop).clicked() {
                     self.speech_command("stopp");
                 }
-                let on = self.speech_on;
-                let tip = if en { "Sprachausgabe ein-/ausschalten" } else { "Keine Vorlesen-Extension geladen" };
+                let on = speech_on;
+                let tip = if en { if remote { "Sprachausgabe der Remote-Antworten ein-/ausschalten (lokal gesprochen)" } else { "Sprachausgabe ein-/ausschalten" } } else if remote { "Piper oder Stimme fehlt lokal" } else { "Keine Vorlesen-Extension geladen" };
                 if icons::icon_button(ui, vec2(26.0, 22.0), en, st, tip, |p, r, c| icons::speaker(p, r, c, on)).clicked() {
                     self.speech_command(if on { "aus" } else { "an" });
                 }
@@ -1282,7 +1305,7 @@ impl App {
         let st = IconStyle { icon: 14.0, ..Default::default() };
         let row = |i: f32| Rect::from_min_size(tools.min + vec2(0.0, i * (h + 4.0)), vec2(32.0, h));
         let r0 = ui.interact(row(2.0), Id::new("t-add"), Sense::click()).on_hover_text("Material hinzufügen");
-        icons::paint_icon_button(ui, row(2.0), &r0, true, IconStyle { fg: Color32::WHITE, bg: Some(ACC), ..st }, icons::plus);
+        icons::paint_icon_button(ui, row(2.0), &r0, true, IconStyle { fg: Color32::WHITE, bg: Some(acc()), ..st }, icons::plus);
         let r1 = ui.interact(row(0.0), Id::new("t-up"), Sense::click()).on_hover_text("Ältere Eingabe (Alt+↑)");
         icons::paint_icon_button(ui, row(0.0), &r1, true, st, icons::up);
         let r2 = ui.interact(row(1.0), Id::new("t-down"), Sense::click()).on_hover_text("Neuere Eingabe (Alt+↓)");
@@ -1301,7 +1324,7 @@ impl App {
         self.prompt_rect = prompt;
         let focused = ui.memory(|m| m.has_focus(prompt_id()));
         ui.painter().rect_filled(prompt, 6, BG);
-        ui.painter().rect_stroke(prompt, 6, Stroke::new(1.0, if focused { ACC } else { BORDER }), StrokeKind::Inside);
+        ui.painter().rect_stroke(prompt, 6, Stroke::new(1.0, if focused { acc() } else { BORDER }), StrokeKind::Inside);
         let inner = prompt.shrink2(vec2(8.0, 6.0));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::Min)));
         let size = self.store.output_size.min(16.0);
@@ -1309,7 +1332,7 @@ impl App {
             egui::TextEdit::multiline(&mut self.prompt)
                 .id(prompt_id())
                 .frame(Frame::NONE)
-                .hint_text(txt(PLACEHOLDER, size, DIM))
+                .hint_text(txt(if self.remote_single().is_some() { REMOTE_PLACEHOLDER } else { PLACEHOLDER }, size, DIM))
                 .font(FontId::proportional(size))
                 .text_color(FG)
                 .desired_width(inner.width() - 26.0)
@@ -1354,14 +1377,162 @@ impl App {
         if btn(&mut c, "Senden", 14.0, vec2(8.0, 2.0), sr.size(), true, true).on_hover_text("Senden (Enter)").clicked() {
             self.submit();
         }
-        let running = self.busy || self.active_job.is_some();
+        let remote_k = self.remote_single();
+        let running = match &remote_k {
+            Some(k) => self.net.inst(k).is_some_and(|i| matches!(i.info.state, State::Busy | State::Waiting)),
+            None => self.busy || self.active_job.is_some(),
+        };
         let mut c = ui.new_child(egui::UiBuilder::new().max_rect(ar));
         if btn(&mut c, "Abbrechen", 13.0, vec2(8.0, 2.0), ar.size(), false, running).on_hover_text("Abbrechen (Esc)").clicked() {
-            self.abort_current();
+            match &remote_k {
+                Some(k) => self.net.abort(k),
+                None => self.abort_current(),
+            }
         }
     }
 
     // ---------- Chat ----------
+
+    /// Genau eine Remote-Instanz im Hauptbereich: der Einzel-Chat zeigt dann sie (statt des lokalen pi).
+    pub fn remote_single(&self) -> Option<crate::net::InstKey> {
+        if !self.store.net_visible || self.net.selected.len() != 1 {
+            return None;
+        }
+        self.net.remote_ctx()
+    }
+
+    /// Verlauf der gewählten Remote-Instanz im Look des Einzel-Chats (gleiche Blasen, Werkzeugblöcke, Markdown).
+    fn remote_log(&mut self, ui: &mut Ui, k: &crate::net::InstKey) {
+        use crate::net::NetItem;
+        let size = self.store.output_size;
+        let th = md_egui::Theme { size, ..Default::default() };
+        let mut acts: Vec<Act> = Vec::new();
+        let Some(inst) = self.net.inst_mut(k) else { return };
+        let (live, busy) = (inst.chat.live, inst.info.state == State::Busy);
+        // Rückfrage der Instanz (älteste zuerst) als Leiste unten; Antwort geht an die Instanz.
+        let ask = inst.chat.asks.first().map(|a| (a.id.clone(), a.kind, a.title.clone(), a.message.clone(), a.options.clone()));
+        let linked = self.net.backend(&k.0).is_some_and(|b| b.link != Some(false) && b.api.is_some());
+        if let Some((aid, kind, title, msg, options)) = ask {
+            let mut answer: Option<Value> = None;
+            egui::Panel::bottom("remote-ask").show_separator_line(false).frame(Frame::new().fill(alpha(WARN, 0.10)).stroke(Stroke::new(1.0, WARN)).inner_margin(Margin::symmetric(12, 8))).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.add(Label::new(txt(if title.is_empty() { "Rückfrage".to_string() } else { title }, 13.0, FG).strong()).truncate());
+                if !msg.is_empty() {
+                    ui.add(Label::new(txt(msg, 12.0, FG)).wrap());
+                }
+                ui.horizontal_wrapped(|ui| match kind {
+                    crate::net::AskKind::Confirm => {
+                        if btn(ui, "Ja", 12.5, vec2(12.0, 3.0), vec2(48.0, 0.0), true, linked).clicked() {
+                            answer = Some(json!({"confirmed": true}));
+                        }
+                        if btn(ui, "Nein", 12.5, vec2(12.0, 3.0), vec2(48.0, 0.0), false, linked).clicked() {
+                            answer = Some(json!({"confirmed": false}));
+                        }
+                    }
+                    crate::net::AskKind::Select => {
+                        for o in &options {
+                            if btn(ui, o, 12.5, vec2(8.0, 3.0), Vec2::ZERO, false, linked).clicked() {
+                                answer = Some(json!({"value": o}));
+                            }
+                        }
+                        if btn(ui, "Abbrechen", 12.0, vec2(8.0, 2.0), Vec2::ZERO, false, linked).clicked() {
+                            answer = Some(json!({"cancelled": true}));
+                        }
+                    }
+                    crate::net::AskKind::Input => {
+                        ui.label(txt("Antwort bitte unten in die Eingabe schreiben und Senden drücken.", 12.0, DIM));
+                        if btn(ui, "Abbrechen", 12.0, vec2(8.0, 2.0), Vec2::ZERO, false, linked).clicked() {
+                            answer = Some(json!({"cancelled": true}));
+                        }
+                    }
+                });
+            });
+            if let Some(r) = answer {
+                self.net.answer(k, &aid, r);
+            }
+        }
+        let Some(inst) = self.net.inst_mut(k) else { return };
+        let items = &mut inst.chat.items;
+        ScrollArea::vertical().id_salt(("rlog", &k.0, &k.1)).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+            Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 12.0;
+                let maxw = ui.available_width().min(900.0);
+                if items.is_empty() {
+                    ui.add(Label::new(txt(if live { "Noch kein Verlauf." } else { "Verlauf wird geladen …" }, 13.0, DIM)));
+                }
+                let n = items.len();
+                for (i, it) in items.iter_mut().enumerate() {
+                    let salt = (0xA3u64, i);
+                    match it {
+                        NetItem::User(text) => {
+                            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                                let fr = Frame::new().fill(acc()).corner_radius(10).inner_margin(Margin { left: 14, right: 30, top: 10, bottom: 10 }).show(ui, |ui| {
+                                    ui.set_max_width(maxw - 44.0);
+                                    ui.add(Label::new(txt(text.clone(), size, BG)).wrap());
+                                });
+                                let r = fr.response.rect;
+                                let br = Rect::from_min_size(r.right_top() + vec2(-24.0, 4.0), vec2(20.0, 20.0));
+                                let resp = ui.interact(br, Id::new(("rredo", salt)), Sense::click()).on_hover_text("Anfrage in die Eingabe übernehmen");
+                                let col = if resp.hovered() { Color32::WHITE } else { alpha(BG, 0.7) };
+                                ui.painter().text(br.center(), Align2::CENTER_CENTER, "↻", FontId::proportional(14.0), col);
+                                if resp.clicked() {
+                                    let t = text.clone();
+                                    acts.push(Box::new(move |a| a.set_prompt(t)));
+                                }
+                            });
+                        }
+                        NetItem::Assistant { text, doc, done } => {
+                            let fr = Frame::new().fill(PANEL).corner_radius(10).inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
+                                ui.set_width(maxw - 28.0);
+                                let r = md_egui::show_doc(ui, &th, doc.get(text), ("ra", salt));
+                                if !*done && busy && i + 1 == n {
+                                    let (r, _) = ui.allocate_exact_size(vec2(7.0, size), Sense::hover());
+                                    ui.painter().rect_filled(r, 1, acc());
+                                }
+                                r
+                            });
+                            if let Some(link) = fr.inner.clicked_link {
+                                acts.push(Box::new(move |a| a.handle_markdown_link(&link)));
+                            }
+                            if *done {
+                                let r = fr.response.rect;
+                                let br = Rect::from_min_size(r.right_top() + vec2(-26.0, 4.0), vec2(22.0, 22.0));
+                                let resp = ui.interact(br, Id::new(("rcopy", salt)), Sense::click()).on_hover_text("Diese Textausgabe als Markdown kopieren");
+                                if resp.hovered() || ui.rect_contains_pointer(r) {
+                                    ui.painter().text(br.center(), Align2::CENTER_CENTER, "⧉", FontId::proportional(14.0), if resp.hovered() { FG } else { DIM });
+                                }
+                                if resp.clicked() {
+                                    let t = text.clone();
+                                    acts.push(Box::new(move |a| {
+                                        a.ctx.copy_text(t);
+                                        a.toast("Markdown kopiert.", ToastKind::Info);
+                                    }));
+                                }
+                            }
+                        }
+                        NetItem::Thinking(t) => {
+                            ui.add(Label::new(txt(t.clone(), 13.0, DIM).italics()).wrap());
+                        }
+                        NetItem::Tool { name, args, out, open, err, path, done, .. } => {
+                            let stripe = if *err { ERR } else { acc() };
+                            let title = format!("{name} {args}");
+                            let state = if *done { "" } else { "läuft …" };
+                            let p2 = path.clone();
+                            block(ui, maxw, stripe, salt, open, &title, state, p2.as_deref(), out, &mut acts);
+                        }
+                        NetItem::Note { text, err } => {
+                            ui.vertical_centered(|ui| {
+                                ui.add(Label::new(txt(text.clone(), 13.0, if *err { ERR } else { DIM })).wrap());
+                            });
+                        }
+                    }
+                }
+            });
+        });
+        for a in acts {
+            a(self);
+        }
+    }
 
     fn log(&mut self, ui: &mut Ui) {
         let size = self.store.output_size;
@@ -1413,7 +1584,7 @@ impl App {
                         match &mut items[i] {
                             Item::User(text) => {
                                 ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                                    let fr = Frame::new().fill(ACC).corner_radius(10).inner_margin(Margin { left: 14, right: 30, top: 10, bottom: 10 }).show(ui, |ui| {
+                                    let fr = Frame::new().fill(acc()).corner_radius(10).inner_margin(Margin { left: 14, right: 30, top: 10, bottom: 10 }).show(ui, |ui| {
                                         ui.set_max_width(maxw - 44.0);
                                         ui.add(Label::new(txt(text.clone(), size, BG)).wrap());
                                     });
@@ -1470,7 +1641,7 @@ impl App {
                                 }
                             }
                             Item::Tool { name, args, out, open, err, path, .. } => {
-                                let stripe = if *err { ERR } else { ACC };
+                                let stripe = if *err { ERR } else { acc() };
                                 let title = format!("{name} {args}");
                                 let p2 = path.clone();
                                 block(ui, maxw, stripe, salt, open, &title, "", p2.as_deref(), out, &mut acts);
@@ -1542,7 +1713,7 @@ impl App {
                             }
                             let sel = i == p.cursor;
                             if sel {
-                                ui.painter().rect_filled(rect, 4, ACC);
+                                ui.painter().rect_filled(rect, 4, acc());
                             } else if resp.hovered() {
                                 ui.painter().rect_filled(rect, 4, PICK_OPEN);
                             }
@@ -1596,7 +1767,7 @@ impl App {
                             }
                             let sel = i == cursor;
                             if sel {
-                                ui.painter().rect_filled(rect, 4, ACC);
+                                ui.painter().rect_filled(rect, 4, acc());
                             }
                             let fg = if sel { Color32::WHITE } else { FG };
                             let pnt = ui.painter();
@@ -1665,7 +1836,7 @@ impl App {
                                     d.cursor = i;
                                 }
                                 let sel = i == d.cursor;
-                                ui.painter().rect_filled(rect, 6, if sel { ACC } else { BTN });
+                                ui.painter().rect_filled(rect, 6, if sel { acc() } else { BTN });
                                 let mut job = LayoutJob::simple_singleline(o.clone(), FontId::proportional(13.0), FG);
                                 job.wrap = TextWrapping::truncate_at_width(rect.width() - 20.0);
                                 let g = ui.painter().layout_job(job);
@@ -1769,7 +1940,7 @@ impl App {
                                     d.cursor = i;
                                 }
                                 let sel = i == d.cursor;
-                                ui.painter().rect_filled(rect, 6, if sel { ACC } else { BTN });
+                                ui.painter().rect_filled(rect, 6, if sel { acc() } else { BTN });
                                 let mut job = LayoutJob::simple_singleline(l.name.clone(), FontId::proportional(13.0), FG);
                                 job.wrap = TextWrapping::truncate_at_width(rect.width() - 20.0);
                                 let g = ui.painter().layout_job(job);
@@ -1839,7 +2010,7 @@ impl App {
                                 }
                                 let sel = i == d.cursor;
                                 let picked = d.selected.contains(&e.path);
-                                ui.painter().rect_filled(rect, 6, if sel { ACC } else if picked { mix(BTN, 0.3, OK) } else { BTN });
+                                ui.painter().rect_filled(rect, 6, if sel { acc() } else if picked { mix(BTN, 0.3, OK) } else { BTN });
                                 let prefix = if e.is_dir { "\u{1F4C1} " } else if picked { "\u{2611} " } else { "\u{2610} " };
                                 let mut job = LayoutJob::simple_singleline(format!("{prefix}{}", e.name), FontId::proportional(13.0), FG);
                                 job.wrap = TextWrapping::truncate_at_width(rect.width() - 20.0);
@@ -1918,7 +2089,7 @@ impl App {
         let width = 860.0f32.min(ctx.content_rect().width() - 24.0);
         let m = egui::Modal::new(Id::new("keyhelp"))
             .backdrop_color(Color32::from_black_alpha(0xaa))
-            .frame(Frame::new().fill(PANEL).stroke(Stroke::new(1.0, ACC)).corner_radius(12).inner_margin(Margin::same(16)))
+            .frame(Frame::new().fill(PANEL).stroke(Stroke::new(1.0, acc())).corner_radius(12).inner_margin(Margin::same(16)))
             .show(ctx, |ui| {
                 ui.set_width(width - 32.0);
                 ui.spacing_mut().item_spacing.y = 10.0;
@@ -1927,7 +2098,7 @@ impl App {
                     for (i, p) in KEYHELP.iter().enumerate() {
                         Frame::new().fill(BG).corner_radius(8).inner_margin(Margin::same(12)).show(ui, |ui| {
                             ui.set_width(width - 64.0);
-                            ui.label(RichText::new(format!("{}", ["Navigation", "Eingabe & Befehle", "Weitere Shortcuts"].get(i).unwrap_or(&"Bedienung"))).size(14.0).color(ACC));
+                            ui.label(RichText::new(format!("{}", ["Navigation", "Eingabe & Befehle", "Weitere Shortcuts"].get(i).unwrap_or(&"Bedienung"))).size(14.0).color(acc()));
                             for line in p.split('\n') { ui.add(Label::new(txt(line, 14.0, FG)).wrap()); }
                         });
                         ui.add_space(8.0);
@@ -1994,7 +2165,7 @@ impl App {
                     apply = btn(ui, apply_label, 13.0, vec2(14.0, 6.0), Vec2::ZERO, true, editable).clicked();
                     close = btn(ui, "Schließen", 13.0, vec2(14.0, 6.0), Vec2::ZERO, false, true).clicked();
                     if matches!(self.editor_target, EditorTarget::InventoryFile { .. }) {
-                        let st = IconStyle { bg: None, fg: if editable { ACC } else { DIM }, hover_fg: FG, icon: 18.0, radius: 5 };
+                        let st = IconStyle { bg: None, fg: if editable { acc() } else { DIM }, hover_fg: FG, icon: 18.0, radius: 5 };
                         if icons::icon_button(ui, vec2(32.0, 30.0), true, st, if editable { "Schloss schließen · Schreibschutz" } else { "Schloss öffnen · Bearbeitung erlauben" }, |p, r, c| icons::lock(p, r, c, editable)).clicked() { editable = !editable; }
                         ui.label(txt(if editable { "Bearbeitung erlaubt" } else { "Schreibgeschützt" }, 12.0, DIM));
                     }

@@ -260,6 +260,10 @@ pub struct App {
     pub(crate) usage_details: String,
     pub(crate) speech_available: bool,
     pub(crate) speech_on: bool,
+    /// Lokale Sprachausgabe für Remote-Instanzen (Piper vorhanden / eingeschaltet).
+    pub(crate) local_speech_ok: bool,
+    pub(crate) local_speech_on: bool,
+    pub(crate) speech: crate::speech::Speech,
     pub(crate) ext_status: Vec<(String, String)>,
     pub(crate) widgets: Vec<(String, Vec<String>, String)>,
 
@@ -382,6 +386,9 @@ impl App {
             usage_details: "Noch keine Verbrauchsdaten vom Agenten erhalten.".into(),
             speech_available: false,
             speech_on: false,
+            local_speech_ok: !demo && crate::speech::available(),
+            local_speech_on: !demo && crate::speech::enabled(),
+            speech: Default::default(),
             ext_status: Vec::new(),
             widgets: Vec::new(),
             prompt: String::new(),
@@ -520,6 +527,7 @@ impl App {
         }
         self.drain();
         self.net.pump(self.store.net_visible);
+        self.remote_speech();
         let now = Instant::now();
         let expired: Vec<String> = self.pending.iter().filter(|(_, p)| p.deadline.is_some_and(|d| d <= now)).map(|(k, _)| k.clone()).collect();
         for id in expired {
@@ -900,11 +908,47 @@ impl App {
         }
     }
 
+    /// Fertige Antworten der gewählten Remote-Instanz lokal vorlesen; die der übrigen verwerfen.
+    fn remote_speech(&mut self) {
+        let sel = self.remote_single();
+        let mut text = None;
+        for b in &mut self.net.backends {
+            for i in &mut b.insts {
+                if let Some(t) = i.chat.speak.take() {
+                    if sel.as_ref().is_some_and(|k| k.0 == b.cfg.id && k.1 == i.info.id) {
+                        text = Some(t);
+                    }
+                }
+            }
+        }
+        if let Some(t) = text.filter(|_| self.local_speech_on && self.local_speech_ok && !self.demo) {
+            if let Err(e) = self.speech.speak(&crate::speech::lead(&t)) {
+                self.toast(e, ToastKind::Warn);
+            }
+        }
+    }
+
     fn update_speech(&mut self, text: &str) {
         self.speech_on = !text.is_empty() && !text.contains("aus");
     }
 
     pub fn speech_command(&mut self, c: &str) {
+        if self.remote_single().is_some() {
+            match c {
+                "stopp" => self.speech.stop(),
+                _ => {
+                    let on = c == "an";
+                    self.local_speech_on = on;
+                    if !on {
+                        self.speech.stop();
+                    }
+                    if let Err(e) = crate::speech::set_enabled(on) {
+                        self.toast(format!("Sprachzustand nicht gespeichert: {e}"), ToastKind::Warn);
+                    }
+                }
+            }
+            return;
+        }
         self.req(json!({"type": "prompt", "message": format!("/vorlesen {c}")}), |a, r| {
             if !ok(&r) {
                 a.toast(err_or(&r, "Sprachbefehl fehlgeschlagen"), ToastKind::Error);
@@ -1879,6 +1923,28 @@ impl App {
         if t.is_empty() || self.material.preparing {
             return;
         }
+        if let Some(k) = self.remote_single() {
+            // Remote-Modus: dasselbe Eingabefeld, die Nachricht geht an die Server-Instanz.
+            if self.net.inst(&k).is_some_and(|i| matches!(i.info.state, pi_backend::instances::State::Exited | pi_backend::instances::State::Starting)) {
+                self.toast("Die Remote-Instanz ist nicht bereit.", ToastKind::Warn);
+                return;
+            }
+            self.history.add(&t);
+            self.prompt.clear();
+            self.slash_dismissed = None;
+            self.slash_cursor = 0;
+            let input_ask = self.net.inst(&k).and_then(|i| i.chat.asks.first()).filter(|a| a.kind == crate::net::AskKind::Input).map(|a| a.id.clone());
+            if let Some(id) = input_ask {
+                // Offene Texteingabe-Rückfrage: die Eingabe beantwortet sie.
+                self.net.answer(&k, &id, json!({"value": t}));
+                return;
+            }
+            if let Some(i) = self.net.inst_mut(&k) {
+                i.chat.input = t;
+            }
+            self.net.send_prompt(&k);
+            return;
+        }
         let parsed = parse_input(&t);
         if !self.material.items.is_empty() && (t.starts_with('/') || !matches!(parsed, Parsed::Prompt)) {
             self.toast("Material mit einer normalen Frage senden, nicht mit einem Befehl.", ToastKind::Error);
@@ -2357,6 +2423,21 @@ impl App {
             "net" => {
                 self.store.net_visible = true;
                 self.net.demo_scene();
+            }
+            "remote" => {
+                // Eine Server-Instanz im Hauptbereich: gleiche Optik wie der Einzel-Chat, Signalfarbe Cyan.
+                self.store.net_visible = true;
+                self.net.demo_scene();
+                self.net.selected = vec![("hub-buero".into(), "a1b2".into())];
+                self.net.grid = true;
+                self.local_speech_ok = true;
+                self.local_speech_on = true;
+                for l in [
+                    r#"{"type":"tool_execution_start","toolCallId":"r1","toolName":"bash","args":{"command":"ls build/"}}"#,
+                    r#"{"type":"tool_execution_end","toolCallId":"r1","isError":false,"result":{"content":[{"type":"text","text":"index.html\nmain.js"}]}}"#,
+                ] {
+                    self.net.on_ev(pi_backend::instances::Tagged { backend: "hub-buero".into(), inst: "a1b2".into(), ev: pi_backend::instances::Ev::Line(l.into()) });
+                }
             }
             "remotecolors" => {
                 // Remote-Sessions in der Liste, eine mit Bookmark (Limette) und offenem Farbwähler (10 Farben).

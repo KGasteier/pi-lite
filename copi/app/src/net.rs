@@ -26,7 +26,7 @@ pub enum NetItem {
     User(String),
     Assistant { text: String, doc: DocCache, done: bool },
     Thinking(String),
-    Tool { id: String, name: String, detail: String, done: bool, err: bool },
+    Tool { id: String, name: String, detail: String, done: bool, err: bool, args: String, out: String, open: bool, path: Option<String> },
     Note { text: String, err: bool },
 }
 
@@ -58,6 +58,8 @@ pub struct Chat {
     think: Option<usize>,
     pub asks: Vec<Ask>,
     pub input: String,
+    /// Fertige Antwort, die lokal vorgelesen werden soll (nur im Live-Betrieb, nie beim Verlaufs-Nachladen).
+    pub speak: Option<String>,
     /// Verlauf ist nachgeliefert (`Ev::Live`).
     pub live: bool,
     /// Modelle und Zustand des pi hinter dieser Instanz (für Modellwahl/Kopfzeile im Remote-Modus).
@@ -160,19 +162,36 @@ impl Chat {
             "tool_execution_start" => {
                 self.finish();
                 let name = v["toolName"].as_str().unwrap_or("").to_string();
-                self.push(NetItem::Tool { id: v["toolCallId"].as_str().unwrap_or("").into(), detail: tool_detail(&name, &v["args"]), name, done: false, err: false });
+                let a = if v["args"].is_null() { json!({}) } else { v["args"].clone() };
+                let args: String = serde_json::to_string(&a).unwrap_or_default().chars().take(160).collect();
+                let path = if ["read", "write", "edit"].contains(&name.as_str()) { a["path"].as_str().map(String::from) } else { None };
+                self.push(NetItem::Tool { id: v["toolCallId"].as_str().unwrap_or("").into(), detail: tool_detail(&name, &v["args"]), name, done: false, err: false, args, out: String::new(), open: false, path });
             }
-            "tool_execution_end" => {
+            "tool_execution_update" | "tool_execution_end" => {
                 let id = v["toolCallId"].as_str().unwrap_or("");
                 let is_err = v["isError"] == true;
-                if let Some(NetItem::Tool { done, err, .. }) = self.items.iter_mut().rev().find(|i| matches!(i, NetItem::Tool { id: t, .. } if t == id)) {
-                    *done = true;
+                let end = v["type"] == "tool_execution_end";
+                let r = if v["result"].is_null() { &v["partialResult"] } else { &v["result"] };
+                let text = text_of(&r["content"]);
+                if let Some(NetItem::Tool { done, err, out, .. }) = self.items.iter_mut().rev().find(|i| matches!(i, NetItem::Tool { id: t, .. } if t == id)) {
+                    if !text.is_empty() {
+                        *out = text;
+                    }
+                    *done |= end;
                     *err |= is_err;
                 }
             }
             "agent_settled" => {
                 self.finish();
                 self.asks.clear();
+                if self.live && v["aborted"] != true {
+                    // Letzte Antwort dieses Laufs (nach der letzten Nutzereingabe) zum lokalen Vorlesen.
+                    let last_user = self.items.iter().rposition(|i| matches!(i, NetItem::User(_))).map(|p| p + 1).unwrap_or(0);
+                    self.speak = self.items[last_user..].iter().rev().find_map(|i| match i {
+                        NetItem::Assistant { text, .. } if !text.trim().is_empty() => Some(text.clone()),
+                        _ => None,
+                    });
+                }
                 if v["aborted"] == true {
                     self.note("abgebrochen", false);
                 }

@@ -44,3 +44,17 @@ pub const REMOTE: Color32 = Color32::from_rgb(0x4f, 0xb8, 0xd8);
 
 /// Kategorie-Farbe (Seitenleiste).
 pub const CAT: Color32 = CAT_SESSIONS;
+
+thread_local! {
+    static REMOTE_MODE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Remote-Modus (Hauptbereich zeigt eine Server-Instanz): der Akzent wechselt von Magenta auf [`REMOTE`].
+pub fn set_remote_mode(on: bool) {
+    REMOTE_MODE.with(|m| m.set(on));
+}
+
+/// Aktuelle Signalfarbe: Magenta lokal, Cyan im Remote-Modus.
+pub fn acc() -> Color32 {
+    if REMOTE_MODE.with(|m| m.get()) { REMOTE } else { ACC }
+}

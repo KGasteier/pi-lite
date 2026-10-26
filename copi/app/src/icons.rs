@@ -199,7 +199,7 @@ pub fn paint_icon_button(ui: &Ui, rect: Rect, resp: &Response, enabled: bool, st
         None => {}
     }
     if resp.has_focus() {
-        p.rect_stroke(rect.expand(2.0), st.radius + 2, Stroke::new(2.0, ACC), egui::StrokeKind::Outside);
+        p.rect_stroke(rect.expand(2.0), st.radius + 2, Stroke::new(2.0, acc()), egui::StrokeKind::Outside);
     }
     let fg = if hovered { st.hover_fg } else { st.fg };
     let fg = if enabled { fg } else { alpha(fg, 0.55) };

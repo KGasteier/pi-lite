@@ -36,7 +36,7 @@ pub fn state_look(s: State) -> (Color32, &'static str) {
     match s {
         State::Starting => (DIM, "startet"),
         State::Idle => (OK, "bereit"),
-        State::Busy => (ACC, "arbeitet"),
+        State::Busy => (acc(), "arbeitet"),
         State::Waiting => (WARN, "wartet"),
         State::Exited => (ERR, "beendet"),
     }
@@ -142,10 +142,10 @@ impl App {
                     let key: InstKey = (b.cfg.id.clone(), inst.info.id.clone());
                     let sel = self.net.selected.contains(&key);
                     let (rect, resp) = ui.allocate_exact_size(vec2(w, 54.0), Sense::click());
-                    let fill = if sel { mix(ACC, 0.22, PANEL) } else if resp.hovered() { CARD } else { PANEL };
+                    let fill = if sel { mix(acc(), 0.22, PANEL) } else if resp.hovered() { CARD } else { PANEL };
                     ui.painter().rect_filled(rect, 6, fill);
                     if sel {
-                        ui.painter().rect_stroke(rect, 6, Stroke::new(1.0, ACC), StrokeKind::Inside);
+                        ui.painter().rect_stroke(rect, 6, Stroke::new(1.0, acc()), StrokeKind::Inside);
                     }
                     let mut c = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 4.0))).layout(Layout::top_down(Align::Min)));
                     c.spacing_mut().item_spacing.y = 1.0;
@@ -287,7 +287,7 @@ impl App {
                 for (n, it) in chat.items.iter_mut().enumerate() {
                     match it {
                         NetItem::User(t) => {
-                            Frame::new().fill(mix(ACC, 0.16, PANEL)).corner_radius(8).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
+                            Frame::new().fill(mix(acc(), 0.16, PANEL)).corner_radius(8).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
                                 ui.set_width(w - 20.0);
                                 ui.add(Label::new(txt(t.clone(), size, FG)).wrap());
                             });
@@ -299,7 +299,7 @@ impl App {
                                 if !*done && state == State::Busy {
                                     // Schreibmarke (gezeichnet; das Blockzeichen fehlt in den Schriften)
                                     let (r, _) = ui.allocate_exact_size(vec2(7.0, size), Sense::hover());
-                                    ui.painter().rect_filled(r, 1, ACC);
+                                    ui.painter().rect_filled(r, 1, acc());
                                 }
                             });
                         }
@@ -308,7 +308,7 @@ impl App {
                             ui.add(Label::new(RichText::new(s).italics().size(11.5).color(DIM)).truncate()).on_hover_text(t.clone());
                         }
                         NetItem::Tool { name, detail, done, err, .. } => {
-                            let (mark, c) = if *err { ("✗", ERR) } else if *done { ("✓", OK) } else { ("…", ACC) };
+                            let (mark, c) = if *err { ("✗", ERR) } else if *done { ("✓", OK) } else { ("…", acc()) };
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(txt(mark, 12.0, c));
