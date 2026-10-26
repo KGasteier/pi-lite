@@ -49,7 +49,8 @@ const html = fs.readFileSync(path.join(__dirname, '../ui/index.html'), 'utf8');
 assert.ok(html.indexOf('remote-sessions.js') > html.indexOf('session-bookmarks.js') && html.indexOf('remote-sessions.js') < html.indexOf('app.js'));
 assert.match(html, /id="originfilter"/);
 const main = fs.readFileSync(path.join(__dirname, '../src-tauri/src/main.rs'), 'utf8');
-assert.match(main, /net_sessions, net_delete_session/);
+assert.match(main, /net_sessions, net_delete_session, net_rename_session, net_fetch/);
+assert.match(fs.readFileSync(path.join(__dirname, '../ui/app.js'), 'utf8'), /invoke\("net_rename_session"/, 'Remote-Umbenennen ruft den Hub');
 const app = fs.readFileSync(path.join(__dirname, '../ui/app.js'), 'utf8');
 assert.doesNotMatch(app, /% 8\b/, 'Farbwähler-Tastatur nicht mehr auf 8 Farben fest');
 // Regression: Metazeile (mit Server-Badge) darf nicht unter die Aktionsknöpfe laufen.

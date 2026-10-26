@@ -1063,6 +1063,67 @@ impl NetState {
         });
     }
 
+    /// Remote-Session umbenennen (Hub setzt den Namen per pi-RPC; offene Sessions lehnt er mit 409 ab).
+    pub fn rename_remote_session(&mut self, s: &pi_backend::sessions::SessionInfo, name: &str) {
+        let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+        if name.is_empty() {
+            return;
+        }
+        if self.demo {
+            for r in self.remote_sessions.iter_mut().filter(|r| r.backend == s.backend && r.path == s.path) {
+                r.name = name.clone();
+            }
+            return;
+        }
+        let Some(b) = self.backend(&s.backend) else { return };
+        let Some(api) = b.api.clone() else {
+            self.notice(format!("„{}“ ist nicht verbunden.", b.cfg.label), true);
+            return;
+        };
+        let (bid, path, tok) = (s.backend.clone(), s.path.clone(), secret(&b.cfg));
+        self.run(move || api.files().rename_session(&path, &name), move |n, r| {
+            if let Err(e) = r {
+                let m = if e.contains("409") { "Session ist auf dem Server noch in einer Instanz offen – erst die Instanz stoppen.".into() } else { friendly_err(&e, &tok) };
+                n.notice(format!("Umbenennen fehlgeschlagen: {m}"), true);
+            }
+            n.refresh_remote_sessions(&bid);
+        });
+    }
+
+    /// Zielordner für Abrufe: `~/pi-abruf/<backend>/<ordner>`.
+    pub fn fetch_root() -> std::path::PathBuf {
+        pi_backend::home().unwrap_or_else(std::env::temp_dir).join("pi-abruf")
+    }
+
+    /// Arbeitsordner einer Instanz per rsync holen (ohne Build-Cache, x86-64-Binaries werden verworfen).
+    pub fn fetch_instance_dir(&mut self, k: &InstKey) {
+        let Some(cwd) = self.inst(k).map(|i| i.info.cwd.clone()) else { return };
+        let Some(b) = self.backend(&k.0) else { return };
+        let Some(api) = b.api.clone() else {
+            self.notice(format!("„{}“ ist nicht verbunden.", b.cfg.label), true);
+            return;
+        };
+        if self.demo {
+            self.notice(format!("Demo: {cwd} würde nach {} geholt.", Self::fetch_root().display()), false);
+            return;
+        }
+        let (label, tok) = (b.cfg.label.clone(), secret(&b.cfg));
+        self.notice(format!("Hole {cwd} von „{label}“ …"), false);
+        self.run(
+            move || api.fetch(&cwd, &Self::fetch_root(), pi_backend::ssh::local_machine()),
+            move |n, r| match r {
+                Ok(rep) => {
+                    let mut m = format!("{} Dateien nach {} geholt.", rep.files, rep.dest);
+                    if !rep.skipped_arch.is_empty() {
+                        m += &format!(" {} x86-64-Binärdatei(en) übersprungen (laufen hier nicht): {}.", rep.skipped_arch.len(), rep.skipped_arch.iter().take(3).cloned().collect::<Vec<_>>().join(", "));
+                    }
+                    n.notice(m, false);
+                }
+                Err(e) => n.notice(format!("Abruf fehlgeschlagen: {}", friendly_err(&e, &tok)), true),
+            },
+        );
+    }
+
     /// Synthetische Szene ohne Netz (`COPI_SCENE=net`): 2 Backends, 4 Instanzen, eine wartet.
     pub fn demo_scene(&mut self) {
         self.started = true;

@@ -1269,7 +1269,17 @@ impl App {
 
     pub fn rename_session(&mut self, s: &SessionInfo) {
         if s.is_remote() {
-            self.toast("Umbenennen ist für Remote-Sessions noch nicht verfügbar.", ToastKind::Info);
+            if self.session_active(s) {
+                self.toast("Session ist auf dem Server noch in einer Instanz offen – erst die Instanz stoppen.", ToastKind::Info);
+                return;
+            }
+            let remote = s.clone();
+            let prefill = [&s.name, &s.title].into_iter().find(|t| !t.is_empty()).cloned().unwrap_or_default();
+            self.ask(DialogKind::Input, "Remote-Session umbenennen", "", vec![], &prefill, move |a, r| {
+                if let Some(name) = r.and_then(|r| r["value"].as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()) {
+                    a.net.rename_remote_session(&remote, &name);
+                }
+            });
             return;
         }
         if s.path != self.session_file() {

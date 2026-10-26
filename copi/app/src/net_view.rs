@@ -22,6 +22,7 @@ enum Act {
     Abort(InstKey),
     Stop(InstKey),
     Restart(InstKey),
+    Fetch(InstKey),
     Answer(InstKey, String, serde_json::Value),
     Hide,
 }
@@ -170,9 +171,14 @@ impl App {
                         acts.push(Act::Select(key.clone(), multi));
                     }
                     let exited = inst.info.state == State::Exited;
+                    let remote_backend = b.cfg.kind == "ssh";
                     resp.context_menu(|ui| {
                         if ui.button("Stoppen (Instanz entfernen)").clicked() {
                             acts.push(Act::Stop(key.clone()));
+                            ui.close();
+                        }
+                        if remote_backend && ui.button("Arbeitsordner hierher holen (rsync)").on_hover_text("Ohne Build-Cache; x86-64-Programme werden übersprungen. Ziel: ~/pi-abruf").clicked() {
+                            acts.push(Act::Fetch(key.clone()));
                             ui.close();
                         }
                         if ui.add_enabled(exited, egui::Button::new("Neu starten")).on_disabled_hover_text("Nur für beendete Instanzen").clicked() {
@@ -414,6 +420,7 @@ impl App {
                     });
                 }
                 Act::Restart(k) => self.net.restart(&k),
+                Act::Fetch(k) => self.net.fetch_instance_dir(&k),
                 Act::Answer(k, id, r) => self.net.answer(&k, &id, r),
                 Act::Hide => self.toggle_net(),
             }

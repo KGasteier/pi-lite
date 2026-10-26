@@ -147,6 +147,8 @@ pub trait Files: Send + Sync {
     fn sessions(&self) -> Result<Vec<SessionRef>, String>;
     /// Sessiondatei löschen (nur innerhalb des Session-Ordners des Backends).
     fn delete_session(&self, path: &str) -> Result<(), String>;
+    /// Remote-Session umbenennen (Hub startet kurz `pi --mode rpc` mit `set_session_name`, ohne Modellaufruf).
+    fn rename_session(&self, path: &str, name: &str) -> Result<(), String>;
 }
 
 /// Ein Backend mit beliebig vielen Instanzen.
@@ -166,6 +168,10 @@ pub trait Instances: Send + Sync {
     fn watch(&self, sink: EvSink) -> Result<Subscription, String>;
     fn harness(&self, id: &str) -> Result<Arc<dyn Harness>, String>;
     fn files(&self) -> &dyn Files;
+    /// Arbeitsordner vom Server holen (nur SSH-Backends, siehe `ssh::fetch_dir`).
+    fn fetch(&self, _remote_dir: &str, _dest_root: &std::path::Path, _machine: u16) -> Result<crate::ssh::FetchReport, String> {
+        Err("Abruf gibt es nur für SSH-Server".into())
+    }
 }
 
 // ───────────────────────────── lokal ─────────────────────────────
@@ -316,6 +322,9 @@ impl Files for LocalFiles {
     }
     fn delete_session(&self, path: &str) -> Result<(), String> {
         crate::sessions::InfoCache::default().delete(path)
+    }
+    fn rename_session(&self, _: &str, _: &str) -> Result<(), String> {
+        Err("lokale Sessions werden über pi-RPC umbenannt".into())
     }
 }
 
@@ -680,6 +689,9 @@ impl Files for HubFiles {
     }
     fn delete_session(&self, path: &str) -> Result<(), String> {
         call_json("DELETE", &self.base, &self.token.get(), &format!("/api/sessions?path={}", enc(path)), None).map(|_| ())
+    }
+    fn rename_session(&self, path: &str, name: &str) -> Result<(), String> {
+        call_json("POST", &self.base, &self.token.get(), "/api/sessions/rename", Some(&serde_json::json!({"path": path, "name": name}))).map(|_| ())
     }
 }
 

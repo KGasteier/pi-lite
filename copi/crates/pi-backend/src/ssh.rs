@@ -25,6 +25,7 @@ pub struct SshInstances {
     st: Arc<Mutex<St>>,
     stop: Arc<AtomicBool>,
     tunnel: Arc<Mutex<Option<Child>>>,
+    cfg: BackendCfg,
 }
 
 impl Drop for SshInstances {
@@ -136,6 +137,96 @@ pub fn parse_bootstrap(ok: bool, stdout: &str, stderr: &str) -> Result<String, S
     Err(format!("SSH: {}{hint}", if e.is_empty() { "Verbindung fehlgeschlagen".to_string() } else { e }))
 }
 
+/// Ergebnis eines Abrufs (`fetch_dir`).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct FetchReport {
+    pub files: usize,
+    /// Wegen falscher Architektur (x86-64 auf ARM64-Rechner) wieder entfernt.
+    pub skipped_arch: Vec<String>,
+    pub dest: String,
+}
+
+/// Verzeichnisse, die beim Abruf nie mitkommen (Build-Cache bleibt auf dem Server).
+pub const FETCH_EXCLUDES: &[&str] = &["target/", "node_modules/", ".git/", "__pycache__/", ".cache/", "*.o", "*.a", "*.rlib", "*.so", "*.so.*", ".mise/"];
+
+/// ELF-Architektur einer Datei (`e_machine`), sonst `None`.
+pub fn elf_machine(path: &std::path::Path) -> Option<u16> {
+    use std::io::Read;
+    let mut b = [0u8; 20];
+    std::fs::File::open(path).ok()?.read_exact(&mut b).ok()?;
+    if &b[..4] != b"\x7fELF" {
+        return None;
+    }
+    Some(if b[5] == 2 { u16::from_be_bytes([b[18], b[19]]) } else { u16::from_le_bytes([b[18], b[19]]) })
+}
+
+/// Maschinenkennung des laufenden Rechners (`e_machine`): 0xB7 = aarch64, 0x3E = x86-64.
+pub fn local_machine() -> u16 {
+    match std::env::consts::ARCH {
+        "aarch64" => 0xB7,
+        "x86_64" => 0x3E,
+        "riscv64" => 0xF3,
+        _ => 0,
+    }
+}
+
+/// Entfernt ELF-Dateien fremder Architektur unterhalb von `dir`; Skripte und passende Binaries bleiben.
+pub fn drop_foreign_elf(dir: &std::path::Path, machine: u16) -> (usize, Vec<String>) {
+    let (mut kept, mut gone) = (0, Vec::new());
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let Ok(t) = e.file_type() else { continue };
+            if t.is_dir() {
+                stack.push(e.path());
+            } else if t.is_file() {
+                match elf_machine(&e.path()) {
+                    Some(m) if machine != 0 && m != machine => {
+                        let _ = std::fs::remove_file(e.path());
+                        gone.push(e.path().strip_prefix(dir).unwrap_or(&e.path()).to_string_lossy().into());
+                    }
+                    _ => kept += 1,
+                }
+            }
+        }
+    }
+    gone.sort();
+    (kept, gone)
+}
+
+/// Arbeitsordner (`remote_dir`) vom Server holen: `rsync` über dasselbe SSH (BatchMode, Schlüssel, Port),
+/// ohne Build-Cache; danach werden x86-64-Binaries entfernt, weil sie hier nicht laufen.
+/// Das Ziel liegt immer unter `dest_root` (kein Überschreiben fremder Ordner, kein `..`).
+pub fn fetch_dir(c: &BackendCfg, remote_dir: &str, dest_root: &std::path::Path, machine: u16) -> Result<FetchReport, String> {
+    if c.kind != "ssh" {
+        return Err("Abruf gibt es nur für SSH-Server".into());
+    }
+    if !remote_dir.starts_with('/') || remote_dir.split('/').any(|p| p == "..") {
+        return Err("ungültiger Serverpfad".into());
+    }
+    let name = std::path::Path::new(remote_dir).file_name().and_then(|n| n.to_str()).filter(|n| !n.is_empty()).unwrap_or("wurzel");
+    let dest = dest_root.join(&c.id).join(name);
+    std::fs::create_dir_all(&dest).map_err(|e| format!("Zielordner: {e}"))?;
+    let rsh = std::iter::once(ssh_bin()).chain(base_args(c)).map(|a| sh_quote(&a)).collect::<Vec<_>>().join(" ");
+    let mut cmd = Command::new(std::env::var("COPI_RSYNC").unwrap_or_else(|_| "rsync".into()));
+    cmd.args(["-a", "-s", "--partial", "--no-owner", "--no-group", "-e", &rsh]);
+    for x in FETCH_EXCLUDES {
+        cmd.arg(format!("--exclude={x}"));
+    }
+    // rsync gibt den Pfad an die entfernte Shell weiter; mit `-s` (protect-args) werden Leer- und Sonderzeichen
+    // dort NICHT ausgewertet – daher kein eigenes Quoting (das würde einen Ordner mit Anführungszeichen suchen).
+    let src = format!("{}:{}/", target(c), remote_dir.trim_end_matches('/'));
+    cmd.arg(src).arg(format!("{}/", dest.display()));
+    let out = cmd.stdin(Stdio::null()).output().map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { "rsync ist hier nicht installiert (z. B. `sudo pacman -S rsync`).".to_string() } else { e.to_string() })?;
+    if !out.status.success() {
+        let e = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("rsync: {}", e.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("fehlgeschlagen")));
+    }
+    let (files, skipped_arch) = drop_foreign_elf(&dest, machine);
+    Ok(FetchReport { files, skipped_arch, dest: dest.to_string_lossy().into() })
+}
+
 /// Freien lokalen Port suchen.
 fn free_port() -> u16 {
     std::net::TcpListener::bind(("127.0.0.1", 0)).and_then(|l| l.local_addr()).map(|a| a.port()).unwrap_or(0)
@@ -216,7 +307,7 @@ impl SshInstances {
             }
             Err(e) => *st2.lock().unwrap() = St::Failed(e),
         });
-        Ok(Self { inner, st, stop, tunnel })
+        Ok(Self { inner, st, stop, tunnel, cfg: c.clone() })
     }
 
     /// Wartet auf die Einrichtung (höchstens 60 s) und prüft, dass der Tunnel antwortet.
@@ -287,6 +378,9 @@ impl Instances for SshInstances {
     }
     fn files(&self) -> &dyn Files {
         self.inner.files()
+    }
+    fn fetch(&self, remote_dir: &str, dest_root: &std::path::Path, machine: u16) -> Result<FetchReport, String> {
+        fetch_dir(&self.cfg, remote_dir, dest_root, machine)
     }
 }
 

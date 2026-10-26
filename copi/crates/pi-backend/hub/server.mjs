@@ -220,6 +220,22 @@ function listDirs(p) {
   const parent = ROOTS.includes(real) ? null : path.dirname(real);
   return { path: real, parent: parent && inRoots(parent) ? parent : null, dirs };
 }
+// Umbenennen über pi selbst (set_session_name), damit das Sessionformat von pi geschrieben wird – kein Modellaufruf.
+function renameSession(file, name) {
+  return new Promise((ok, no) => {
+    const cwd = (() => { try { const j = JSON.parse(fs.readFileSync(file, 'utf8').split('\n')[0]); return inRoots(j.cwd) || ROOTS[0]; } catch { return ROOTS[0]; } })();
+    const proc = spawn(PI_BIN, ['--mode', 'rpc', '--session', file], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    let acc = '', done = false;
+    const end = (err) => { if (done) return; done = true; clearTimeout(timer); try { proc.kill('SIGTERM'); } catch {} err ? no(err) : ok(); };
+    const timer = setTimeout(() => end(new Error('pi antwortet nicht (Zeitüberschreitung)')), 15000);
+    proc.on('error', e => end(new Error('pi nicht startbar: ' + e.message)));
+    proc.on('exit', c => end(new Error('pi beendet (' + c + ')')));
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', c => { acc += c; let i; while ((i = acc.indexOf('\n')) >= 0) { const l = acc.slice(0, i); acc = acc.slice(i + 1); try { const j = JSON.parse(l); if (j.id === 'hub-rename') j.success ? end() : end(new Error(j.error || 'Umbenennen fehlgeschlagen')); } catch {} } });
+    proc.stdin.write(JSON.stringify({ id: 'hub-rename', type: 'set_session_name', name }) + '\n');
+  });
+}
+
 function listSessions() {
   const out = [];
   let projects = []; try { projects = fs.readdirSync(SESSIONS_DIR); } catch {}
@@ -239,6 +255,11 @@ function listSessions() {
         if (!title && j.type === 'message' && j.message?.role === 'user') title = textOf(j.message.content).replace(/\s+/g, ' ').trim().slice(0, 80);
         if (cwd && title) break;
       }
+    } catch {}
+    try {                                   // Umbenennungen stehen am Dateiende → letzter session_info-Name gewinnt
+      const fd = fs.openSync(s.path, 'r'); const size = fs.fstatSync(fd).size; const len = Math.min(size, 65536); const b = Buffer.alloc(len);
+      fs.readSync(fd, b, 0, len, size - len); fs.closeSync(fd);
+      for (const line of b.toString('utf8').split('\n')) { try { const j = JSON.parse(line); if (j.type === 'session_info' && j.name) title = j.name; } catch {} }
     } catch {}
     return { ...s, cwd, title: title || path.basename(s.path) };
   }).filter(s => s.cwd && inRoots(s.cwd));
@@ -265,6 +286,15 @@ const server = http.createServer(async (req, res) => {
       }
       if (p[0] === 'dirs') return json(res, 200, listDirs(url.searchParams.get('path')));
       if (p[0] === 'sessions' && req.method === 'GET') return json(res, 200, listSessions());
+      if (p[0] === 'sessions' && p[1] === 'rename' && req.method === 'POST') {
+        const b = await body(req); const f = path.resolve(b.path || ''); const name = String(b.name || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        if (!f.endsWith('.jsonl') || !f.startsWith(path.resolve(SESSIONS_DIR) + path.sep)) return json(res, 403, { error: 'Session außerhalb' });
+        if (!name) return json(res, 400, { error: 'Name fehlt' });
+        if (!fs.existsSync(f)) return json(res, 404, { error: 'unbekannte Session' });
+        if ([...instances.values()].some(i => i.session === f && i.state !== 'exited')) return json(res, 409, { error: 'Session ist in einer laufenden Instanz offen' });
+        try { await renameSession(f, name); } catch (e) { return json(res, 502, { error: String(e.message || e) }); }
+        return json(res, 200, { ok: true });
+      }
       if (p[0] === 'sessions' && req.method === 'DELETE') {
         const f = path.resolve(url.searchParams.get('path') || '');
         if (!f.endsWith('.jsonl') || !f.startsWith(path.resolve(SESSIONS_DIR) + path.sep)) return json(res, 403, { error: 'Session außerhalb' });

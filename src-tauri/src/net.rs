@@ -343,6 +343,22 @@ impl Net {
         self.get(backend)?.files().delete_session(path)
     }
 
+    /// Remote-Session umbenennen (Hub: pi-RPC `set_session_name`, 409 bei offener Instanz).
+    pub fn rename_session(&self, backend: &str, path: &str, name: &str) -> Result<(), String> {
+        if backend == "lokal" {
+            return Err("lokale Sessions über pi-RPC umbenennen".into());
+        }
+        self.get(backend)?.files().rename_session(path, name)
+    }
+
+    /// Arbeitsordner vom SSH-Server nach `~/pi-abruf/<backend>/<ordner>` holen (rsync, ohne Build-Cache,
+    /// x86-64-Binaries werden verworfen).
+    pub fn fetch(&self, backend: &str, dir: &str) -> Result<Value, String> {
+        let root = pi_backend::home().unwrap_or_else(std::env::temp_dir).join("pi-abruf");
+        let r = self.get(backend)?.fetch(dir, &root, pi_backend::ssh::local_machine())?;
+        Ok(json!({"files": r.files, "dest": r.dest, "skippedArch": r.skipped_arch}))
+    }
+
     /// Verlauf + Live-Ereignisse einer Instanz; ersetzt ein bestehendes Abo derselben Instanz.
     /// `tag` stammt von der Oberfläche und steht in jedem Ereignis (alte Abos bleiben so erkennbar).
     pub fn subscribe(&self, backend: &str, inst: &str, tag: &str) -> Result<(), String> {
@@ -407,6 +423,9 @@ mod tests {
         assert!(net.delete_session("lokal", "/x.jsonl").is_err(), "lokal nie über net_delete_session");
         assert!(net.sessions("gibt-es-nicht").unwrap_err().contains("nicht verbunden"));
         assert!(net.delete_session("gibt-es-nicht", "/x.jsonl").is_err());
+        assert!(net.rename_session("lokal", "/x.jsonl", "n").is_err(), "lokal nie über net_rename_session");
+        assert!(net.rename_session("gibt-es-nicht", "/x.jsonl", "n").is_err());
+        assert!(net.fetch("lokal", "/tmp").is_err(), "Abruf nur für SSH-Server");
     }
 
     #[test]

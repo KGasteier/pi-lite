@@ -790,6 +790,38 @@ fn remote_session_delete_confirms_and_protects_open_ones() {
     assert!(a.net.remote_sessions.iter().any(|s| s.path == open.path));
 }
 
+/// Remote-Umbenennen: Eingabedialog mit Vorbelegung, Name wird übernommen; offene Sessions sind geschützt.
+#[test]
+fn remote_session_rename_asks_for_name_and_protects_open_ones() {
+    let mut a = demo();
+    a.demo_scene("net");
+    let r = a.net.remote_sessions[0].clone();
+    a.rename_session(&r);
+    assert_eq!(a.dialogs.len(), 1, "Eingabedialog");
+    a.close_dialog(Some(json!({"value": "  Neuer   Name "})));
+    assert!(a.net.remote_sessions.iter().any(|s| s.path == r.path && s.name == "Neuer Name"));
+    // leere Eingabe ändert nichts
+    let before: Vec<_> = a.net.remote_sessions.iter().map(|s| s.name.clone()).collect();
+    a.rename_session(&r);
+    a.close_dialog(Some(json!({"value": "   "})));
+    assert_eq!(a.net.remote_sessions.iter().map(|s| s.name.clone()).collect::<Vec<_>>(), before);
+    // offen in einer Instanz → keine Rückfrage
+    let open = a.net.remote_sessions[1].clone();
+    let b = a.net.backends.iter_mut().find(|b| b.cfg.id == "hub-buero").unwrap();
+    b.insts[0].info.session = Some(open.path.clone());
+    a.rename_session(&open);
+    assert!(a.dialogs.is_empty());
+}
+
+/// Tailscale: MagicDNS-Name und 100.x-Adresse sind gültige SSH-Hosts (System-ssh löst sie auf).
+#[test]
+fn ssh_form_accepts_tailscale_names_and_addresses() {
+    for host in ["server.tail1234.ts.net", "100.101.102.103", "mein-server"] {
+        let f = crate::net::BackendForm { name: "T".into(), ssh: true, host: host.into(), ..Default::default() };
+        assert!(crate::net::validate_form(&f, &[]).is_ok(), "{host}");
+    }
+}
+
 /// Szene `remotecolors` (Screenshot-Grundlage): Remote-Bookmark Limette, Farbwähler offen, zeichnet ohne Panik.
 #[test]
 fn remotecolors_scene_opens_ten_color_picker_for_remote_card() {

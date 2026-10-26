@@ -171,3 +171,90 @@ fn live_server_bootstrap_sessions_and_mock_chat() {
         std::panic::resume_unwind(e);
     }
 }
+
+const FAKE_RSYNC_SSH: &str = r#"#!/bin/sh
+# Fake-ssh für rsync -e: Optionen und Host überspringen, den Rest (rsync --server …) lokal ausführen.
+while [ $# -gt 0 ]; do case "$1" in -o|-i|-p|-l) shift 2 ;; -*) shift ;; *) break ;; esac; done
+shift  # Host
+exec sh -c "$*"  # wie ssh: die Remote-Shell wertet den Rest aus
+"#;
+
+fn elf_header(machine: u16) -> Vec<u8> {
+    let mut b = vec![0u8; 64];
+    b[..4].copy_from_slice(b"\x7fELF");
+    b[4] = 2;
+    b[5] = 1;
+    b[18..20].copy_from_slice(&machine.to_le_bytes());
+    b
+}
+
+/// Abruf per echtem rsync (über Fake-ssh): Quellen kommen mit, Build-Cache nicht, x86-64-Binaries fliegen raus,
+/// passende ARM64-Binaries und Skripte bleiben; Pfad-Ausbrüche werden abgelehnt.
+#[test]
+fn fetch_dir_copies_sources_skips_cache_and_foreign_binaries() {
+    let _g = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    if !have("rsync") {
+        eprintln!("rsync fehlt – übersprungen");
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = std::env::temp_dir().join(format!("pi-backend-fetch-{}", std::process::id()));
+    let src = tmp.join("srv/projekt");
+    std::fs::create_dir_all(src.join("target/debug")).unwrap();
+    std::fs::create_dir_all(src.join("node_modules/x")).unwrap();
+    std::fs::create_dir_all(src.join("bin")).unwrap();
+    std::fs::write(src.join("main.rs"), "fn main(){}").unwrap();
+    std::fs::write(src.join("target/debug/cache.bin"), "cache").unwrap();
+    std::fs::write(src.join("node_modules/x/i.js"), "x").unwrap();
+    std::fs::write(src.join("bin/app-x86"), elf_header(0x3E)).unwrap();
+    std::fs::write(src.join("bin/app-arm"), elf_header(0xB7)).unwrap();
+    std::fs::write(src.join("bin/run.sh"), "#!/bin/sh\n").unwrap();
+    // Leerzeichen im Ordnernamen (Regression: Pfad darf nicht doppelt gequotet werden).
+    let spaced = tmp.join("srv/mein projekt");
+    std::fs::create_dir_all(&spaced).unwrap();
+    std::fs::write(spaced.join("a.txt"), "a").unwrap();
+    let fake = tmp.join("ssh");
+    std::fs::write(&fake, FAKE_RSYNC_SSH).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::env::set_var("COPI_SSH", &fake);
+    let cfg = BackendCfg::ssh("srv", "Server", "example.invalid", "tester");
+    let dest = tmp.join("holen");
+
+    let r = pi_backend::ssh::fetch_dir(&cfg, src.to_str().unwrap(), &dest, 0xB7).unwrap();
+    let out = dest.join("srv/projekt");
+    assert_eq!(r.dest, out.to_string_lossy());
+    assert!(out.join("main.rs").exists() && out.join("bin/run.sh").exists() && out.join("bin/app-arm").exists());
+    assert!(!out.join("target").exists() && !out.join("node_modules").exists(), "Build-Cache bleibt auf dem Server");
+    assert!(!out.join("bin/app-x86").exists());
+    assert_eq!(r.skipped_arch, vec!["bin/app-x86".to_string()]);
+    assert_eq!(r.files, 3);
+    assert!(src.join("bin/app-x86").exists(), "Quelle auf dem Server bleibt unverändert");
+
+    let rs = pi_backend::ssh::fetch_dir(&cfg, spaced.to_str().unwrap(), &dest, 0xB7).unwrap();
+    assert!(dest.join("srv/mein projekt/a.txt").exists(), "{rs:?}");
+
+    // Zweiter Lauf ist idempotent.
+    assert_eq!(pi_backend::ssh::fetch_dir(&cfg, src.to_str().unwrap(), &dest, 0xB7).unwrap().files, 3);
+    // Ungültige Eingaben und Nicht-SSH-Backends.
+    assert!(pi_backend::ssh::fetch_dir(&cfg, "relativ/pfad", &dest, 0xB7).is_err());
+    assert!(pi_backend::ssh::fetch_dir(&cfg, "/srv/../etc", &dest, 0xB7).is_err());
+    assert!(pi_backend::ssh::fetch_dir(&BackendCfg::local(), "/x", &dest, 0xB7).is_err());
+    // Fehler von rsync werden als Text gemeldet.
+    let e = pi_backend::ssh::fetch_dir(&cfg, tmp.join("gibt-es-nicht").to_str().unwrap(), &dest, 0xB7).unwrap_err();
+    assert!(e.starts_with("rsync:"), "{e}");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Live: Abruf eines Serverordners (`SSH_LIVE_FETCH=/pfad`), nur lesend auf dem Server; Ziel in /tmp.
+#[test]
+#[ignore]
+fn live_fetch_dir() {
+    let (Ok(t), Ok(dir)) = (std::env::var("SSH_LIVE"), std::env::var("SSH_LIVE_FETCH")) else { return };
+    let (user, host) = t.split_once('@').unwrap();
+    let cfg = BackendCfg::ssh("live", "Live", host, user);
+    let dest = std::env::temp_dir().join(format!("copi-live-fetch-{}", std::process::id()));
+    let r = pi_backend::ssh::fetch_dir(&cfg, &dir, &dest, pi_backend::ssh::local_machine()).unwrap();
+    eprintln!("{r:?}");
+    assert!(r.files >= 1);
+    let _ = std::fs::remove_dir_all(&dest);
+}

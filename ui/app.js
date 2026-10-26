@@ -793,7 +793,16 @@ document.addEventListener("keydown", (e) => {
   }
 });
 async function renameSession(s) {
-  if (isRemote(s)) { toast("Umbenennen ist für Remote-Sessions noch nicht verfügbar.", "warning"); return; }
+  if (isRemote(s)) {
+    if (remoteOpen(s)) { toast("Session ist auf dem Server noch in einer Instanz offen – erst die Instanz stoppen.", "warning"); return; }
+    const r = await ask({ method: "input", title: "Remote-Session umbenennen", prefill: s.name || s.title || "" });
+    const name = r && r.value ? r.value.trim().replace(/\s+/g, " ") : "";
+    if (!name) return;
+    try { await invoke("net_rename_session", { backend: s.backend, path: s.path, name }); }
+    catch (e) { toast(/409/.test(String(e)) ? "Session ist auf dem Server noch in einer Instanz offen – erst die Instanz stoppen." : "Umbenennen fehlgeschlagen: " + e, "error"); }
+    loadRemoteSessions();
+    return;
+  }
   if (s.path !== state.sessionFile) {
     if (busy) { note("pi arbeitet noch – erst abbrechen.", true); return; }
     await openSession(s);

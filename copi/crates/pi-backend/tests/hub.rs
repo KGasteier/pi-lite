@@ -94,6 +94,9 @@ fn hub_transport_end_to_end() {
     let open = be.create(&Spec { harness: Some("mock".into()), cwd: cwd.clone(), session: Some(sp.clone()), ..Default::default() }).unwrap();
     assert_eq!(open.session.as_deref(), Some(sp.as_str()));
     assert!(be.files().delete_session(&sp).unwrap_err().contains("409"));
+    assert!(be.files().rename_session(&sp, "X").unwrap_err().contains("409"), "offene Session nicht umbenennen");
+    assert!(be.files().rename_session("/etc/passwd", "X").unwrap_err().contains("403"));
+    assert!(bad.files().rename_session(&sp, "X").unwrap_err().contains("401"));
     be.remove(&open.id).unwrap();
     be.files().delete_session(&sp).unwrap();
 
