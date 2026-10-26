@@ -647,6 +647,14 @@ impl App {
                     self.new_session();
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let (olabel, otip) = match self.store.session_origin.as_str() {
+                        "local" => ("Lokal", "Nur lokale Sessions · Klick: nur Remote"),
+                        "remote" => ("Remote", "Nur Sessions der Server-Backends · Klick: alle Orte"),
+                        _ => ("Alle Orte", "Lokale und Remote-Sessions · Klick: nur lokal"),
+                    };
+                    if btn(ui, olabel, 12.0, vec2(7.0, 3.0), vec2(0.0, 28.0), self.store.session_origin != "all", true).on_hover_text(otip).clicked() {
+                        self.cycle_session_origin();
+                    }
                     let only = self.store.only_bookmarks;
                     let label = if !only { "Alle" } else if self.store.colored_bookmarks { "Farben" } else { "Bookmarks" };
                     if btn(ui, label, 12.0, vec2(7.0,3.0), vec2(0.0,28.0), only, true).on_hover_text("Alle → nur Bookmarks (Zeit) → nur Bookmarks (Farbkategorie/Zeit)").clicked() {
@@ -671,11 +679,15 @@ impl App {
             let scroll = std::mem::take(&mut self.list_scroll);
             ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 5.0;
+                if list.is_empty() && self.store.session_origin == "remote" && !self.store.only_bookmarks {
+                    ui.add(Label::new(txt("Keine Remote-Sessions. Backend unter „Netz“ hinzufügen bzw. verbinden.", 12.0, DIM)).wrap());
+                }
                 if list.is_empty() && self.store.only_bookmarks {
                     ui.add(Label::new(txt("Keine Bookmarks. Lesezeichen-Knopf oben zeigt wieder alle Sessions.", 12.0, DIM)).wrap());
                 }
                 for (i, s) in list.iter().enumerate() {
-                    let r = self.session_card(ui, s, s.path == active, cursor == Some(i));
+                    let on = if s.is_remote() { self.session_active(s) } else { s.path == active };
+                    let r = self.session_card(ui, s, on, cursor == Some(i));
                     if cursor == Some(i) && scroll {
                         r.scroll_to_me(None);
                     }
@@ -836,8 +848,8 @@ impl App {
             self.list_menu = false;
             return;
         };
-        let active = s.path == self.session_file();
-        let bm = self.store.is_bookmark(&s.path);
+        let active = self.session_active(&s);
+        let bm = self.store.is_bookmark(&s.key());
         let mut close = true;
         egui::Modal::new(Id::new("list-menu"))
             .backdrop_color(Color32::from_black_alpha(0x55))
@@ -852,7 +864,7 @@ impl App {
                     close = true;
                 }
                 if ui.button(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" }).clicked() {
-                    self.toggle_bookmark(&s.path);
+                    self.toggle_bookmark(&s.key());
                 }
                 if ui.button("Umbenennen").clicked() {
                     self.rename_session(&s);
@@ -872,60 +884,80 @@ impl App {
     }
 
     fn session_card(&mut self, ui: &mut Ui, s: &pi_backend::sessions::SessionInfo, active: bool, selected: bool) -> Response {
+        let key = s.key();
+        let remote = s.is_remote();
+        // Remote-Karten: eigene Farbe (Rand, Streifen links) und Badge mit dem Servernamen.
+        let tone = if remote { REMOTE } else { CAT };
         let w = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(vec2(w, 52.0), Sense::hover());
-        let resp = ui.interact(rect, Id::new(("card", &s.path)), Sense::click());
-        let bm = self.store.is_bookmark(&s.path);
+        let mut resp = ui.interact(rect, Id::new(("card", &key)), Sense::click());
+        let bm = self.store.is_bookmark(&key);
         let t = if active || selected { 0.22 } else if resp.hovered() { 0.17 } else { 0.09 };
         let p = ui.painter();
-        p.rect_filled(rect, 8, mix(CAT, t, CARD));
-        let border = if active || selected { CAT } else { mix(CAT, 0.32, CARD) };
+        p.rect_filled(rect, 8, mix(tone, t, CARD));
+        let border = if active || selected { tone } else { mix(tone, 0.32, CARD) };
         p.rect_stroke(rect, 8, Stroke::new(1.0, border), StrokeKind::Inside);
+        if remote {
+            p.rect_filled(Rect::from_min_size(rect.min + vec2(1.0, 8.0), vec2(3.0, rect.height() - 16.0)), 2, tone);
+        }
         let title = [&s.name, &s.title].into_iter().find(|t| !t.is_empty()).cloned().unwrap_or("(leer)".into());
         let tw = rect.width() - 24.0;
         let mut job = LayoutJob::simple_singleline(title.clone(), FontId::proportional(13.0), FG);
         job.wrap = TextWrapping::truncate_at_width(tw);
         p.galley(rect.min + vec2(12.0, 8.0), p.layout_job(job), FG);
+        let mut meta_x = 12.0;
+        if remote {
+            let label = self.net.backend_label(&s.backend);
+            let mut job = LayoutJob::simple_singleline(label, FontId::proportional(10.0), BG);
+            job.wrap = TextWrapping::truncate_at_width(90.0);
+            let g = p.layout_job(job);
+            let badge = Rect::from_min_size(rect.min + vec2(12.0, 29.0), g.size() + vec2(10.0, 2.0));
+            p.rect_filled(badge, 6, tone);
+            p.galley(badge.min + vec2(5.0, 1.0), g, BG);
+            meta_x += badge.width() + 6.0;
+        }
         let meta = format!("{} · {}", fmt_date(s.modified), pi_backend::tilde(&s.cwd));
         let mut job = LayoutJob::simple_singleline(meta, FontId::proportional(11.0), DIM);
-        job.wrap = TextWrapping::truncate_at_width((tw - 102.0).max(10.0));
-        p.galley(rect.min + vec2(12.0, 29.0), p.layout_job(job), DIM);
+        job.wrap = TextWrapping::truncate_at_width((tw - 102.0 - (meta_x - 12.0)).max(10.0));
+        p.galley(rect.min + vec2(meta_x, 29.0), p.layout_job(job), DIM);
 
         if resp.hovered() {
             self.preview_anchor = rect;
             self.preview_hover_until = std::time::Instant::now() + Duration::from_millis(300);
         }
-        if resp.hovered() && self.preview.as_ref().is_none_or(|p| p.path != s.path) {
+        if remote {
+            resp = resp.on_hover_text(format!("Remote-Session auf „{}“\n{}", self.net.backend_label(&s.backend), s.path));
+        } else if resp.hovered() && self.preview.as_ref().is_none_or(|p| p.path != s.path) {
             self.show_preview(&s.path, &title, false);
         }
         let bm_rect = Rect::from_min_size(rect.right_bottom() - vec2(6.0 + 23.0, 5.0 + 23.0), vec2(23.0, 23.0));
         let color_rect = bm_rect.translate(vec2(-25.0, 0.0));
         let act_rect = bm_rect.translate(vec2(-75.0, 0.0));
         let delete_rect = bm_rect.translate(vec2(-50.0, 0.0));
-        let delete_resp = ui.interact(delete_rect, Id::new(("card-delete", &s.path)), Sense::click()).on_hover_text("Session löschen");
+        let delete_resp = ui.interact(delete_rect, Id::new(("card-delete", &key)), Sense::click()).on_hover_text(if remote { "Remote-Session auf dem Server löschen" } else { "Session löschen" });
         icons::paint_icon_button(ui, delete_rect, &delete_resp, !active, IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 13.0, radius: 5 }, icons::trash);
         if !active && delete_resp.clicked() { self.remove_session(s); }
-        let bm_resp = ui.interact(bm_rect, Id::new(("cardbm", &s.path)), Sense::click()).on_hover_text(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" });
-        let st = IconStyle { bg: None, fg: if bm { crate::bookmark_palette::color(self.store.bookmark_color(&s.path)) } else { DIM }, hover_fg: FG, icon: 13.0, radius: 5 };
+        let bm_resp = ui.interact(bm_rect, Id::new(("cardbm", &key)), Sense::click()).on_hover_text(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" });
+        let st = IconStyle { bg: None, fg: if bm { crate::bookmark_palette::color(self.store.bookmark_color(&key)) } else { DIM }, hover_fg: FG, icon: 13.0, radius: 5 };
         icons::paint_icon_button(ui, bm_rect, &bm_resp, true, st, |p, r, c| icons::bookmark_card(p, r, c, bm));
         let act_resp = ui
-            .interact(act_rect, Id::new(("cardact", &s.path)), Sense::click())
-            .on_hover_text("Session umbenennen (F2)");
+            .interact(act_rect, Id::new(("cardact", &key)), Sense::click())
+            .on_hover_text(if remote { "Umbenennen ist für Remote-Sessions noch nicht verfügbar" } else { "Session umbenennen (F2)" });
         {
             let st = IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 13.0, radius: 5 };
             icons::paint_icon_button(ui, act_rect, &act_resp, true, st, icons::pencil);
         }
         // Farbmenü muss Klicks und Textbearbeitung innen erlauben.
-        let color_resp = ui.interact(color_rect, Id::new(("bookmark-color", &s.path)), Sense::click()).on_hover_text("Bookmark-Farbe · zehn Standardfarben");
+        let color_resp = ui.interact(color_rect, Id::new(("bookmark-color", &key)), Sense::click()).on_hover_text("Bookmark-Farbe · zehn Standardfarben");
         if bm {
-            ui.painter().circle_filled(color_rect.center(), 5.0, crate::bookmark_palette::color(self.store.bookmark_color(&s.path)));
+            ui.painter().circle_filled(color_rect.center(), 5.0, crate::bookmark_palette::color(self.store.bookmark_color(&key)));
             egui::Popup::menu(&color_resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
                 for i in 0..crate::bookmark_palette::LEN {
                     ui.horizontal(|ui| {
                         let (r, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
                         ui.painter().circle_filled(r.center(), 8.0, crate::bookmark_palette::color(i));
                         if response.on_hover_text(self.store.category_name(i)).clicked() {
-                            self.store.set_bookmark_color(&s.path, i);
+                            self.store.set_bookmark_color(&key, i);
                             self.save_store();
                         }
                         let mut name = self.store.category_name(i);
@@ -944,7 +976,7 @@ impl App {
             });
         }
         if bm_resp.clicked() {
-            self.toggle_bookmark(&s.path);
+            self.toggle_bookmark(&key);
         } else if act_resp.clicked() {
             self.rename_session(s);
         } else if resp.clicked() && !active {
@@ -957,7 +989,7 @@ impl App {
                 ui.close();
             }
             if ui.button(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" }).clicked() {
-                self.toggle_bookmark(&s.path);
+                self.toggle_bookmark(&key);
                 ui.close();
             }
             if ui.button("Session umbenennen   R").clicked() {

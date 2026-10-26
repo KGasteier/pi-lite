@@ -24,6 +24,8 @@ pub struct Store {
     pub sort: String,
     pub only_bookmarks: bool,
     pub colored_bookmarks: bool,
+    /// Herkunftsfilter der Sessionliste: "all", "local" oder "remote".
+    pub session_origin: String,
     pub category_names: Vec<String>,
     pub duration_history: Vec<f64>,
     pub side_visible: bool,
@@ -49,6 +51,7 @@ impl Default for Store {
             sort: "time".into(),
             only_bookmarks: false,
             colored_bookmarks: false,
+            session_origin: "all".into(),
             category_names: Vec::new(),
             duration_history: Vec::new(),
             side_visible: true,

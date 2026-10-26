@@ -12,6 +12,28 @@ pub struct SessionInfo {
     pub name: String,
     /// Änderungszeit in Sekunden seit Epoch.
     pub modified: u64,
+    /// Leer = lokale Session; sonst Kennung des Remote-Backends (`backends.json`-id).
+    pub backend: String,
+}
+
+impl SessionInfo {
+    /// Schlüssel für Bookmarks/Farben: lokal der Pfad, remote `remote:<backend>:<pfad>`.
+    /// Lokale Pfade sind absolut (beginnen mit `/` bzw. Laufwerk), kollidieren also nie.
+    pub fn key(&self) -> String {
+        remote_key(&self.backend, &self.path)
+    }
+    pub fn is_remote(&self) -> bool {
+        !self.backend.is_empty()
+    }
+}
+
+/// Siehe [`SessionInfo::key`]; identisch zu `remoteSessionKey` in `ui/remote-sessions.js`.
+pub fn remote_key(backend: &str, path: &str) -> String {
+    if backend.is_empty() {
+        path.to_string()
+    } else {
+        format!("remote:{backend}:{path}")
+    }
 }
 
 pub fn sessions_root() -> Option<PathBuf> {
@@ -281,6 +303,16 @@ impl InfoCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_key_separates_local_and_remote() {
+        let mut s = SessionInfo { path: "/h/.pi/agent/sessions/a.jsonl".into(), ..Default::default() };
+        assert_eq!(s.key(), s.path);
+        assert!(!s.is_remote());
+        s.backend = "hub-buero".into();
+        assert_eq!(s.key(), "remote:hub-buero:/h/.pi/agent/sessions/a.jsonl");
+        assert!(s.is_remote());
+    }
 
     fn sessions_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("copi-sess-{tag}-{}-{}", std::process::id(), fastrand_seed()));

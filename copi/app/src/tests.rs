@@ -727,3 +727,65 @@ fn net_live_errors() {
         assert!(!m.contains(tok));
     }
 }
+
+/// Remote-Sessions erscheinen in derselben Liste, tragen die Backend-Kennung, haben eigene
+/// Bookmark-Schlüssel (kein Zusammenfallen mit gleichem lokalen Pfad) und folgen dem
+/// Herkunftsfilter Alle Orte → Lokal → Remote.
+#[test]
+fn remote_sessions_are_listed_marked_and_filtered() {
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    a.demo_scene("net");
+    let all = a.visible_sessions();
+    let remote: Vec<_> = all.iter().filter(|s| s.is_remote()).collect();
+    assert_eq!(remote.len(), 2, "beide Demo-Remote-Sessions in der gemeinsamen Liste");
+    assert!(remote.iter().all(|s| s.backend == "hub-buero" && s.key().starts_with("remote:hub-buero:")));
+    assert!(all.iter().any(|s| !s.is_remote()), "lokale bleiben sichtbar");
+    // Bookmark remote ≠ Bookmark des gleichen Pfads lokal
+    let r = remote[0].clone();
+    a.toggle_bookmark(&r.key());
+    assert!(a.store.is_bookmark(&r.key()) && !a.store.is_bookmark(&r.path));
+    a.store.set_bookmark_color(&r.key(), 9);
+    assert_eq!(a.store.bookmark_color(&r.key()), 9);
+    a.store.only_bookmarks = true;
+    let marked: Vec<String> = a.visible_sessions().iter().map(|s| s.key()).collect();
+    assert!(marked.contains(&r.key()) && !marked.contains(&remote[1].key()));
+    a.store.only_bookmarks = false;
+    // Herkunftsfilter
+    a.cycle_session_origin();
+    assert_eq!(a.store.session_origin, "local");
+    assert!(a.visible_sessions().iter().all(|s| !s.is_remote()));
+    a.cycle_session_origin();
+    assert_eq!(a.store.session_origin, "remote");
+    assert!(a.visible_sessions().iter().all(|s| s.is_remote()));
+    // Zeichnen mit Remote-Karten ohne Panik (Badge, Streifen)
+    a.net.grid = false;
+    prompt_frame(&mut a, vec![]);
+    a.cycle_session_origin();
+    assert_eq!(a.store.session_origin, "all");
+    // Umbenennen remote: nur Hinweis, Liste unverändert
+    let before = a.visible_sessions().len();
+    a.rename_session(&r);
+    assert_eq!(a.visible_sessions().len(), before);
+}
+
+/// Löschen einer Remote-Session fragt nach und entfernt sie danach (Demo: ohne Netz);
+/// eine in einer laufenden Instanz offene Remote-Session wird nicht gelöscht.
+#[test]
+fn remote_session_delete_confirms_and_protects_open_ones() {
+    let mut a = demo();
+    a.demo_scene("net");
+    let r = a.net.remote_sessions[0].clone();
+    a.remove_session(&r);
+    assert_eq!(a.dialogs.len(), 1, "Bestätigung");
+    a.close_dialog(Some(json!({"confirmed": true})));
+    assert!(!a.net.remote_sessions.iter().any(|s| s.path == r.path));
+    // offen in Instanz a1b2 → Schutz
+    let open = a.net.remote_sessions[0].clone();
+    let b = a.net.backends.iter_mut().find(|b| b.cfg.id == "hub-buero").unwrap();
+    b.insts[0].info.session = Some(open.path.clone());
+    assert!(a.session_active(&open));
+    a.remove_session(&open);
+    assert!(a.dialogs.is_empty(), "keine Rückfrage für offene Session");
+    assert!(a.net.remote_sessions.iter().any(|s| s.path == open.path));
+}

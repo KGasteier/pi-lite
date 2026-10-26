@@ -339,6 +339,8 @@ pub struct NetState {
     /// Meldungen für Toasts (Text, Fehler?) – nie mit Token.
     pub notices: Vec<(String, bool)>,
     pub started: bool,
+    /// Sessions der Remote-Backends (für die gemeinsame Sessionliste, `backend` gesetzt).
+    pub remote_sessions: Vec<pi_backend::sessions::SessionInfo>,
     /// Ohne Netz/Prozesse (Demo, Screenshots, Tests); `backends.json` wird nicht geschrieben.
     pub demo: bool,
     tx: mpsc::Sender<Msg>,
@@ -507,7 +509,7 @@ pub fn grid_dims(n: usize, w: f32, h: f32) -> (usize, f32, bool) {
 impl NetState {
     pub fn new(repaint: Arc<dyn Fn() + Send + Sync>, demo: bool) -> Self {
         let (tx, rx) = mpsc::channel();
-        Self { backends: Vec::new(), selected: Vec::new(), grid: false, form: None, new_inst: None, notices: Vec::new(), started: false, demo, tx, rx, repaint }
+        Self { backends: Vec::new(), selected: Vec::new(), grid: false, form: None, new_inst: None, notices: Vec::new(), started: false, remote_sessions: Vec::new(), demo, tx, rx, repaint }
     }
 
     fn notice(&mut self, text: impl Into<String>, err: bool) {
@@ -601,6 +603,7 @@ impl NetState {
                     for info in list {
                         n.on_ev(Tagged { backend: id.clone(), inst: info.id.clone(), ev: Ev::Info(info) });
                     }
+                    n.refresh_remote_sessions(&id);
                 }
                 Err(e) => b.error = Some(friendly_err(&e, &tok)),
             }
@@ -616,6 +619,7 @@ impl NetState {
         b.insts.clear();
         let id = b.cfg.id.clone();
         self.selected.retain(|k| k.0 != id);
+        self.remote_sessions.retain(|s| s.backend != id);
     }
 
     /// Einmal pro Frame. `visible`: Leiste ist offen (startet beim ersten Mal die Backends).
@@ -962,6 +966,103 @@ impl NetState {
         });
     }
 
+    /// Sessionliste eines Remote-Backends neu holen (im Thread) und in `remote_sessions` ersetzen.
+    pub fn refresh_remote_sessions(&mut self, id: &str) {
+        let Some(b) = self.backend(id).filter(|b| b.remote()) else { return };
+        let Some(api) = b.api.clone() else { return };
+        let (bid, gen, tok) = (id.to_string(), b.gen, secret(&b.cfg));
+        self.run(move || api.files().sessions(), move |n, r| {
+            if n.backend(&bid).is_none_or(|b| b.gen != gen) {
+                return;
+            }
+            match r {
+                Ok(list) => n.set_remote_sessions(&bid, list),
+                Err(e) => n.notice(format!("Remote-Sessions: {}", friendly_err(&e, &tok)), true),
+            }
+        });
+    }
+
+    /// Alle verbundenen Remote-Backends abfragen (z. B. wenn die lokale Liste neu lädt).
+    pub fn refresh_all_remote_sessions(&mut self) {
+        let ids: Vec<String> = self.backends.iter().filter(|b| b.remote() && b.api.is_some()).map(|b| b.cfg.id.clone()).collect();
+        for id in ids {
+            self.refresh_remote_sessions(&id);
+        }
+    }
+
+    pub fn set_remote_sessions(&mut self, backend: &str, list: Vec<pi_backend::instances::SessionRef>) {
+        self.remote_sessions.retain(|s| s.backend != backend);
+        self.remote_sessions.extend(list.into_iter().map(|r| pi_backend::sessions::SessionInfo {
+            path: r.path,
+            cwd: r.cwd,
+            title: r.title,
+            name: String::new(),
+            modified: r.modified_ms / 1000,
+            backend: backend.into(),
+        }));
+    }
+
+    /// Anzeigename des Backends einer Remote-Session.
+    pub fn backend_label(&self, id: &str) -> String {
+        self.backend(id).map(|b| b.cfg.label.clone()).unwrap_or_else(|| id.into())
+    }
+
+    /// Instanz, in der die Remote-Session gerade offen ist (nicht beendet).
+    pub fn inst_for_session(&self, backend: &str, path: &str) -> Option<InstKey> {
+        let b = self.backend(backend)?;
+        let i = b.insts.iter().find(|i| i.info.session.as_deref() == Some(path) && i.info.state != State::Exited)?;
+        Some((backend.into(), i.info.id.clone()))
+    }
+
+    /// Remote-Session öffnen: läuft sie schon in einer Instanz, diese wählen; sonst eine
+    /// neue Instanz mit `session` anlegen (der Hub prüft, dass der Pfad im Session-Ordner liegt).
+    pub fn open_remote_session(&mut self, s: &pi_backend::sessions::SessionInfo) {
+        if let Some(k) = self.inst_for_session(&s.backend, &s.path) {
+            self.select(k, false);
+            return;
+        }
+        let Some(b) = self.backend(&s.backend) else {
+            self.notice(format!("Backend „{}“ ist nicht konfiguriert.", s.backend), true);
+            return;
+        };
+        let Some(api) = b.api.clone() else {
+            self.notice(format!("„{}“ ist nicht verbunden.", b.cfg.label), true);
+            return;
+        };
+        let cwd = if s.cwd.is_empty() { String::new() } else { s.cwd.clone() };
+        let spec = Spec { name: None, harness: Some("pi".into()), cwd, session: Some(s.path.clone()) };
+        let (bid, tok) = (s.backend.clone(), secret(&b.cfg));
+        self.run(move || api.create(&spec), move |n, r| match r {
+            Ok(info) => {
+                let k = (bid.clone(), info.id.clone());
+                n.on_ev(Tagged { backend: bid, inst: info.id.clone(), ev: Ev::Info(info) });
+                n.select(k, false);
+            }
+            Err(e) => n.notice(format!("Remote-Session öffnen: {}", friendly_err(&e, &tok)), true),
+        });
+    }
+
+    /// Remote-Session auf dem Server löschen (der Hub lehnt offene Sessions mit 409 ab).
+    pub fn delete_remote_session(&mut self, s: &pi_backend::sessions::SessionInfo) {
+        if self.demo {
+            self.remote_sessions.retain(|r| !(r.backend == s.backend && r.path == s.path));
+            return;
+        }
+        let Some(b) = self.backend(&s.backend) else { return };
+        let Some(api) = b.api.clone() else {
+            self.notice(format!("„{}“ ist nicht verbunden.", b.cfg.label), true);
+            return;
+        };
+        let (bid, path, tok) = (s.backend.clone(), s.path.clone(), secret(&b.cfg));
+        self.run(move || api.files().delete_session(&path), move |n, r| {
+            if let Err(e) = r {
+                let m = if e.contains("409") { "Session ist auf dem Server noch in einer Instanz offen.".into() } else { friendly_err(&e, &tok) };
+                n.notice(format!("Löschen fehlgeschlagen: {m}"), true);
+            }
+            n.refresh_remote_sessions(&bid);
+        });
+    }
+
     /// Synthetische Szene ohne Netz (`COPI_SCENE=net`): 2 Backends, 4 Instanzen, eine wartet.
     pub fn demo_scene(&mut self) {
         self.started = true;
@@ -984,6 +1085,10 @@ impl NetState {
         hub.insts.push(Inst::new(info("a1b2", "website", "mock", "/srv/demo/website", State::Waiting, 1, "Soll ich build/ löschen?")));
         hub.insts.push(Inst::new(info("c3d4", "alt", "mock", "/srv/demo/alt", State::Exited, 0, "")));
         self.backends = vec![local, hub];
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let refs = [("/srv/sessions/w1.jsonl", "/srv/demo/website", "Build-Pipeline reparieren", 1800), ("/srv/sessions/w2.jsonl", "/srv/demo/alt", "Server-Logs auswerten", 90_000)]
+            .map(|(p, c, t, ago)| pi_backend::instances::SessionRef { path: p.into(), cwd: c.into(), title: t.into(), modified_ms: (now - ago) * 1000 });
+        self.set_remote_sessions("hub-buero", refs.to_vec());
         let ev = |t: &str| t.to_string();
         let feed: [(&str, &str, Vec<String>); 3] = [
             ("lokal", "l1", vec![

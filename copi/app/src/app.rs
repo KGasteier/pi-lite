@@ -1202,20 +1202,59 @@ impl App {
         }
         let cache = self.info_cache.clone();
         self.spawn(move || cache.lock().map(|mut c| c.list()).unwrap_or_default(), |a, list| a.sessions = list);
+        self.net.refresh_all_remote_sessions();
     }
 
+    /// Lokale und Remote-Sessions in einer Liste; Herkunfts- und Bookmark-Filter, Sortierung
+    /// wie gehabt (Farbe bei „Farben“, dann Zeit, dann Backend/Pfad). Bookmarks remote über
+    /// [`SessionInfo::key`], damit gleiche Pfade auf zwei Rechnern nicht verwechselt werden.
     pub fn visible_sessions(&self) -> Vec<SessionInfo> {
-        let mut v: Vec<SessionInfo> = self.sessions.iter().filter(|s| !self.store.only_bookmarks || self.store.is_bookmark(&s.path)).cloned().collect();
+        let origin = self.store.session_origin.as_str();
+        let local = self.sessions.iter().filter(|_| origin != "remote");
+        let remote = self.net.remote_sessions.iter().filter(|_| origin != "local");
+        let mut v: Vec<SessionInfo> = local.chain(remote).filter(|s| !self.store.only_bookmarks || self.store.is_bookmark(&s.key())).cloned().collect();
         v.sort_by(|a, b| {
             let category = if self.store.only_bookmarks && self.store.colored_bookmarks {
-                self.store.bookmark_color(&a.path).cmp(&self.store.bookmark_color(&b.path))
+                self.store.bookmark_color(&a.key()).cmp(&self.store.bookmark_color(&b.key()))
             } else { std::cmp::Ordering::Equal };
-            category.then(b.modified.cmp(&a.modified)).then(a.path.cmp(&b.path))
+            category.then(b.modified.cmp(&a.modified)).then(a.backend.cmp(&b.backend)).then(a.path.cmp(&b.path))
         });
         v
     }
 
+    /// Herkunftsfilter weiterschalten: Alle Orte → Lokal → Remote → Alle Orte. „Remote“
+    /// verbindet die Backends (sonst geschieht das erst beim Öffnen der Netz-Leiste).
+    pub fn cycle_session_origin(&mut self) {
+        let next = match self.store.session_origin.as_str() {
+            "all" => "local",
+            "local" => "remote",
+            _ => "all",
+        };
+        self.store.session_origin = next.into();
+        if next == "remote" && !self.net.started && !self.demo {
+            self.net.start();
+        }
+        self.list_cursor = None;
+        self.save_store();
+    }
+
+    /// Ist die Session gerade offen (lokal: aktuelle Datei; remote: in einer laufenden Instanz)?
+    pub fn session_active(&self, s: &SessionInfo) -> bool {
+        if s.is_remote() {
+            self.net.inst_for_session(&s.backend, &s.path).is_some()
+        } else {
+            s.path == self.session_file()
+        }
+    }
+
     pub fn open_session(&mut self, s: &SessionInfo, then: Cont) {
+        if s.is_remote() {
+            // Remote: als Instanz auf dem Server (neu oder bereits laufend) in der Netz-Ansicht.
+            self.store.net_visible = true;
+            self.save_store();
+            self.net.open_remote_session(s);
+            return;
+        }
         if self.busy {
             self.note("pi arbeitet noch – erst abbrechen.", true);
             return;
@@ -1229,6 +1268,10 @@ impl App {
     }
 
     pub fn rename_session(&mut self, s: &SessionInfo) {
+        if s.is_remote() {
+            self.toast("Umbenennen ist für Remote-Sessions noch nicht verfügbar.", ToastKind::Info);
+            return;
+        }
         if s.path != self.session_file() {
             if self.busy {
                 self.note("pi arbeitet noch – erst abbrechen.", true);
@@ -1265,6 +1308,20 @@ impl App {
     pub fn remove_session(&mut self, s: &SessionInfo) {
         let label = [&s.name, &s.title].into_iter().find(|t| !t.is_empty()).cloned().unwrap_or("(leer)".into());
         let path = s.path.clone();
+        if s.is_remote() {
+            if self.session_active(s) {
+                self.toast("Session ist auf dem Server noch in einer Instanz offen.", ToastKind::Info);
+                return;
+            }
+            let remote = s.clone();
+            let host = self.net.backend_label(&s.backend);
+            self.ask(DialogKind::Confirm, "Remote-Session löschen?", &format!("{label}\n\nDie Datei auf „{host}“ wird endgültig gelöscht."), vec![], "", move |a, r| {
+                if r.map(|r| r["confirmed"] == true) == Some(true) {
+                    a.net.delete_remote_session(&remote);
+                }
+            });
+            return;
+        }
         self.ask(DialogKind::Confirm, "Session löschen?", &format!("{label}\n\nDie Datei wird endgültig gelöscht."), vec![], "", move |a, r| {
             if r.map(|r| r["confirmed"] == true) != Some(true) {
                 return;
@@ -2195,6 +2252,7 @@ impl App {
                 title: ["Beispiel-Session", "Markdown-Test", "Kurze Frage", "Refactoring planen", "Notizen"][i].into(),
                 name: if i == 0 { "Beispiel-Session".into() } else { String::new() },
                 modified: now - i as u64 * 7200,
+                backend: String::new(),
             })
             .collect();
         if self.store.bookmarks.is_empty() {

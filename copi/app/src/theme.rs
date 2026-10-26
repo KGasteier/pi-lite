@@ -39,5 +39,8 @@ pub fn brighten(c: Color32, f: f32) -> Color32 {
     Color32::from_rgba_premultiplied(g(c.r()), g(c.g()), g(c.b()), c.a())
 }
 
+/// Remote-Sessions (Server-Backends): Rand, Streifen und Badge der Karten.
+pub const REMOTE: Color32 = Color32::from_rgb(0x4f, 0xb8, 0xd8);
+
 /// Kategorie-Farbe (Seitenleiste).
 pub const CAT: Color32 = CAT_SESSIONS;
