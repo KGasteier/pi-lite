@@ -1302,7 +1302,31 @@ impl App {
         }
     }
 
+    /// Wird die Session gerade im Hauptbereich gezeigt? (Hervorhebung in der Liste.)
+    /// Remote: die Instanz im Einzelchat; lokal: eigene Session, solange keine Instanz gezeigt wird.
+    pub fn session_shown(&self, s: &SessionInfo) -> bool {
+        #[cfg(feature = "cocopi")]
+        if self.coco.main.is_some() {
+            return false;
+        }
+        match self.net.remote_ctx() {
+            Some(k) if s.is_remote() => self.net.inst_for_session(&s.backend, &s.path).as_ref() == Some(&k),
+            Some(_) => false,
+            None => !s.is_remote() && !self.net.grid && s.path == self.session_file(),
+        }
+    }
+
     pub fn open_session(&mut self, s: &SessionInfo, then: Cont) {
+        #[cfg(feature = "cocopi")]
+        {
+            self.coco.main = None;
+        }
+        if !s.is_remote() && !self.session_file().is_empty() && s.path == self.session_file() {
+            // Eigene, schon offene Session: nur zurück in den Einzelchat, nichts neu starten.
+            self.net.show_single(None);
+            self.focus_prompt = true;
+            return;
+        }
         if s.is_remote() {
             // Remote: als Instanz auf dem Server (neu oder bereits laufend) in der Netz-Ansicht.
             self.store.net_visible = true;

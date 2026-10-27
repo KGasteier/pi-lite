@@ -693,7 +693,6 @@ impl App {
         ui.add_space(4.0);
         if self.side_view == 0 {
             let list = self.visible_sessions();
-            let active = self.session_file();
             let cursor = self.list_cursor;
             let scroll = std::mem::take(&mut self.list_scroll);
             ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -705,7 +704,7 @@ impl App {
                     ui.add(Label::new(txt("Keine Bookmarks. Lesezeichen-Knopf oben zeigt wieder alle Sessions.", 12.0, DIM)).wrap());
                 }
                 for (i, s) in list.iter().enumerate() {
-                    let on = if s.is_remote() { self.session_active(s) } else { s.path == active };
+                    let on = self.session_shown(s);
                     let r = self.session_card(ui, s, on, cursor == Some(i));
                     if cursor == Some(i) && scroll {
                         r.scroll_to_me(None);
@@ -868,6 +867,7 @@ impl App {
             return;
         };
         let active = self.session_active(&s);
+        let shown = self.session_shown(&s);
         let bm = self.store.is_bookmark(&s.key());
         let mut close = true;
         egui::Modal::new(Id::new("list-menu"))
@@ -878,7 +878,7 @@ impl App {
                 ui.add(Label::new(RichText::new("Session-Menü").size(13.0).color(FG).family(egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()))));
                 ui.add_space(4.0);
                 close = false;
-                if !active && ui.button("Öffnen").clicked() {
+                if !shown && ui.button("Öffnen").clicked() {
                     self.open_session(&s, None);
                     close = true;
                 }
@@ -905,6 +905,9 @@ impl App {
     fn session_card(&mut self, ui: &mut Ui, s: &pi_backend::sessions::SessionInfo, active: bool, selected: bool) -> Response {
         let key = s.key();
         let remote = s.is_remote();
+        // `active` = gerade gezeigt (Hervorhebung, Klick ohne Wirkung); `running` = in einer
+        // Instanz bzw. als eigene Session offen (Löschen gesperrt, Punkt als Hinweis).
+        let running = self.session_active(s);
         // Remote-Karten: eigene Farbe (Rand, Streifen links) und Badge mit dem Servernamen.
         let tone = if remote { REMOTE } else { CAT };
         let w = ui.available_width();
@@ -935,6 +938,9 @@ impl App {
             p.galley(badge.min + vec2(5.0, 1.0), g, BG);
             meta_x += badge.width() + 6.0;
         }
+        if running && !active {
+            p.circle_filled(rect.right_top() + vec2(-11.0, 11.0), 3.5, tone);
+        }
         let meta = format!("{} · {}", fmt_date(s.modified), pi_backend::tilde(&s.cwd));
         let mut job = LayoutJob::simple_singleline(meta, FontId::proportional(11.0), DIM);
         job.wrap = TextWrapping::truncate_at_width((tw - 102.0 - (meta_x - 12.0)).max(10.0));
@@ -945,7 +951,8 @@ impl App {
             self.preview_hover_until = std::time::Instant::now() + Duration::from_millis(300);
         }
         if remote {
-            resp = resp.on_hover_text(format!("Remote-Session auf „{}“\n{}", self.net.backend_label(&s.backend), s.path));
+            let st = if active { "wird gezeigt" } else if running { "läuft auf dem Server – Klick zeigt sie" } else { "Klick startet sie auf dem Server" };
+            resp = resp.on_hover_text(format!("Remote-Session auf „{}“ · {st}\n{}", self.net.backend_label(&s.backend), s.path));
         } else if resp.hovered() && self.preview.as_ref().is_none_or(|p| p.path != s.path) {
             self.show_preview(&s.path, &title, false);
         }
@@ -953,9 +960,9 @@ impl App {
         let color_rect = bm_rect.translate(vec2(-25.0, 0.0));
         let act_rect = bm_rect.translate(vec2(-75.0, 0.0));
         let delete_rect = bm_rect.translate(vec2(-50.0, 0.0));
-        let delete_resp = ui.interact(delete_rect, Id::new(("card-delete", &key)), Sense::click()).on_hover_text(if remote { "Remote-Session auf dem Server löschen" } else { "Session löschen" });
-        icons::paint_icon_button(ui, delete_rect, &delete_resp, !active, IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 13.0, radius: 5 }, icons::trash);
-        if !active && delete_resp.clicked() { self.remove_session(s); }
+        let delete_resp = ui.interact(delete_rect, Id::new(("card-delete", &key)), Sense::click()).on_hover_text(if running { "Offene Session kann nicht gelöscht werden" } else if remote { "Remote-Session auf dem Server löschen" } else { "Session löschen" });
+        icons::paint_icon_button(ui, delete_rect, &delete_resp, !running, IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 13.0, radius: 5 }, icons::trash);
+        if !running && delete_resp.clicked() { self.remove_session(s); }
         let bm_resp = ui.interact(bm_rect, Id::new(("cardbm", &key)), Sense::click()).on_hover_text(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" });
         let st = IconStyle { bg: None, fg: if bm { crate::bookmark_palette::color(self.store.bookmark_color(&key)) } else { DIM }, hover_fg: FG, icon: 13.0, radius: 5 };
         icons::paint_icon_button(ui, bm_rect, &bm_resp, true, st, |p, r, c| icons::bookmark_card(p, r, c, bm));
@@ -1015,7 +1022,7 @@ impl App {
                 self.rename_session(s);
                 ui.close();
             }
-            if !active && ui.button("Löschen …   ⌫").clicked() {
+            if !running && ui.button("Löschen …   ⌫").clicked() {
                 self.remove_session(s);
                 ui.close();
             }

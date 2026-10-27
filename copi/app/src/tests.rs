@@ -1015,3 +1015,44 @@ fn remote_session_selects_main_and_disconnected_backend_has_hint() {
     assert!(a.net.remote_connection_hint(&k).unwrap().contains("nicht verbunden"));
     prompt_frame(&mut a, vec![]);
 }
+
+/// Session-Liste: nur die im Hauptbereich gezeigte Session ist hervorgehoben; laufende
+/// Remote-Sessions lassen sich per Klick wechseln (früher waren alle laufenden markiert
+/// und ein Klick darauf ohne Wirkung).
+#[test]
+fn remote_sessions_switch_and_only_shown_one_is_highlighted() {
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    a.demo_scene("net");
+    let r0 = a.net.remote_sessions[0].clone();
+    let r1 = a.net.remote_sessions[1].clone();
+    let b = a.net.backends.iter_mut().find(|b| b.cfg.id == "hub-buero").unwrap();
+    assert!(b.insts.len() >= 2, "Demo hat zwei Instanzen");
+    b.insts[0].info.session = Some(r0.path.clone());
+    b.insts[1].info.session = Some(r1.path.clone());
+    b.insts[1].info.state = pi_backend::instances::State::Idle;
+    let (k0, k1) = (("hub-buero".to_string(), b.insts[0].info.id.clone()), ("hub-buero".to_string(), b.insts[1].info.id.clone()));
+    assert!(a.session_active(&r0) && a.session_active(&r1), "beide laufen");
+    a.net.show_single(None);
+    assert!(!a.session_shown(&r0) && !a.session_shown(&r1), "keine gezeigt");
+    a.open_session(&r0, None);
+    assert_eq!(a.remote_single(), Some(k0));
+    assert!(a.session_shown(&r0) && !a.session_shown(&r1));
+    a.open_session(&r1, None);
+    assert_eq!(a.remote_single(), Some(k1.clone()), "Wechsel auf zweite laufende Session");
+    assert!(!a.session_shown(&r0) && a.session_shown(&r1));
+    let local = a.visible_sessions().into_iter().find(|s| !s.is_remote()).unwrap();
+    assert!(!a.session_shown(&local), "eigene Session nicht markiert, solange Remote gezeigt wird");
+    // Echter Klick auf die erste Karte in der Liste wechselt zurück.
+    a.store.side_visible = true;
+    a.side_view = 0;
+    a.store.session_origin = "remote".into();
+    prompt_frame(&mut a, vec![]);
+    let id = egui::Id::new(("card", &r0.key()));
+    let rect = a.ctx.read_response(id).expect("Karte gezeichnet").rect;
+    let p = rect.left_top() + egui::vec2(30.0, 12.0);
+    prompt_frame(&mut a, vec![egui::Event::PointerMoved(p)]);
+    prompt_frame(&mut a, vec![egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() }]);
+    prompt_frame(&mut a, vec![egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }]);
+    assert!(a.session_shown(&r0) && !a.session_shown(&r1), "Klick wechselt die Remote-Session");
+}
