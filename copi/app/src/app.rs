@@ -192,7 +192,6 @@ struct Pending {
 
 pub struct App {
     #[cfg(feature = "cocopi")]
-    #[cfg(feature = "cocopi")]
     pub(crate) coco: crate::coco::Coco,
     pub(crate) ctx: egui::Context,
     pub(crate) demo: bool,
