@@ -56,7 +56,7 @@ institutionelle Identität (authentik), kein Offline-Postfach.
 ## Kontaktaufnahme
 
 Kontaktadresse (JSON `EndpointAddr`, enthält IP-Adressen) wird über einen vertrauenswürdigen
-Kanal getauscht. Danach **Sicherheitswörter** (6 Wörter aus beiden Schlüsseln) vergleichen und
+Kanal getauscht. Danach **Sicherheitswörter** (8 Wörter aus 256, 64 Bit, aus beiden Schlüsseln) vergleichen und
 „geprüft“ markieren. Ungeprüfte Kontakte sind zulässig, aber sichtbar markiert; Fernzugriff
 und Einladung in Seminare verlangen **geprüfte** Kontakte.
 

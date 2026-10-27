@@ -21,14 +21,14 @@ pub struct CocoUi {
     search: String,
     contact_addr: String,
     contact_name: String,
-    dialog: Option<Dialog>,
+    pub(crate) dialog: Option<Dialog>,
     dismissed_requests: Vec<String>,
     /// Vorschau einer Freigabe; die Laufzeit kann später echte Freigabedaten liefern.
     pub approval_preview: Option<(ChatId, String)>,
 }
 
 #[derive(Clone)]
-enum Dialog {
+pub(crate) enum Dialog {
     NewChat {
         direct: bool,
         title: String,

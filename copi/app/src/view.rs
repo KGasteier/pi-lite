@@ -287,6 +287,16 @@ impl App {
     // ---------- Tastatur ----------
 
     fn keys(&mut self, ctx: &Context) {
+        // cocopi-Dialoge behandeln Esc/Enter selbst.
+        #[cfg(feature = "cocopi")]
+        if self.coco_modal_open() {
+            ctx.memory_mut(|m| m.surrender_focus(prompt_id()));
+            if self.coco.ui.dialog.is_some() && plain(ctx, Key::Escape) {
+                self.coco.ui.dialog = None;
+                self.focus_prompt = true;
+            }
+            return;
+        }
         // 0. Dialoge der Backend-Leiste (eigene Modale, Tasten dort)
         if self.net.form.is_some() || self.net.new_inst.is_some() {
             ctx.memory_mut(|m| m.surrender_focus(prompt_id()));

@@ -396,6 +396,11 @@ impl App {
             self.coco_agent_event(who, t);
         }
         self.coco_main_turn();
+        // Freigabevorschau für die Oberfläche (erste offene Freigabe).
+        self.coco.ui.approval_preview = self.coco.approvals.first().map(|a| {
+            let name = self.coco_name(&a.agent);
+            (a.chat.clone(), format!("{name} möchte antworten auf:\n{}", clip(&a.prompt, 600)))
+        });
         // Seltener: A2A, Ablauf, Spiegel, Speichern
         let due = self.coco.tick.is_none_or(|t| t.elapsed() >= Duration::from_millis(500));
         if due {
