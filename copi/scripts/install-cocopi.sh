@@ -10,4 +10,6 @@ fi
 mkdir -p "$HOME/.local/bin"
 install -m755 "$root/target/release/cocopi" "$HOME/.local/bin/cocopi.new"
 mv -f "$HOME/.local/bin/cocopi.new" "$HOME/.local/bin/cocopi"
+# Nur Anzeige: warnt, falls cocopi irrtümlich als Terminal/Browser eingetragen ist.
+"$root/scripts/check-desktop.sh" | tail -n 2 || true
 printf 'Installiert: %s/.local/bin/cocopi\nStart im Terminal: ~/.local/bin/cocopi\nKein Autostart, kein Netzwerk ohne Klick.\n' "$HOME"

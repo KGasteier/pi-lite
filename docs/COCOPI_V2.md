@@ -106,3 +106,12 @@ Fernzugriff-Freigaben werden **nicht** gespeichert (enden mit dem Prozess).
 | E Oberfläche | `app/src/coco_view.rs` | Leiste, Chat-Ansicht, Dialoge, Demo-Szenen, Screenshots |
 
 Zusammenführen: A → C → B → D → E, nach jedem Merge Tests.
+
+## Fehlaufrufe durch Desktop-Zuordnung
+
+Ist cocopi/copi irrtümlich als Terminal (`xdg-terminals.list`, `Categories=TerminalEmulator`),
+Browser oder Standard-App (`mimeapps.list`, `MimeType=`) eingetragen, starten Omarchy-Aktionen
+wie Super+A (Web-App) oder der Bildschirmschoner jedes Mal ein neues Fenster. Seit diesem Stand
+beendet sich cocopi bei fremden Optionen (`-e …`, `--app=…`, `--class=…`) sofort mit Code 2,
+ohne Fenster. `copi/scripts/check-desktop.sh` zeigt die Ursache, `--apply` entfernt sie
+(Sicherung `*.bak-copi`; Hyprland-Konfiguration wird nur angezeigt, nie geändert).

@@ -22,6 +22,21 @@ mod view;
 mod virtual_log;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod args_tests {
+    fn v(a: &[&str]) -> Vec<String> { std::iter::once("cocopi").chain(a.iter().copied()).map(String::from).collect() }
+    #[test]
+    fn foreign_launcher_calls_are_rejected() {
+        assert!(super::check_args(&v(&[])).is_ok());
+        assert!(super::check_args(&v(&["--shot", "a.png", "--size", "10x10"])).is_ok());
+        assert!(super::check_args(&v(&["datei.md"])).is_ok());
+        assert!(super::check_args(&v(&["--shot"])).is_err());
+        assert!(super::check_args(&v(&["-e", "omarchy-cmd-screensaver"])).is_err(), "Terminal-Aufruf");
+        assert!(super::check_args(&v(&["--app-id=Screensaver", "-e", "x"])).is_err());
+        assert!(super::check_args(&v(&["--app=https://chatgpt.com"])).is_err(), "Browser-Aufruf");
+        assert!(super::check_args(&v(&["--class=Screensaver"])).is_err());
+    }
+}
 
 use std::sync::Arc;
 
@@ -127,8 +142,37 @@ impl eframe::App for Main {
     }
 }
 
+/// Erlaubte Optionen: `--shot DATEI`, `--size BxH`, `--version`, `--help`.
+/// Jede andere Option (z. B. `-e cmd` vom Terminal-Starter oder `--app=URL` vom Browser-Starter)
+/// ist ein Fehlaufruf durch falsche Desktop-Zuordnung und darf kein Fenster öffnen.
+fn check_args(args: &[String]) -> Result<(), String> {
+    let mut it = args.iter().skip(1);
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--shot" | "--size" => {
+                if it.next().is_none() {
+                    return Err(format!("{a} braucht einen Wert"));
+                }
+            }
+            // Pfade ohne Bindestrich wurden schon immer still ignoriert (z. B. Test-Starter mit DATEI).
+            _ if !a.starts_with('-') => {}
+            _ => return Err(format!("unbekannte Option „{a}“")),
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        Some("--version" | "-V") => return println!("{} {}", app_name(), env!("CARGO_PKG_VERSION")),
+        Some("--help" | "-h") => return println!("Aufruf: {} [--shot DATEI [--size BxH]]", app_name()),
+        _ => {}
+    }
+    if let Err(e) = check_args(&args) {
+        eprintln!("{}: {e}. Kein Fenster geöffnet.\nVermutlich ruft ein Desktop-Eintrag {0} als Terminal oder Browser auf; siehe scripts/check-desktop.sh.", app_name());
+        std::process::exit(2);
+    }
     let arg = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let shot = arg("--shot").or_else(|| std::env::var("COPI_SHOT").ok());
     let demo_env = std::env::var("COPI_DEMO").map(|v| !v.is_empty() && v != "0").unwrap_or(false);
