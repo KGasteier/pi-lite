@@ -30,6 +30,7 @@ mod args_tests {
         assert!(super::check_args(&v(&[])).is_ok());
         assert!(super::check_args(&v(&["--shot", "a.png", "--size", "10x10"])).is_ok());
         assert!(super::check_args(&v(&["datei.md"])).is_ok());
+        assert!(super::check_args(&v(&["--sync-states"])).is_ok(), "Screensaver-Spiegel");
         assert!(super::check_args(&v(&["--shot"])).is_err());
         assert!(super::check_args(&v(&["-e", "omarchy-cmd-screensaver"])).is_err(), "Terminal-Aufruf");
         assert!(super::check_args(&v(&["--app-id=Screensaver", "-e", "x"])).is_err());
@@ -142,13 +143,15 @@ impl eframe::App for Main {
     }
 }
 
-/// Erlaubte Optionen: `--shot DATEI`, `--size BxH`, `--version`, `--help`.
+/// Erlaubte Optionen: `--shot DATEI`, `--size BxH`, `--sync-states`, `--version`, `--help`.
 /// Jede andere Option (z. B. `-e cmd` vom Terminal-Starter oder `--app=URL` vom Browser-Starter)
 /// ist ein Fehlaufruf durch falsche Desktop-Zuordnung und darf kein Fenster öffnen.
 fn check_args(args: &[String]) -> Result<(), String> {
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
+            // Ohne Fenster: Zustandsspiegel auffrischen (Aufruf durch den Bildschirmschoner).
+            "--sync-states" => {}
             "--shot" | "--size" => {
                 if it.next().is_none() {
                     return Err(format!("{a} braucht einen Wert"));
@@ -166,7 +169,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("--version" | "-V") => return println!("{} {}", app_name(), env!("CARGO_PKG_VERSION")),
-        Some("--help" | "-h") => return println!("Aufruf: {} [--shot DATEI [--size BxH]]", app_name()),
+        Some("--help" | "-h") => return println!("Aufruf: {} [--shot DATEI [--size BxH] | --sync-states]", app_name()),
         _ => {}
     }
     if let Err(e) = check_args(&args) {
