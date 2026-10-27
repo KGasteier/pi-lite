@@ -113,6 +113,58 @@ fn raster(prims: &[ClippedPrimitive], textures: &HashMap<TextureId, Tex>, ppp: f
 }
 
 /// Rendert die App fensterlos und schreibt ein PNG.
+/// Zustandsspiegel aller SSH-Backends auffrischen (headless, ohne Fenster).
+///
+/// Der Screensaver läuft typischerweise, wenn copi **geschlossen** ist. Damit der Spiegel auch
+/// dann frisch ist, ruft der Screensaver diesen Modus als kurzen Unterprozess auf: copi liest
+/// `backends.json`, richtet fehlende SSH-Backends ein und holt die Live-Zustände nur lesend ab.
+///
+/// Ausgabe: eine Meldung je Backend auf stdout (leer = nichts zu tun). Fehler eines Backends
+/// brechen die übrigen nicht ab – ein toter Server darf den Screensaver nicht aufhalten.
+pub fn sync_states() -> Result<String, String> {
+    let cfgs = pi_backend::backends::load()?;
+    let root = state_mirror_root();
+    let mut out = String::new();
+    for c in cfgs.iter().filter(|c| c.enabled && c.kind == "ssh") {
+        // Kein Prozess starten, keine Sitzung anlegen: nur die eingebettete Einrichtung und der
+        // lesende rsync-Abruf. Das ist derselbe Weg, den copi beim Öffnen der Leiste nimmt.
+        let be = match c.build() {
+            Ok(b) => b,
+            Err(e) => {
+                out.push_str(&format!("{}: {e}\n", c.label));
+                continue;
+            }
+        };
+        match be.fetch_states(&root) {
+            Ok(rep) => {
+                // Nicht jede leere Antwort ist ein Fehler: ohne laufenden Agenten schreibt die
+                // Erweiterung nichts, und ein frisch eingerichteter Server hat noch kein Verzeichnis.
+                let mut m = format!("{}: {} Zustandsdateien", c.label, rep.files);
+                if !rep.missing.is_empty() {
+                    m += &format!(", {} Verzeichnis(se) noch nicht angelegt", rep.missing.len());
+                }
+                out.push_str(&m);
+                out.push('\n');
+            }
+            Err(e) => out.push_str(&format!("{}: {e}\n", c.label)),
+        }
+    }
+    Ok(out)
+}
+
+/// Lokaler Spiegelort der Agentenzustände (`<cache>/copi/agentscope-remote`).
+///
+/// Muss zu `agentscope.model.MIRROR_ROOT` passen; der Screensaver liest hier. Als Funktion
+/// (nicht Konstante), damit Tests und andere Aufrufer ihn mit `COPI_CACHE_DIR` umlenken können.
+pub fn state_mirror_root() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("COPI_STATE_MIRROR_DIR") {
+        if !p.trim().is_empty() {
+            return std::path::PathBuf::from(p);
+        }
+    }
+    pi_backend::copi_cache_dir().unwrap_or_else(std::env::temp_dir).join("agentscope-remote")
+}
+
 pub fn shot(path: &str, size: (u32, u32), ppp: f32, scene: Option<String>) -> Result<(), String> {
     let ctx = egui::Context::default();
     crate::setup_ctx(&ctx);
@@ -158,4 +210,22 @@ pub fn shot(path: &str, size: (u32, u32), ppp: f32, scene: Option<String>) -> Re
     let mut wr = enc.write_header().map_err(|e| e.to_string())?;
     wr.write_image_data(&data).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mirror_root_env_override_and_default() {
+        // Ein einziger Test (statt zwei), weil beide Zweige dieselbe Umgebungsvariable anfassen und
+        // parallele Tests sich sonst gegenseitig den Wert wegnehmen würden.
+        std::env::set_var("COPI_STATE_MIRROR_DIR", "/tmp/spiegel-x");
+        assert_eq!(state_mirror_root(), std::path::PathBuf::from("/tmp/spiegel-x"));
+        std::env::remove_var("COPI_STATE_MIRROR_DIR");
+        // Ohne Umlenkung liegt der Spiegel unter `<cache>/copi/agentscope-remote` – genau dort,
+        // wo `agentscope.model.MIRROR_ROOT` liest.
+        let p = state_mirror_root();
+        assert!(p.ends_with("copi/agentscope-remote"), "unerwarteter Spiegelort: {}", p.display());
+    }
 }
