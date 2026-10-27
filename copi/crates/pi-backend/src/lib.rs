@@ -123,6 +123,19 @@ pub fn copi_data_dir() -> Option<std::path::PathBuf> {
     data_base_dir().map(|d| d.join("copi"))
 }
 
+/// Plattform-Cache-Wurzel (`~/.cache` unter Linux via XDG, `~/Library/Caches` unter macOS,
+/// `%LOCALAPPDATA%` unter Windows) über `dirs::cache_dir()`. Gleicher Verifikationsstatus wie
+/// [`config_base_dir`]: der Linux-Pfad wird hier tatsächlich gebaut und getestet, die übrigen
+/// sind dokumentierte, bedingt kompilierte Zweige. Fällt auf `$HOME/.cache` zurück.
+pub fn cache_base_dir() -> Option<std::path::PathBuf> {
+    dirs::cache_dir().or_else(|| home().map(|h| h.join(".cache")))
+}
+
+/// Bevorzugtes Cache-Verzeichnis von copi (`<cache_base_dir>/copi`).
+pub fn copi_cache_dir() -> Option<std::path::PathBuf> {
+    cache_base_dir().map(|d| d.join("copi"))
+}
+
 /// Alter, vor der Umbenennung von `pi-lite` zu `copi` genutzter Konfigurationspfad
 /// (`$HOME/.config/pi-lite`, unabhängig von Plattformkonvention, wie historisch fest
 /// verdrahtet angelegt). Nur zum lesenden Rückfall – niemals Ziel neuer Schreibvorgänge und

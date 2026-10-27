@@ -128,6 +128,20 @@ impl eframe::App for Main {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let arg = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    // Spiegel der Fern-Zustände auffrischen und sofort enden. Ohne Fenster, ohne pi-Start –
+    // der Screensaver ruft das auf, wenn copi geschlossen ist.
+    if args.iter().any(|a| a == "--sync-states") {
+        match headless::sync_states() {
+            Ok(m) => {
+                print!("{m}");
+                return;
+            }
+            Err(e) => {
+                eprintln!("Spiegel fehlgeschlagen: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
     let shot = arg("--shot").or_else(|| std::env::var("COPI_SHOT").ok());
     let demo_env = std::env::var("COPI_DEMO").map(|v| !v.is_empty() && v != "0").unwrap_or(false);
     if let Some(path) = shot {

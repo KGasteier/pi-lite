@@ -172,6 +172,11 @@ pub trait Instances: Send + Sync {
     fn fetch(&self, _remote_dir: &str, _dest_root: &std::path::Path, _machine: u16) -> Result<crate::ssh::FetchReport, String> {
         Err("Abruf gibt es nur für SSH-Server".into())
     }
+    /// Live-Zustände des Servers in den lokalen Spiegel holen (nur SSH-Backends).
+    /// Nur lesend; ohne Zustandsverzeichnisse (Backend war noch nie verbunden) ein leerer Bericht.
+    fn fetch_states(&self, _dest_root: &std::path::Path) -> Result<crate::ssh::MirrorReport, String> {
+        Err("Zustandsspiegel gibt es nur für SSH-Server".into())
+    }
 }
 
 // ───────────────────────────── lokal ─────────────────────────────
