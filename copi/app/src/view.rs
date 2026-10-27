@@ -204,12 +204,10 @@ impl App {
                 .show(ui, |ui| {
                     let r = ui.max_rect().expand(12.0);
                     ui.painter().vline(r.left(), r.y_range(), Stroke::new(1.0, BORDER));
+                    #[cfg(not(feature = "cocopi"))]
                     self.net_bar(ui);
                     #[cfg(feature = "cocopi")]
-                    {
-                        ui.separator();
-                        self.coco_panel(ui);
-                    }
+                    self.coco_panel(ui);
                 });
         }
         #[cfg(feature = "cocopi")]
