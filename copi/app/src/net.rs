@@ -1025,7 +1025,7 @@ impl NetState {
             return;
         }
         n.busy = true;
-        let spec = Spec { name: Some(n.name.trim().to_string()).filter(|s| !s.is_empty()), harness: Some(n.harness.clone()), cwd: n.path.clone(), session: None };
+        let spec = Spec { name: Some(n.name.trim().to_string()).filter(|s| !s.is_empty()), harness: Some(n.harness.clone()), cwd: n.path.clone(), session: None, args: Vec::new() };
         let bid = n.backend.clone();
         let Some(b) = self.backend(&bid) else { return };
         let Some(api) = b.api.clone() else { return };
@@ -1110,7 +1110,7 @@ impl NetState {
             return;
         };
         let cwd = if s.cwd.is_empty() { String::new() } else { s.cwd.clone() };
-        let spec = Spec { name: None, harness: Some("pi".into()), cwd, session: Some(s.path.clone()) };
+        let spec = Spec { name: None, harness: Some("pi".into()), cwd, session: Some(s.path.clone()), args: Vec::new() };
         let (bid, tok) = (s.backend.clone(), secret(&b.cfg));
         self.run(move || api.create(&spec), move |n, r| match r {
             Ok(info) => {

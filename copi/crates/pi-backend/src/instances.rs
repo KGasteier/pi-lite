@@ -73,6 +73,9 @@ pub struct Spec {
     pub harness: Option<String>,
     pub cwd: String,
     pub session: Option<String>,
+    /// Zusätzliche pi-Argumente (nur lokale Instanzen, z. B. Personas: `--system-prompt …`,
+    /// `--no-tools`). Server-Backends ignorieren das Feld.
+    pub args: Vec<String>,
 }
 
 /// Was eine Instanz meldet.
@@ -182,6 +185,8 @@ struct LocalInst {
     subs: Mutex<Vec<(u64, EvSink)>>,
     /// Verlauf der Sitzung im Speicher (begrenzt), für späte Abonnenten.
     hist: Mutex<std::collections::VecDeque<Ev>>,
+    /// Zusätzliche pi-Argumente aus [`Spec::args`].
+    args: Vec<String>,
 }
 
 const LOCAL_HIST: usize = 5000;
@@ -254,7 +259,8 @@ impl LocalInstances {
         };
         let (tx, rx) = std::sync::mpsc::channel();
         let sink = crate::Sink::new(tx, Arc::new(|| {}));
-        let args: Vec<String> = session.map(|s| vec!["--session".into(), s]).unwrap_or_default();
+        let mut args: Vec<String> = session.map(|s| vec!["--session".into(), s]).unwrap_or_default();
+        args.extend(li.args.iter().cloned());
         li.pi.start(sink, &cwd, &args)?;
         li.info.lock().unwrap().state = State::Idle;
         let (li2, inner) = (li.clone(), self.inner.clone());
@@ -350,7 +356,7 @@ impl Instances for LocalInstances {
             std::path::Path::new(&spec.cwd).file_name().map(|f| f.to_string_lossy().into()).unwrap_or_else(|| id.clone())
         });
         let info = InstanceInfo { id: id.clone(), name, harness: "pi".into(), cwd: spec.cwd.clone(), state: State::Starting, asks: 0, last: String::new(), session: spec.session.clone() };
-        let li = Arc::new(LocalInst { info: Mutex::new(info), pi: Default::default(), subs: Default::default(), hist: Default::default() });
+        let li = Arc::new(LocalInst { info: Mutex::new(info), pi: Default::default(), subs: Default::default(), hist: Default::default(), args: spec.args.clone() });
         self.launch(&li)?;
         self.inner.map.lock().unwrap().insert(id.clone(), li.clone());
         let info = li.info.lock().unwrap().clone();

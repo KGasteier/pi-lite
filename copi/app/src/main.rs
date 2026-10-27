@@ -1,6 +1,8 @@
 // copi – native Oberfläche für pi (Rust + egui).
 #[cfg(feature = "cocopi")]
-mod collab_ui;
+mod coco;
+#[cfg(feature = "cocopi")]
+mod coco_view;
 fn app_name() -> &'static str { if cfg!(feature = "cocopi") { "cocopi" } else { "copi" } }
 mod app;
 mod bookmark_palette;

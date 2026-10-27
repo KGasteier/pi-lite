@@ -192,7 +192,8 @@ struct Pending {
 
 pub struct App {
     #[cfg(feature = "cocopi")]
-    pub(crate) collab: crate::collab_ui::Collab,
+    #[cfg(feature = "cocopi")]
+    pub(crate) coco: crate::coco::Coco,
     pub(crate) ctx: egui::Context,
     pub(crate) demo: bool,
     pub(crate) store: Store,
@@ -330,7 +331,8 @@ impl App {
         let net_ctx = ctx.clone();
         let mut app = Self {
             #[cfg(feature = "cocopi")]
-            collab: Default::default(),
+            #[cfg(feature = "cocopi")]
+            coco: crate::coco::Coco::new(demo),
             ctx,
             demo,
             store: Store::load(!demo),
@@ -527,6 +529,8 @@ impl App {
         }
         self.drain();
         self.net.pump(self.store.net_visible);
+        #[cfg(feature = "cocopi")]
+        self.coco_pump();
         self.remote_speech();
         let now = Instant::now();
         let expired: Vec<String> = self.pending.iter().filter(|(_, p)| p.deadline.is_some_and(|d| d <= now)).map(|(k, _)| k.clone()).collect();
@@ -1924,6 +1928,16 @@ impl App {
         if t.is_empty() || self.material.preparing {
             return;
         }
+        #[cfg(feature = "cocopi")]
+        if self.coco.main.is_some() {
+            if self.coco_submit(&t) {
+                self.history.add(&t);
+                self.prompt.clear();
+                self.slash_dismissed = None;
+                self.slash_cursor = 0;
+            }
+            return;
+        }
         if let Some(k) = self.remote_single() {
             // Remote-Modus: dasselbe Eingabefeld, die Nachricht geht an die Server-Instanz.
             if self.net.inst(&k).is_some_and(|i| matches!(i.info.state, pi_backend::instances::State::Exited | pi_backend::instances::State::Starting)) {
@@ -2417,6 +2431,10 @@ impl App {
     }
 
     pub fn demo_scene(&mut self, scene: &str) {
+        #[cfg(feature = "cocopi")]
+        if self.coco_demo(scene) {
+            return;
+        }
         match scene {
             "slash" => {
                 self.set_prompt("/".into());

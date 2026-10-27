@@ -208,11 +208,18 @@ impl App {
                     #[cfg(feature = "cocopi")]
                     {
                         ui.separator();
-                        self.collaboration_panel(ui);
+                        self.coco_panel(ui);
                     }
                 });
         }
-        if let Some(k) = self.remote_single() {
+        #[cfg(feature = "cocopi")]
+        let coco_main = self.coco.main.is_some();
+        #[cfg(not(feature = "cocopi"))]
+        let coco_main = false;
+        if coco_main {
+            #[cfg(feature = "cocopi")]
+            egui::CentralPanel::default().frame(Frame::new().fill(BG)).show(ui, |ui| self.coco_main_view(ui));
+        } else if let Some(k) = self.remote_single() {
             egui::CentralPanel::default().frame(Frame::new().fill(BG)).show(ui, |ui| self.remote_log(ui, &k));
         } else if self.store.net_visible && self.net.grid {
             egui::CentralPanel::default().frame(Frame::new().fill(BG)).show(ui, |ui| self.net_grid(ui));
@@ -247,6 +254,8 @@ impl App {
         self.slash_overlay(&ctx);
         self.dialog_overlay(&ctx);
         self.net_overlays(&ctx);
+        #[cfg(feature = "cocopi")]
+        self.coco_overlays(&ctx);
         self.keyhelp_overlay(&ctx);
         self.editor_overlay(&ctx);
         self.list_menu_overlay(&ctx);
@@ -1329,6 +1338,8 @@ impl App {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::Min)));
         let size = self.store.output_size.min(16.0);
         let hint = if self.remote_single().is_some() { REMOTE_PLACEHOLDER } else { PLACEHOLDER };
+        #[cfg(feature = "cocopi")]
+        let hint = self.coco_placeholder().unwrap_or(hint);
         let out = ScrollArea::vertical().id_salt("prompt-scroll").auto_shrink([false, false]).max_height(inner.height()).show(&mut child, |ui| {
             egui::TextEdit::multiline(&mut self.prompt)
                 .id(prompt_id())
