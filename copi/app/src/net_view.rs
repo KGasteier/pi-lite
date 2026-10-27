@@ -8,11 +8,13 @@ use serde_json::json;
 use crate::app::{App, ToastKind};
 use crate::net::{short_cwd, AskKind, InstKey, NetItem};
 use crate::theme::*;
-use crate::view::{btn, txt, NET_PLACEHOLDER};
+use crate::view::{btn, txt};
 
 /// Aktionen aus der Zeichnung; werden nach dem Zeichnen angewandt (Borrow-frei).
 enum Act {
-    Select(InstKey, bool),
+    /// Einzelchat: Instanz oder `None` = Haupt-Session.
+    Single(Option<InstKey>),
+    GridToggle(InstKey),
     Deselect(InstKey),
     Grid(bool),
     Enable(usize, bool),
@@ -77,127 +79,214 @@ fn link_dot(ui: &mut Ui, link: Option<bool>, err: bool) {
 }
 
 impl App {
-    /// Rechte Seitenleiste: Backends mit ihren Instanzen.
+    /// Rechte Seitenleiste: Backends mit ihren Instanzen (copi: ganze Leiste).
+    #[cfg_attr(feature = "cocopi", allow(dead_code))]
     pub(crate) fn net_bar(&mut self, ui: &mut Ui) {
+        self.net_bar_inner(ui, true);
+    }
+
+    /// Ansichtswahl (Einzelchat-Dropdown, Raster) und Backend-Karten.
+    /// `closable`: ×-Knopf blendet die Leiste aus (in cocopi schließt der Backends-Knopf).
+    pub(crate) fn net_bar_inner(&mut self, ui: &mut Ui, closable: bool) {
         let mut acts: Vec<Act> = Vec::new();
-        ui.horizontal(|ui| {
-            ui.add(Label::new(bold("Backends", 14.0, FG)));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if btn(ui, "×", 13.0, vec2(6.0, 2.0), vec2(24.0, 22.0), false, true).on_hover_text("Leiste ausblenden (Strg/Cmd+Shift+B)").clicked() {
-                    acts.push(Act::Hide);
-                }
+        ui.style_mut().interaction.selectable_labels = false;
+        if closable {
+            ui.horizontal(|ui| {
+                ui.add(Label::new(bold("Backends", 14.0, FG)));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if btn(ui, "×", 13.0, vec2(6.0, 2.0), vec2(24.0, 22.0), false, true).on_hover_text("Leiste ausblenden (Strg/Cmd+Shift+B)").clicked() {
+                        acts.push(Act::Hide);
+                    }
+                });
             });
-        });
-        ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let grid = self.net.grid;
-            if btn(ui, "Einzel-Chat", 12.0, vec2(8.0, 3.0), Vec2Zero::z(), !grid && !self.net.remote_main, true).on_hover_text("Bisheriger Chat mit dem lokalen pi").clicked() {
-                acts.push(Act::Grid(false));
-            }
-            if btn(ui, "Raster", 12.0, vec2(8.0, 3.0), Vec2Zero::z(), grid, true).on_hover_text("Gewählte Instanzen nebeneinander").clicked() {
-                acts.push(Act::Grid(true));
-            }
-        });
-        ui.add_space(4.0);
-        ui.add(Label::new(txt("Klick wählt · Strg/Cmd+Klick: mehrere fürs Raster", 11.0, DIM)).wrap());
-        ui.add_space(6.0);
-        let avail = ui.available_height() - 64.0;
+            ui.add_space(4.0);
+        }
+        self.net_view_switch(ui, &mut acts);
+        ui.add_space(8.0);
+        let avail = ui.available_height() - 40.0;
         ScrollArea::vertical().id_salt("net-bar").max_height(avail.max(80.0)).auto_shrink([false, true]).show(ui, |ui| {
+            ui.style_mut().interaction.selectable_labels = false;
             if self.net.backends.is_empty() {
                 ui.add(Label::new(txt(if self.demo { "Demo-Modus: keine Backends verbunden." } else { "Backends werden geladen …" }, 12.0, DIM)).wrap());
             }
-            let w = ui.available_width();
             for (bi, b) in self.net.backends.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    link_dot(ui, if b.cfg.enabled { b.link } else { None }, b.error.is_some());
-                    ui.add(Label::new(bold(b.cfg.label.clone(), 13.0, if b.cfg.enabled { FG } else { DIM })).truncate());
-                    ui.label(txt(if b.remote() { "remote" } else { "lokal" }, 10.5, DIM));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let can_add = b.cfg.enabled && b.api.is_some();
-                        if btn(ui, "+", 14.0, vec2(5.0, 1.0), vec2(24.0, 20.0), false, can_add).on_hover_text("Neue Instanz").clicked() {
-                            acts.push(Act::NewInst(b.cfg.id.clone()));
-                        }
-                        let mut on = b.cfg.enabled;
-                        if ui.checkbox(&mut on, "").on_hover_text(if on { "Eingeschaltet – klicken zum Trennen" } else { "Ausgeschaltet – klicken zum Verbinden" }).changed() {
-                            acts.push(Act::Enable(bi, on));
-                        }
-                        if b.remote() && btn(ui, "✎", 12.0, vec2(5.0, 1.0), vec2(22.0, 20.0), false, true).on_hover_text("Backend bearbeiten").clicked() {
-                            acts.push(Act::EditBackend(Some(bi)));
-                        }
-                    });
-                });
-                if b.cfg.enabled {
-                    if let Some(e) = &b.error {
-                        ui.add(Label::new(txt(e.clone(), 11.5, ERR)).wrap());
-                    } else if b.link == Some(false) {
-                        ui.add(Label::new(txt("Verbindung getrennt – Wiederaufbau läuft …", 11.5, WARN)).wrap());
-                    }
-                    if b.insts.is_empty() && b.error.is_none() {
-                        ui.label(txt("keine Instanzen", 11.5, DIM));
-                    }
-                }
-                for inst in &b.insts {
-                    let key: InstKey = (b.cfg.id.clone(), inst.info.id.clone());
-                    let sel = self.net.selected.contains(&key);
-                    let (rect, resp) = ui.allocate_exact_size(vec2(w, 54.0), Sense::click());
-                    let fill = if sel { mix(acc(), 0.22, PANEL) } else if resp.hovered() { CARD } else { PANEL };
-                    ui.painter().rect_filled(rect, 6, fill);
-                    if sel {
-                        ui.painter().rect_stroke(rect, 6, Stroke::new(1.0, acc()), StrokeKind::Inside);
-                    }
-                    let mut c = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 4.0))).layout(Layout::top_down(Align::Min)));
-                    c.spacing_mut().item_spacing.y = 1.0;
-                    c.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 5.0;
+                let tone = if b.remote() { REMOTE } else { ACC };
+                Frame::new().fill(BG).stroke(Stroke::new(1.0, mix(tone, 0.35, BORDER))).corner_radius(8).inner_margin(Margin::same(7)).show(ui, |ui| {
+                    let w = ui.available_width();
+                    ui.set_width(w);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        link_dot(ui, if b.cfg.enabled { b.link } else { None }, b.error.is_some());
+                        ui.add(Label::new(bold(b.cfg.label.clone(), 13.0, if b.cfg.enabled { FG } else { DIM })).truncate());
+                        ui.label(txt(if b.remote() { "remote" } else { "lokal" }, 10.5, tone));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            pill(ui, inst.info.state);
-                            badge(ui, inst.info.asks);
-                            if inst.info.harness != "pi" {
-                                ui.label(txt(inst.info.harness.clone(), 10.5, DIM));
+                            let can_add = b.cfg.enabled && b.api.is_some();
+                            if btn(ui, "+ Instanz", 11.5, vec2(6.0, 1.0), vec2(0.0, 22.0), false, can_add).on_hover_text("Neue Instanz auf diesem Backend starten").clicked() {
+                                acts.push(Act::NewInst(b.cfg.id.clone()));
                             }
-                            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                ui.add(Label::new(bold(inst.info.name.clone(), 12.5, FG)).truncate());
-                            });
+                            if b.remote() && btn(ui, "✎", 12.0, vec2(5.0, 1.0), vec2(22.0, 22.0), false, true).on_hover_text("Backend bearbeiten").clicked() {
+                                acts.push(Act::EditBackend(Some(bi)));
+                            }
+                            let mut on = b.cfg.enabled;
+                            if ui.checkbox(&mut on, "").on_hover_text(if on { "Verbunden – Häkchen entfernen zum Trennen" } else { "Getrennt – Häkchen setzen zum Verbinden" }).changed() {
+                                acts.push(Act::Enable(bi, on));
+                            }
                         });
                     });
-                    c.add(Label::new(txt(short_cwd(&inst.info.cwd), 11.0, DIM)).truncate());
-                    let last = inst.info.last.replace('\n', " ");
-                    c.add(Label::new(txt(if last.is_empty() { "–".into() } else { last }, 11.0, alpha(FG, 0.75))).truncate());
-                    let resp = resp.on_hover_text(format!("{}\n{}", inst.info.cwd, if sel { "Strg/Cmd+Klick: aus dem Raster nehmen" } else { "Klick: anzeigen · Strg/Cmd+Klick: zum Raster hinzufügen" }));
-                    if resp.clicked() {
-                        let multi = ui.input(|i| i.modifiers.command);
-                        acts.push(Act::Select(key.clone(), multi));
+                    if b.cfg.enabled {
+                        if let Some(e) = &b.error {
+                            ui.add(Label::new(txt(e.clone(), 11.5, ERR)).wrap());
+                        } else if b.link == Some(false) {
+                            ui.add(Label::new(txt("Verbindung getrennt – Wiederaufbau läuft …", 11.5, WARN)).wrap());
+                        }
+                        if b.insts.is_empty() && b.error.is_none() {
+                            ui.label(txt("keine Instanzen", 11.5, DIM));
+                        }
+                    } else {
+                        ui.label(txt("getrennt", 11.5, DIM));
                     }
-                    let exited = inst.info.state == State::Exited;
-                    let remote_backend = b.cfg.kind == "ssh";
-                    resp.context_menu(|ui| {
-                        if ui.button("Stoppen (Instanz entfernen)").clicked() {
-                            acts.push(Act::Stop(key.clone()));
-                            ui.close();
-                        }
-                        if remote_backend && ui.button("Arbeitsordner hierher holen (rsync)").on_hover_text("Ohne Build-Cache; x86-64-Programme werden übersprungen. Ziel: ~/pi-abruf").clicked() {
-                            acts.push(Act::Fetch(key.clone()));
-                            ui.close();
-                        }
-                        if ui.add_enabled(exited, egui::Button::new("Neu starten")).on_disabled_hover_text("Nur für beendete Instanzen").clicked() {
-                            acts.push(Act::Restart(key.clone()));
-                            ui.close();
-                        }
-                    });
-                    ui.add_space(3.0);
-                }
-                ui.add_space(10.0);
+                    for inst in &b.insts {
+                        ui.add_space(4.0);
+                        let key: InstKey = (b.cfg.id.clone(), inst.info.id.clone());
+                        let shown = self.net.remote_ctx().as_ref() == Some(&key);
+                        let in_grid = self.net.grid && self.net.selected.contains(&key);
+                        self.net_inst_card(ui, &key, inst, tone, shown, in_grid, b.cfg.kind == "ssh", &mut acts);
+                    }
+                });
+                ui.add_space(8.0);
             }
         });
         ui.add_space(4.0);
-        if btn(ui, "+ Backend hinzufügen", 12.5, vec2(10.0, 4.0), Vec2Zero::z(), false, true).on_hover_text("pi-hub-Server mit URL und Token eintragen").clicked() {
+        if btn(ui, "+ Backend hinzufügen", 12.5, vec2(10.0, 4.0), Vec2Zero::z(), false, true).on_hover_text("SSH-Server oder pi-hub per URL eintragen").clicked() {
             acts.push(Act::EditBackend(None));
         }
-        ui.add_space(6.0);
-        ui.label(txt("Chat mit Menschen: in Vorbereitung", 11.0, DIM)).on_hover_text(NET_PLACEHOLDER.join("\n\n"));
         self.net_apply(acts);
+    }
+
+    /// Ansichtswahl: Einzelchat als Dropdown (Haupt-Session, lokale Instanzen magenta,
+    /// entfernte cyan) und daneben das Raster für mehrere Fenster.
+    fn net_view_switch(&self, ui: &mut Ui, acts: &mut Vec<Act>) {
+        let shown = self.net.remote_ctx();
+        let grid = self.net.grid;
+        let n_grid = self.net.selected.iter().filter(|k| self.net.inst(k).is_some()).count();
+        ui.label(txt("Ansicht", 11.0, DIM));
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let label = |k: &Option<InstKey>| -> (String, Color32) {
+                match k {
+                    None => ("Haupt-Session".into(), ACC),
+                    Some(k) => {
+                        let b = self.net.backend(&k.0);
+                        let remote = b.is_some_and(|b| b.remote());
+                        let name = self.net.inst(k).map(|i| i.info.name.clone()).unwrap_or_default();
+                        (format!("{} · {name}", b.map(|b| b.cfg.label.clone()).unwrap_or_default()), if remote { REMOTE } else { ACC })
+                    }
+                }
+            };
+            let (cur, c) = if grid { ("Einzelchat …".to_string(), DIM) } else { label(&shown) };
+            let w = (ui.available_width() - 92.0).max(120.0);
+            egui::ComboBox::from_id_salt("net-single")
+                .width(w)
+                .height(420.0)
+                .selected_text(RichText::new(format!("▣ {cur}")).size(12.5).color(if grid { DIM } else { c }))
+                .show_ui(ui, |ui| {
+                    ui.style_mut().interaction.selectable_labels = false;
+                    ui.label(txt("Einzelchat zeigen", 10.5, DIM));
+                    let mut opts: Vec<Option<InstKey>> = vec![None];
+                    for b in &self.net.backends {
+                        for i in &b.insts {
+                            opts.push(Some((b.cfg.id.clone(), i.info.id.clone())));
+                        }
+                    }
+                    for o in opts {
+                        let (t, c) = label(&o);
+                        let state = o.as_ref().and_then(|k| self.net.inst(k)).map(|i| state_look(i.info.state).1).unwrap_or("copi");
+                        let sel = !grid && shown == o;
+                        let r = ui.add(egui::Button::selectable(sel, RichText::new(format!("{}  {t}   · {state}", if o.is_some() && c == REMOTE { "◆" } else { "●" })).size(12.5).color(c)).min_size(vec2(w, 26.0)));
+                        if r.clicked() {
+                            acts.push(Act::Single(o));
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Welche Session im Hauptbereich erscheint: Magenta = auf diesem Gerät, Cyan = auf einem Server");
+            let tip = if n_grid == 0 { "Mehrere Instanzen nebeneinander. Instanzen mit ▦ in der Karte hinzufügen.".to_string() } else { format!("{n_grid} Instanz(en) nebeneinander zeigen") };
+            if btn(ui, &format!("▦ Raster {n_grid}"), 12.0, vec2(8.0, 3.0), vec2(0.0, 26.0), grid, true).on_hover_text(tip).clicked() {
+                acts.push(Act::Grid(!grid));
+            }
+        });
+    }
+
+    /// Instanzkarte: ganze Fläche klickbar (Einzelchat), ▦ schaltet das Raster.
+    #[allow(clippy::too_many_arguments)]
+    fn net_inst_card(&self, ui: &mut Ui, key: &InstKey, inst: &crate::net::Inst, tone: Color32, shown: bool, in_grid: bool, ssh: bool, acts: &mut Vec<Act>) {
+        let w = ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(vec2(w, 54.0), Sense::hover());
+        let hovered = ui.rect_contains_pointer(rect);
+        let on = shown || in_grid;
+        let fill = if on { mix(tone, 0.22, PANEL) } else if hovered { CARD } else { PANEL };
+        ui.painter().rect_filled(rect, 6, fill);
+        ui.painter().rect_stroke(rect, 6, Stroke::new(1.0, if on { tone } else if hovered { mix(tone, 0.5, BORDER) } else { BORDER }), StrokeKind::Inside);
+        let toggle = egui::Rect::from_min_size(rect.right_top() + vec2(-30.0, 27.0), vec2(24.0, 22.0));
+        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 4.0))).layout(Layout::top_down(Align::Min)));
+        c.style_mut().interaction.selectable_labels = false;
+        c.spacing_mut().item_spacing.y = 1.0;
+        c.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                pill(ui, inst.info.state);
+                badge(ui, inst.info.asks);
+                if inst.info.harness != "pi" {
+                    ui.label(txt(inst.info.harness.clone(), 10.5, DIM));
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.add(Label::new(bold(inst.info.name.clone(), 12.5, if shown { tone } else { FG })).truncate());
+                });
+            });
+        });
+        c.add(Label::new(txt(short_cwd(&inst.info.cwd), 11.0, DIM)).truncate());
+        let last = inst.info.last.replace('\n', " ");
+        c.allocate_ui(vec2(c.available_width() - 30.0, 14.0), |ui| {
+            ui.add(Label::new(txt(if last.is_empty() { "–".into() } else { last }, 11.0, alpha(FG, 0.75))).truncate());
+        });
+        // Klickfläche nach dem Inhalt anlegen, damit Texte keine Klicks abfangen.
+        let resp = ui.interact(rect, Id::new(("net-card", &key.0, &key.1)), Sense::click());
+        let resp = resp.on_hover_text(format!("{}\nKlick: im Einzelchat zeigen · ▦: ins Raster · Rechtsklick: Menü", inst.info.cwd));
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if resp.clicked() {
+            let multi = ui.input(|i| i.modifiers.command);
+            acts.push(if multi { Act::GridToggle(key.clone()) } else { Act::Single(Some(key.clone())) });
+        }
+        let mut t = ui.new_child(egui::UiBuilder::new().max_rect(toggle));
+        if btn(&mut t, "▦", 12.0, vec2(4.0, 1.0), toggle.size(), in_grid, true).on_hover_text(if in_grid { "Aus dem Raster nehmen" } else { "Ins Raster aufnehmen (mehrere Fenster)" }).clicked() {
+            acts.push(Act::GridToggle(key.clone()));
+        }
+        let exited = inst.info.state == State::Exited;
+        resp.context_menu(|ui| {
+            if ui.button("Im Einzelchat zeigen").clicked() {
+                acts.push(Act::Single(Some(key.clone())));
+                ui.close();
+            }
+            if ui.button(if in_grid { "Aus dem Raster nehmen" } else { "Ins Raster aufnehmen" }).clicked() {
+                acts.push(Act::GridToggle(key.clone()));
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Stoppen (Instanz entfernen)").clicked() {
+                acts.push(Act::Stop(key.clone()));
+                ui.close();
+            }
+            if ssh && ui.button("Arbeitsordner hierher holen (rsync)").on_hover_text("Ohne Build-Cache; x86-64-Programme werden übersprungen. Ziel: ~/pi-abruf").clicked() {
+                acts.push(Act::Fetch(key.clone()));
+                ui.close();
+            }
+            if ui.add_enabled(exited, egui::Button::new("Neu starten")).on_disabled_hover_text("Nur für beendete Instanzen").clicked() {
+                acts.push(Act::Restart(key.clone()));
+                ui.close();
+            }
+        });
     }
 
     /// Raster der gewählten Instanzen (ersetzt den Einzel-Chat, solange aktiv).
@@ -210,9 +299,9 @@ impl App {
                 ui.vertical_centered(|ui| {
                     ui.add_space(full.height() * 0.35);
                     ui.label(txt("Keine Instanz gewählt.", 15.0, FG));
-                    ui.label(txt("In der Backend-Leiste rechts eine Instanz anklicken (Strg/Cmd+Klick für mehrere).", 12.5, DIM));
+                    ui.label(txt("In der Backend-Leiste rechts bei Instanzen ▦ klicken, um sie hier nebeneinander zu zeigen.", 12.5, DIM));
                     ui.add_space(8.0);
-                    if btn(ui, "Zum Einzel-Chat", 13.0, vec2(12.0, 5.0), Vec2Zero::z(), false, true).clicked() {
+                    if btn(ui, "Zum Einzelchat", 13.0, vec2(12.0, 5.0), Vec2Zero::z(), false, true).clicked() {
                         acts.push(Act::Grid(false));
                     }
                 });
@@ -398,7 +487,11 @@ impl App {
     fn net_apply(&mut self, acts: Vec<Act>) {
         for a in acts {
             match a {
-                Act::Select(k, m) => self.net.select(k, m),
+                Act::Single(k) => {
+                    self.net.show_single(k);
+                    self.focus_prompt = true;
+                }
+                Act::GridToggle(k) => self.net.toggle_grid(k),
                 Act::Deselect(k) => self.net.selected.retain(|s| *s != k),
                 Act::Grid(g) => {
                     self.net.set_grid(g);

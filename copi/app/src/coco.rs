@@ -82,6 +82,10 @@ pub enum CocoAct {
     A2aReject(ChatId),
     // Personas
     SavePersona(Persona),
+    /// Eigene Persona-Datei löschen (mitgelieferte Original erscheint wieder).
+    DeletePersona(PersonaId),
+    /// Persona-Ordner neu einlesen (nach Änderungen im Editor).
+    ReloadPersonas,
     // Fernzugriff
     RemoteRequest { peer: PeerId, space: SpaceId, scope: RemoteScope, minutes: u32, reason: String },
     /// Host: Anfrage annehmen und dabei die geteilte Session wählen (`Participant::DevAgent`).
@@ -361,6 +365,22 @@ fn checksum(items: &[MirrorItem], state: &str) -> u64 {
 impl App {
     fn coco_err(&mut self, e: impl Into<String>) {
         self.toast(e, ToastKind::Error);
+    }
+
+    fn coco_reload_personas(&mut self, dir: &std::path::Path) {
+        let (list, errs) = pi_net::persona::load_all(dir);
+        self.coco.personas = list;
+        self.coco.persona_errors = errs;
+    }
+
+    /// Laufende Persona-Instanz beenden (außer während eines Zugs); der nächste Zug startet neu.
+    fn coco_drop_persona_inst(&mut self, me: &PeerId, id: &PersonaId) {
+        let who = Participant::Persona { owner: me.clone(), persona: id.clone() };
+        if !self.coco.turns.contains_key(&who) {
+            if let Some(l) = self.coco.links.remove(&who) {
+                let _ = l.api.remove(&l.inst);
+            }
+        }
     }
 
     /// Einmal pro Frame aus `App::pump`: Transportereignisse, A2A-Züge, Spiegel, Abläufe.
@@ -1054,20 +1074,44 @@ impl App {
                 }
                 match pi_net::persona::save(&dir, &p) {
                     Ok(_) => {
-                        let (list, errs) = pi_net::persona::load_all(&dir);
-                        self.coco.personas = list;
-                        self.coco.persona_errors = errs;
+                        self.coco_reload_personas(&dir);
                         // Laufende Instanz neu starten lassen (neuer Systemprompt).
-                        let who = Participant::Persona { owner: me, persona: p.id.clone() };
-                        if !self.coco.turns.contains_key(&who) {
-                            if let Some(l) = self.coco.links.remove(&who) {
-                                let _ = l.api.remove(&l.inst);
-                            }
-                        }
+                        self.coco_drop_persona_inst(&me, &p.id);
                         self.toast(format!("Persona „{}“ gespeichert.", p.name), ToastKind::Info);
                     }
                     Err(e) => self.coco_err(e),
                 }
+            }
+            CocoAct::DeletePersona(id) => {
+                let Some(dir) = Coco::persona_dir() else { return self.coco_err("Kein Konfigurationsordner.") };
+                if self.coco.demo {
+                    self.coco.personas.retain(|p| p.id != id || p.builtin);
+                    return self.toast("Demo-Modus: nur in der Anzeige entfernt.", ToastKind::Info);
+                }
+                match pi_net::persona::delete(&dir, id.as_str()) {
+                    Ok(()) => {
+                        self.coco_reload_personas(&dir);
+                        self.coco_drop_persona_inst(&me, &id);
+                        let back = self.coco.personas.iter().any(|p| p.id == id && p.builtin);
+                        self.toast(if back { "Persona gelöscht – mitgeliefertes Original ist wieder aktiv.".to_string() } else { "Persona gelöscht.".to_string() }, ToastKind::Info);
+                    }
+                    Err(e) => self.coco_err(e),
+                }
+            }
+            CocoAct::ReloadPersonas => {
+                let Some(dir) = Coco::persona_dir() else { return self.coco_err("Kein Konfigurationsordner.") };
+                if self.coco.demo {
+                    return self.toast("Demo-Modus: nichts neu geladen.", ToastKind::Info);
+                }
+                self.coco_reload_personas(&dir);
+                // Nicht sprechende Instanzen beenden, damit neue Systemtexte greifen.
+                let ids: Vec<PersonaId> = self.coco.personas.iter().map(|p| p.id.clone()).collect();
+                for id in ids {
+                    self.coco_drop_persona_inst(&me, &id);
+                }
+                let n = self.coco.personas.len();
+                let e = self.coco.persona_errors.len();
+                self.toast(if e == 0 { format!("{n} Nebenagenten geladen.") } else { format!("{n} Nebenagenten geladen, {e} Datei(en) fehlerhaft.") }, if e == 0 { ToastKind::Info } else { ToastKind::Warn });
             }
             CocoAct::RemoteRequest { peer, space, scope, minutes, reason } => {
                 if !self.coco.store.contact(&peer).is_some_and(|c| c.verified && !c.blocked) {

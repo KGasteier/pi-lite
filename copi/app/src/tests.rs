@@ -563,7 +563,9 @@ mod net {
         n.grid = false;
         n.select(key("lokal", "l2"), false);
         assert_eq!(n.selected, vec![key("lokal", "l2")]);
-        assert!(!n.grid && !n.remote_main, "lokale Auswahl führt zum lokalen Chat");
+        assert!(!n.grid && n.remote_main, "lokale Instanz erscheint ebenfalls im Einzelchat");
+        assert_eq!(n.remote_ctx(), Some(key("lokal", "l2")));
+        assert!(!n.main_is_remote(), "lokal bleibt magenta");
         n.select(key("hub-buero", "a1b2"), true);
         n.select(key("lokal", "l1"), true);
         assert_eq!(n.selected.len(), 3);
@@ -575,6 +577,18 @@ mod net {
         assert_eq!(n.selected, vec![key("hub-buero", "c3d4")]);
         assert!(!n.grid && n.remote_main);
         assert_eq!(n.remote_ctx(), Some(key("hub-buero", "c3d4")));
+        assert!(n.main_is_remote(), "Server-Instanz: cyan");
+        // Raster-Knopf je Karte: Auswahl bleibt, Raster wird aktiv.
+        n.toggle_grid(key("lokal", "l1"));
+        assert!(n.grid && n.remote_ctx().is_none());
+        assert_eq!(n.selected, vec![key("hub-buero", "c3d4"), key("lokal", "l1")]);
+        n.toggle_grid(key("hub-buero", "c3d4"));
+        assert_eq!(n.selected, vec![key("lokal", "l1")]);
+        // Dropdown: Haupt-Session leert die Auswahl.
+        n.show_single(None);
+        assert!(!n.grid && n.selected.is_empty() && n.remote_ctx().is_none());
+        n.show_single(Some(key("lokal", "l2")));
+        assert_eq!(n.remote_ctx(), Some(key("lokal", "l2")));
     }
 
     #[test]
@@ -924,6 +938,35 @@ fn remote_mode_switches_signal_color_and_routes_input() {
 }
 
 #[test]
+fn net_bar_card_click_selects_on_first_click() {
+    // Ein einziger Klick auf den Namenstext der Instanzkarte wählt sie im Einzelchat.
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    a.demo_scene("net");
+    a.net.show_single(None);
+    a.store.net_visible = true;
+    #[cfg(feature = "cocopi")]
+    {
+        a.coco.main = None;
+        a.coco.ui.backends = true;
+    }
+    let size = egui::vec2(1400.0, 880.0);
+    let raw = |events: Vec<Event>| RawInput { events, screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default() };
+    let ctx = a.ctx.clone();
+    ctx.run_ui(raw(vec![]), |ui| a.draw(ui)).textures_delta.clear();
+    ctx.run_ui(raw(vec![]), |ui| a.draw(ui)).textures_delta.clear();
+    let id = egui::Id::new(("net-card", "hub-buero", "a1b2"));
+    let r = ctx.read_response(id).expect("Instanzkarte gezeichnet").rect;
+    // Auf den Namen links oben in der Karte (Text) klicken.
+    let p = r.left_top() + egui::vec2(20.0, 12.0);
+    ctx.run_ui(raw(vec![Event::PointerMoved(p)]), |ui| a.draw(ui)).textures_delta.clear();
+    ctx.run_ui(raw(vec![Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE }]), |ui| a.draw(ui)).textures_delta.clear();
+    ctx.run_ui(raw(vec![Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE }]), |ui| a.draw(ui)).textures_delta.clear();
+    assert_eq!(a.remote_single(), Some(("hub-buero".to_string(), "a1b2".to_string())), "erster Klick genügt");
+    assert!(a.net.main_is_remote());
+}
+
+#[test]
 fn remote_main_survives_hidden_sidebar_and_routes_escape() {
     let mut a = demo();
     crate::setup_ctx(&a.ctx);
@@ -945,7 +988,7 @@ fn remote_main_survives_hidden_sidebar_and_routes_escape() {
     assert!(a.remote_single().is_none(), "Einzel-Chat ist lokal");
     a.net.select(k, false);
     a.net.select(("lokal".into(), "l1".into()), false);
-    assert!(a.remote_single().is_none(), "lokale Instanzauswahl verlässt Remote");
+    assert!(!a.net.main_is_remote(), "lokale Instanzauswahl verlässt den Remote-Modus (Farbe)");
     prompt_frame(&mut a, vec![]);
 }
 

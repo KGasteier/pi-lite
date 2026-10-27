@@ -56,8 +56,23 @@ Rolle „Leitung“ ist kryptografisch an das Gerät gebunden, **nicht** institu
 ## Hauptbereich und Eingabe
 
 Der Hauptbereich zeigt genau eines (Priorität): cocopi-Chat bzw. Fernsitzung (`coco.main`) →
-Remote-Instanz (`remote_single`) → Raster → normale Session. Die **normale Eingabe** schreibt
-immer in das, was der Hauptbereich zeigt; Platzhalter und Signalfarbe sagen wohin.
+gewählte Instanz (`remote_single`, lokal oder remote) → Raster → normale Session. Die **normale
+Eingabe** schreibt immer in das, was der Hauptbereich zeigt; Platzhalter und Signalfarbe sagen wohin.
+
+## Rechte Seitenleiste
+
+- Kopf: Identität, rechts der Knopf **„Backends n“**. Er schaltet zwischen den Reitern
+  (Chats · Kontakte · Räume · Agenten) und der Backend-Ansicht um.
+- Backend-Ansicht: Dropdown **„Einzelchat“** mit Haupt-Session und allen laufenden Instanzen
+  (Magenta = dieses Gerät, Cyan = Server; die Signalfarbe folgt nur echten Server-Instanzen).
+  Daneben **„▦ Raster n“**: zeigt die markierten Instanzen nebeneinander. Instanzkarten sind
+  vollflächig klickbar (Klick = Einzelchat, ▦ = ins Raster, Strg/Cmd+Klick = ins Raster,
+  Rechtsklick = Stoppen/Neu starten/Abruf).
+- Reiter Agenten: Nebenagenten mit „+ Neu …“, „↻ Neu laden“ (Ordner neu einlesen), je Karte
+  „Chat“, bei mitgelieferten „Als Kopie bearbeiten …“ (neue Kennung `<id>-kopie`) und
+  „Anpassen …“ (gleiche Kennung, überschreibt), bei eigenen „Bearbeiten …“ und „Löschen“
+  bzw. „Original wiederherstellen“. Löschen entfernt nur die reguläre Datei `<id>.md`
+  (kein Symlink) und beendet eine laufende Instanz, sofern sie gerade keine Runde spricht.
 
 ## Ablauf Agent2Agent (Gerät mit Agenten)
 

@@ -1940,7 +1940,7 @@ impl App {
         if let Some(k) = self.remote_single() {
             // Remote-Modus: dasselbe Eingabefeld, die Nachricht geht an die Server-Instanz.
             if self.net.inst(&k).is_some_and(|i| matches!(i.info.state, pi_backend::instances::State::Exited | pi_backend::instances::State::Starting)) {
-                self.toast("Die Remote-Instanz ist nicht bereit.", ToastKind::Warn);
+                self.toast("Die gewählte Instanz ist nicht bereit.", ToastKind::Warn);
                 return;
             }
             self.history.add(&t);

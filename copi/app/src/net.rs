@@ -694,13 +694,43 @@ impl NetState {
         self.send(k, json!({"type": "get_state", "id": "copi-state"}));
     }
 
-    /// Instanz, die im Hauptbereich gezeigt wird, wenn sie auf einem Remote-Backend läuft.
+    /// Instanz, die im Hauptbereich (Einzelchat) gezeigt wird – lokal oder remote.
+    /// `None` = Haupt-Session von copi.
     pub fn remote_ctx(&self) -> Option<InstKey> {
         let k = self.selected.first()?;
-        if !self.remote_main || self.grid || self.selected.len() != 1 || !self.backend(&k.0)?.remote() {
+        if !self.remote_main || self.grid || self.selected.len() != 1 {
             return None;
         }
         self.inst(k).map(|_| k.clone())
+    }
+
+    /// Läuft die Instanz im Einzelchat auf einem entfernten Backend? (Signalfarbe Cyan)
+    pub fn main_is_remote(&self) -> bool {
+        self.remote_ctx().and_then(|k| self.backend(&k.0).map(Backend::remote)).unwrap_or(false)
+    }
+
+    /// Einzelchat auf eine Instanz (oder `None` = Haupt-Session) umschalten.
+    pub fn show_single(&mut self, k: Option<InstKey>) {
+        self.grid = false;
+        match k {
+            Some(k) => self.select(k, false),
+            None => {
+                self.remote_main = false;
+                self.selected.clear();
+            }
+        }
+    }
+
+    /// Instanz im Raster ein- oder ausblenden (Raster bleibt aktiv).
+    pub fn toggle_grid(&mut self, k: InstKey) {
+        if let Some(p) = self.selected.iter().position(|s| *s == k) {
+            self.selected.remove(p);
+        } else {
+            self.selected.push(k);
+        }
+        self.grid = true;
+        self.remote_main = false;
+        self.ensure_subs();
     }
 
     fn on_ev_inner(&mut self, t: Tagged) {
@@ -751,9 +781,8 @@ impl NetState {
         }
     }
 
-    /// Klick: Remote im Hauptchat, lokal zurück zum lokalen Chat; Strg/Cmd wählt fürs Raster.
+    /// Klick: Instanz im Einzelchat (lokal wie remote); Strg/Cmd wählt fürs Raster.
     pub fn select(&mut self, k: InstKey, multi: bool) {
-        let remote = self.backend(&k.0).is_some_and(Backend::remote);
         if multi {
             if let Some(p) = self.selected.iter().position(|s| *s == k) {
                 self.selected.remove(p);
@@ -763,7 +792,7 @@ impl NetState {
         } else {
             self.selected = vec![k];
         }
-        self.remote_main = !multi && remote;
+        self.remote_main = !multi;
         self.grid = multi;
         self.ensure_subs();
         if let Some(k) = self.remote_ctx() {
@@ -771,10 +800,14 @@ impl NetState {
         }
     }
 
-    /// Explizite Ansichtswahl: Einzel-Chat ist immer lokal, Raster bleibt Kachelansicht.
+    /// Explizite Ansichtswahl: `false` = Einzelchat mit der Haupt-Session, `true` = Raster
+    /// der gewählten Instanzen (die Auswahl bleibt erhalten).
     pub fn set_grid(&mut self, grid: bool) {
         self.remote_main = false;
         self.grid = grid;
+        if grid {
+            self.ensure_subs();
+        }
     }
 
     /// Sichtbarer Hinweis im Hauptchat, ohne die Backend-Konfiguration zu verändern.

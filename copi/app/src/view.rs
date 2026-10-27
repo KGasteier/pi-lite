@@ -19,18 +19,12 @@ type Act = Box<dyn FnOnce(&mut App)>;
 
 const KEYHELP: [&str; 5] = [
     "Tab / Shift+Tab: nächstes / vorheriges Bedienelement · Enter/Leertaste: aktivieren · Esc: schließen/zurück",
-    "Alt+1: Eingabe · Alt+2: Seitenliste · Alt+3: Chat · Alt+4: Kopfzeile · Alt+5: Vorschau\nAlt+N: neue Session · Alt+A: abbrechen · Alt+F: Fork · Alt+M: Modell · Alt+T: Thinking\nAlt+− / Alt++: Ausgabeschrift · F1: diese Hilfe · Strg/Cmd+B: Sessions · Strg/Cmd+Shift+B: Netz-Seitenleiste",
+    "Alt+1: Eingabe · Alt+2: Seitenliste · Alt+3: Chat · Alt+4: Kopfzeile · Alt+5: Vorschau\nAlt+N: neue Session · Alt+A: abbrechen · Alt+F: Fork · Alt+M: Modell · Alt+T: Thinking\nAlt+− / Alt++: Ausgabeschrift · F1: diese Hilfe · Strg/Cmd+B: Sessions · Strg/Cmd+Shift+B: rechte Seitenleiste",
     "Listen: ↑/↓, Home/End · ←: Ansichtsauswahl · →: Vorschau\nSessions: Enter öffnen · R/F2 umbenennen · Backspace löschen · M/Shift+F10 Menü\nChat: ↑/↓ scrollen · Home/End Anfang/Ende · Tab erreicht Links und Tool-Blöcke",
     "Eingabe: ↑/↓ an erster/letzter Zeile: History; sonst Cursor · Alt+↑/↓ oder Pfeilknöpfe: History\nEnter sendet · Option/Alt+Enter: neue Zeile · Editor: Strg/Cmd+S speichert\nEsc unterbricht den Agenten · !cmd Shell (!!cmd ohne Kontext) · pi update u. a. pi-CLI-Befehle direkt\n/ öffnet Befehle · Tippen filtert Namen · Hover/↑↓ markieren · Klick/Enter ausführen · Tab vervollständigen · Esc schließen",
     "Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhalb von Textfeldern.",
 ];
-/// Texte der Netz-Seitenleiste (identisch in ui/index.html, #netpanel).
-pub const NET_PLACEHOLDER: [&str; 3] = [
-    "Hier entsteht der Chat mit Menschen: Kurs, Projekt oder Direktnachricht.",
-    "Noch ohne Funktion – es wird nichts gesendet, empfangen oder gespeichert.",
-    "Geplant: Präsenz, Dateien, Code und Prompts als Karten. Prompts landen nur nach ausdrücklicher Übernahme in der Eingabe.",
-];
-const REMOTE_PLACEHOLDER: &str = "Nachricht an die Server-Instanz … (Enter = senden, Alt+Enter = Zeilenumbruch)";
+const REMOTE_PLACEHOLDER: &str = "Nachricht an die gewählte Instanz … (Enter = senden, Alt+Enter = Zeilenumbruch)";
 const PLACEHOLDER: &str = "Nachricht, /Befehl, !Shell oder pi update … (Enter = senden, Alt+Enter = Zeilenumbruch)";
 
 fn prompt_id() -> Id {
@@ -136,7 +130,7 @@ impl App {
         let ctx = ui.ctx().clone();
         self.pump();
         // Signalfarbe: Cyan, solange der Hauptbereich eine Server-Instanz zeigt (sonst Magenta).
-        set_remote_mode(self.remote_single().is_some());
+        set_remote_mode(self.net.main_is_remote());
         self.keys(&ctx);
 
         if self.store.side_visible {
@@ -1136,8 +1130,9 @@ impl App {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let net_on = self.store.net_visible;
-                let tip = if rctx.is_some() { "Remote-Modus aktiv – Workspace und Modelle kommen vom Server. Klick blendet die Netz-Leiste aus." } else if net_on { "Netz-Seitenleiste ausblenden" } else { "Netz-Seitenleiste einblenden (menschlicher Chat, in Vorbereitung)" };
-                if icons::icon_button(ui, vec2(32.0, 30.0), true, IconStyle { icon: 28.0, fg: if rctx.is_some() { REMOTE } else { OK }, ..Default::default() }, tip, |p, r, c| {
+                let remote_on = self.net.main_is_remote();
+                let tip = if remote_on { "Remote-Modus aktiv – Workspace und Modelle kommen vom Server. Klick blendet die Seitenleiste aus." } else if net_on { "Seitenleiste ausblenden" } else { "Seitenleiste einblenden (Chats, Backends, Nebenagenten)" };
+                if icons::icon_button(ui, vec2(32.0, 30.0), true, IconStyle { icon: 28.0, fg: if remote_on { REMOTE } else { OK }, ..Default::default() }, tip, |p, r, c| {
                     let box_rect = r.shrink(0.5);
                     p.rect_stroke(box_rect, 2, Stroke::new(1.2, c), StrokeKind::Inside);
                     let x = box_rect.right() - box_rect.width() * 0.3;
@@ -1179,10 +1174,10 @@ impl App {
             self.activity.phase_label(&self.status)
         } else if let Some(st) = remote {
             match st {
-                State::Busy => "Remote arbeitet".to_string(),
-                State::Waiting => "Remote wartet auf Antwort".to_string(),
-                State::Exited => "Remote-Instanz beendet".to_string(),
-                _ => "Remote bereit".to_string(),
+                State::Busy => "Instanz arbeitet".to_string(),
+                State::Waiting => "Instanz wartet auf Antwort".to_string(),
+                State::Exited => "Instanz beendet".to_string(),
+                _ => "Instanz bereit".to_string(),
             }
         } else {
             job.map(String::from).unwrap_or_else(|| self.status.clone())

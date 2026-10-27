@@ -361,10 +361,47 @@ pub fn save(dir: &std::path::Path, p: &Persona) -> Result<std::path::PathBuf, St
     result
 }
 
+/// Persona-Datei löschen (nur reguläre Datei `<id>.md`, kein Symlink).
+/// Danach erscheint eine gleichnamige mitgelieferte Persona wieder im Original.
+pub fn delete(dir: &std::path::Path, id: &str) -> Result<(), String> {
+    validate_id(id)?;
+    let path = dir.join(format!("{id}.md"));
+    let meta = std::fs::symlink_metadata(&path).map_err(|e| format!("Persona-Datei nicht gefunden: {e}"))?;
+    if !meta.file_type().is_file() {
+        return Err("Keine reguläre Persona-Datei".into());
+    }
+    std::fs::remove_file(&path).map_err(|e| format!("Persona nicht gelöscht: {e}"))
+}
+
+/// Freie Kennung für eine Kopie (`<id>-kopie`, `<id>-kopie-2`, …), höchstens 40 Zeichen.
+pub fn copy_id(id: &str, taken: &[&str]) -> String {
+    let base: String = format!("{}-kopie", id.chars().take(28).collect::<String>());
+    (1..1000)
+        .map(|n| if n == 1 { base.clone() } else { format!("{base}-{n}") })
+        .find(|c| !taken.contains(&c.as_str()))
+        .unwrap_or(base)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn delete_and_copy_id() {
+        let t = Temp::new();
+        let mut p = builtins().remove(0);
+        p.builtin = false;
+        save(&t.0, &p).unwrap();
+        assert!(load_all(&t.0).0.iter().any(|x| x.id == p.id && !x.builtin));
+        delete(&t.0, p.id.as_str()).unwrap();
+        assert!(load_all(&t.0).0.iter().any(|x| x.id == p.id && x.builtin), "Original kehrt zurück");
+        assert!(delete(&t.0, p.id.as_str()).is_err());
+        assert!(delete(&t.0, "../x").is_err());
+        assert_eq!(copy_id("sokrates", &[]), "sokrates-kopie");
+        assert_eq!(copy_id("sokrates", &["sokrates-kopie"]), "sokrates-kopie-2");
+        assert!(copy_id(&"a".repeat(40), &[]).len() <= 40);
+    }
 
     struct Temp(PathBuf);
     impl Temp {

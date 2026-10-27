@@ -17,6 +17,8 @@ use crate::view::{btn, txt};
 #[derive(Default)]
 pub struct CocoUi {
     tab: usize,
+    /// Backends-Ansicht statt der Reiter (Knopf oben rechts).
+    pub(crate) backends: bool,
     filter: ChatFilter,
     search: String,
     contact_addr: String,
@@ -86,6 +88,23 @@ fn button(ui: &mut Ui, label: &str) -> bool {
 }
 fn heading(ui: &mut Ui, text: &str) {
     ui.label(txt(text, 14.0, FG));
+}
+/// Abschnittskopf mit farbiger Kante, damit Bereiche visuell getrennt sind.
+fn section_title(ui: &mut Ui, title: &str, sub: &str, color: Color32) {
+    Frame::new()
+        .fill(alpha(color, 0.08))
+        .stroke(Stroke::new(1.0, alpha(color, 0.45)))
+        .corner_radius(6)
+        .inner_margin(Margin::symmetric(8, 5))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(txt(title, 13.5, color));
+            hint(ui, sub);
+        });
+    ui.add_space(6.0);
+}
+fn is_builtin_id(id: &str) -> bool {
+    pi_net::persona::builtins().iter().any(|p| p.id.as_str() == id)
 }
 fn hint(ui: &mut Ui, text: &str) {
     ui.add(Label::new(txt(text, 11.0, DIM)).wrap());
@@ -299,22 +318,47 @@ impl App {
     pub(crate) fn coco_panel(&mut self, ui: &mut Ui) {
         let mut state = std::mem::take(&mut self.coco.ui);
         let mut acts = Vec::new();
+        ui.style_mut().interaction.selectable_labels = false;
         ui.visuals_mut().selection.bg_fill = alpha(OK, 0.22);
         ui.visuals_mut().selection.stroke.color = OK;
-        ui.horizontal_wrapped(|ui| {
+        // Kopf: Identität/Netz links, Backends-Umschalter rechts.
+        ui.horizontal(|ui| {
             let running = self.coco.node.is_some();
             let (r, resp) = ui.allocate_exact_size(vec2(9.0, 12.0), egui::Sense::hover());
             ui.painter()
                 .circle_filled(r.center(), 3.5, if running { OK } else { DIM });
             resp.on_hover_text(if running { "Netz an" } else { "Netz aus" });
-            ui.label(txt(
+            ui.add(Label::new(txt(
                 format!("Ich · {}", pi_net::identity::short(&self.coco.store.me)),
                 12.0,
                 FG,
-            ));
+            )).truncate());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let n = self.net.backends.iter().map(|b| b.insts.len()).sum::<usize>();
+                let label = if state.backends { "× Backends".to_string() } else { format!("Backends {n}") };
+                if btn(ui, &label, 12.0, vec2(8.0, 3.0), vec2(0.0, 25.0), state.backends, true)
+                    .on_hover_text(if state.backends { "Zurück zu Chats, Kontakten, Räumen und Agenten" } else { "Backends und Instanzen: Einzelchat wählen, Raster, neue Instanzen" })
+                    .clicked()
+                {
+                    state.backends = !state.backends;
+                }
+            });
+        });
+        if state.backends {
+            ui.add_space(4.0);
+            section_title(ui, "Backends & Instanzen", "Sessions auf diesem Gerät (magenta) und auf Servern (cyan)", REMOTE);
+            self.net_bar_inner(ui, false);
+            self.coco.ui = state;
+            for act in acts {
+                self.coco_apply(act);
+            }
+            return;
+        }
+        ui.horizontal_wrapped(|ui| {
+            let running = self.coco.node.is_some();
             if btn(
                 ui,
-                if running { "Stoppen" } else { "Netz starten" },
+                if running { "Netz stoppen" } else { "Netz starten" },
                 11.0,
                 vec2(6.0, 3.0),
                 vec2(0.0, 23.0),
@@ -334,52 +378,37 @@ impl App {
                     CocoAct::StartNode
                 });
             }
+            hint(ui, "Experiment – nicht für vertrauliche Inhalte");
         });
-        hint(ui, "Experiment – nicht für vertrauliche Inhalte");
         if !self.coco.status.is_empty() {
             hint(ui, &self.coco.status);
         }
         ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| {
+        // Reiter als gleich breite Segmente mit klarer Markierung.
+        let tabs = ["Chats", "Kontakte", "Räume", "Agenten"];
+        let seg_w = (ui.available_width() - 6.0) / tabs.len() as f32;
+        ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            for (i, name) in ["Chats", "Kontakte", "Räume", "Agenten"].iter().enumerate() {
-                if ui
-                    .selectable_label(
-                        state.tab == i,
-                        txt(*name, 12.0, if state.tab == i { OK } else { DIM }),
-                    )
-                    .clicked()
-                {
+            for (i, name) in tabs.iter().enumerate() {
+                let on = state.tab == i;
+                if btn(ui, name, 12.0, vec2(4.0, 3.0), vec2(seg_w, 26.0), on, true).clicked() {
                     state.tab = i;
                 }
             }
         });
-        ui.separator();
-        if state.tab == 3 {
-            // Die bestehende Instanzleiste bleibt funktional unverändert; eigener Höhenrahmen
-            // verhindert, dass ihr Scrollbereich die Nebenagenten aus dem Fenster schiebt.
-            ui.allocate_ui_with_layout(
-                vec2(
-                    ui.available_width(),
-                    (ui.available_height() * 0.52).max(120.0),
-                ),
-                Layout::top_down(Align::Min),
-                |ui| self.net_bar(ui),
-            );
-            ui.separator();
-            ScrollArea::vertical()
-                .id_salt("coco-personas")
-                .show(ui, |ui| self.coco_personas(ui, &mut state, &mut acts));
-        } else {
-            ScrollArea::vertical()
-                .id_salt("coco-bar")
-                .auto_shrink([false, false])
-                .show(ui, |ui| match state.tab {
+        ui.add_space(6.0);
+        ScrollArea::vertical()
+            .id_salt(("coco-bar", state.tab))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.style_mut().interaction.selectable_labels = false;
+                match state.tab {
                     0 => self.coco_chats(ui, &mut state, &mut acts),
                     1 => self.coco_contacts(ui, &mut state, &mut acts),
-                    _ => self.coco_spaces(ui, &mut state, &mut acts),
-                });
-        }
+                    2 => self.coco_spaces(ui, &mut state, &mut acts),
+                    _ => self.coco_personas(ui, &mut state, &mut acts),
+                }
+            });
         self.coco.ui = state;
         for act in acts {
             self.coco_apply(act);
@@ -846,17 +875,46 @@ impl App {
         }
     }
     fn coco_personas(&self, ui: &mut Ui, state: &mut CocoUi, acts: &mut Vec<CocoAct>) {
-        heading(ui, "Nebenagenten");
-        hint(ui, "Eigene Persönlichkeit · standardmäßig ohne Werkzeuge");
-        if button(ui, "Neu …") {
-            state.dialog = Some(Dialog::Persona(new_persona()));
+        section_title(ui, "Nebenagenten", "Eigene Persönlichkeit · standardmäßig ohne Werkzeuge", CAT_AGENTS);
+        ui.horizontal_wrapped(|ui| {
+            if button(ui, "+ Neu …") {
+                state.dialog = Some(Dialog::Persona(new_persona()));
+            }
+            if btn(ui, "↻ Neu laden", 12.0, vec2(8.0, 4.0), vec2(0.0, 25.0), false, true)
+                .on_hover_text("Persona-Ordner neu einlesen (nach Änderungen im Editor)")
+                .clicked()
+            {
+                acts.push(CocoAct::ReloadPersonas);
+            }
+        });
+        if let Some(dir) = crate::coco::Coco::persona_dir() {
+            hint(ui, &format!("Dateien: {}", pi_backend::tilde(&dir.display().to_string())));
         }
+        for (file, err) in &self.coco.persona_errors {
+            ui.add(Label::new(txt(format!("⚠ {file}: {err}"), 11.0, WARN)).wrap());
+        }
+        ui.add_space(4.0);
+        let taken: Vec<&str> = self.coco.personas.iter().map(|p| p.id.as_str()).collect();
         for p in &self.coco.personas {
-            card().show(ui, |ui| {
-                ui.label(txt(format!("◇ {}", p.name), 13.0, persona_color(&p.color)));
+            let color = persona_color(&p.color);
+            card().stroke(Stroke::new(1.0, mix(color, 0.45, BORDER))).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.add(Label::new(txt(format!("◇ {}", p.name), 13.0, color)).truncate());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if p.builtin {
+                            pill(ui, "mitgeliefert", DIM);
+                        } else if is_builtin_id(p.id.as_str()) {
+                            pill(ui, "angepasst", WARN);
+                        } else {
+                            pill(ui, "eigene", OK);
+                        }
+                    });
+                });
                 hint(ui, &p.description);
+                ui.add_space(2.0);
                 ui.horizontal_wrapped(|ui| {
-                    if button(ui, "DM") {
+                    if btn(ui, "Chat", 12.0, vec2(8.0, 4.0), vec2(0.0, 25.0), false, true).on_hover_text("Einzelchat mit diesem Nebenagenten öffnen").clicked() {
                         acts.push(CocoAct::OpenDirect(Member {
                             who: Participant::Persona {
                                 owner: self.coco.store.me.clone(),
@@ -866,12 +924,46 @@ impl App {
                             name: p.name.clone(),
                         }));
                     }
-                    if button(ui, "Bearbeiten …") {
-                        state.dialog = Some(Dialog::Persona(p.clone()));
+                    if p.builtin {
+                        if btn(ui, "Als Kopie bearbeiten …", 12.0, vec2(8.0, 4.0), vec2(0.0, 25.0), false, true)
+                            .on_hover_text("Eigene Kopie mit neuer Kennung anlegen; das Original bleibt.")
+                            .clicked()
+                        {
+                            let mut c = p.clone();
+                            c.builtin = false;
+                            c.id = PersonaId(pi_net::persona::copy_id(p.id.as_str(), &taken));
+                            c.name = format!("{} (Kopie)", p.name).chars().take(40).collect();
+                            state.dialog = Some(Dialog::Persona(c));
+                        }
+                        if btn(ui, "Anpassen …", 12.0, vec2(8.0, 4.0), vec2(0.0, 25.0), false, true)
+                            .on_hover_text("Eigene Fassung mit gleicher Kennung; ersetzt das Original, bis sie gelöscht wird.")
+                            .clicked()
+                        {
+                            let mut c = p.clone();
+                            c.builtin = false;
+                            state.dialog = Some(Dialog::Persona(c));
+                        }
+                    } else {
+                        if button(ui, "Bearbeiten …") {
+                            state.dialog = Some(Dialog::Persona(p.clone()));
+                        }
+                        let restore = is_builtin_id(p.id.as_str());
+                        if btn(ui, if restore { "Original wiederherstellen" } else { "Löschen" }, 12.0, vec2(8.0, 4.0), vec2(0.0, 25.0), false, true).clicked() {
+                            confirm(
+                                state,
+                                if restore { "Original wiederherstellen?" } else { "Nebenagent löschen?" },
+                                &if restore {
+                                    format!("Deine angepasste Fassung von „{}“ wird gelöscht; die mitgelieferte Version ist danach wieder aktiv.", p.name)
+                                } else {
+                                    format!("„{}“ wird gelöscht (Datei {}.md). Bestehende Chats bleiben erhalten.", p.name, p.id)
+                                },
+                                CocoAct::DeletePersona(p.id.clone()),
+                            );
+                        }
                     }
                 });
             });
-            ui.add_space(5.0);
+            ui.add_space(6.0);
         }
     }
 
@@ -1324,7 +1416,7 @@ hint(ui, "Schließen: Esc · Bestätigen: Enter, in Textfeldern Strg/Cmd+Enter")
                             });
                         }
                         Dialog::Persona(p) => {
-                            heading(ui, "Nebenagent bearbeiten");
+                            heading(ui, if p.builtin { "Nebenagent ansehen" } else { "Nebenagent bearbeiten" });
                             let editable = !p.builtin;
                             if !editable { hint(ui, "Mitgelieferte Persönlichkeit · nicht editierbar"); }
                             ui.add_enabled_ui(editable, |ui| {
@@ -1587,6 +1679,21 @@ hint(ui, "Schließen: Esc · Bestätigen: Enter, in Textfeldern Strg/Cmd+Enter")
                 self.coco.ui.dialog = Some(Dialog::Verify(third));
             }
             "coco-spaces" => self.coco.ui.tab = 2,
+            "coco-agents" => self.coco.ui.tab = 3,
+            "coco-backends" | "coco-backends-remote" | "coco-grid" => {
+                self.net.demo_scene();
+                self.coco.main = None;
+                self.coco.ui.backends = true;
+                match scene {
+                    "coco-backends-remote" => self.net.show_single(Some(("hub-buero".into(), "a1b2".into()))),
+                    "coco-grid" => {
+                        self.net.show_single(None);
+                        self.net.toggle_grid(("lokal".into(), "l1".into()));
+                        self.net.toggle_grid(("hub-buero".into(), "a1b2".into()));
+                    }
+                    _ => self.net.show_single(Some(("lokal".into(), "l1".into()))),
+                }
+            }
             "coco-persona" => {
                 self.coco.ui.tab = 3;
                 self.coco.ui.dialog = Some(Dialog::Persona(persona));
@@ -1611,6 +1718,10 @@ const SCENES: &[&str] = &[
     "coco-dm",
     "coco-contacts",
     "coco-spaces",
+    "coco-agents",
+    "coco-backends",
+    "coco-backends-remote",
+    "coco-grid",
     "coco-remote-lead",
     "coco-remote-ask",
     "coco-remote-host",
