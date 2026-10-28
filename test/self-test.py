@@ -136,7 +136,9 @@ for arg in "$@"; do
     [[ $arg != *a.js && $arg != *test-a.cjs ]] || [[ ! -f "$PWD/fail-js" ]] || exit 9
     [[ $arg != *test-statusline-net.cjs ]] || [[ ! -f "$PWD/fail-known" ]] || exit 9
     [[ $arg != --test ]] || [[ ! -f "$PWD/fail-mobile" ]] || exit 9
+    [[ $arg != empfang/test/*.mjs && $arg != test/sync.mjs ]] || [[ ! -f "$PWD/fail-i2" ]] || exit 9
 done
+if [[ "$*" == *test/i2/* && -f "$PWD/skip-i2" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
 exit 0
 ''')
         for repository in (worktree, hub):
@@ -156,9 +158,9 @@ exit 0
         worktree, hub, calls = self.setup_gate()
         result = self.run_script("v3-gate.sh", worktree, hub)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assertEqual(len(result.stdout.splitlines()), 9)
+        self.assertEqual(len(result.stdout.splitlines()), 13)
         self.assertEqual(sum(line.startswith("PASS") for line in result.stdout.splitlines()), 7)
-        self.assertEqual(sum(line.startswith("SKIP") for line in result.stdout.splitlines()), 2)
+        self.assertEqual(sum(line.startswith("SKIP") for line in result.stdout.splitlines()), 6)
         entries = calls.read_text()
         self.assertIn("--offline --locked --workspace --features copi/cocopi", entries)
         self.assertIn(f"target={self.base}/target-worktree", entries)
@@ -181,7 +183,7 @@ exit 0
         (worktree / "fail-js").touch()
         result = self.run_script("v3-gate.sh", worktree, hub)
         self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertEqual(len(result.stdout.splitlines()), 9)
+        self.assertEqual(len(result.stdout.splitlines()), 13)
         self.assertEqual(sum(line.startswith("FAIL") for line in result.stdout.splitlines()), 6)
         self.assertIn("PASS hub-smoke", result.stdout)
         self.assertIn("node --check ui/b.js", calls.read_text())
@@ -291,6 +293,47 @@ exit 0
         self.assertIn("FAIL mobile-tests", result.stdout)
         self.assertIn("FAIL r2-tests", result.stdout)
         self.assertIn("SKIP hub-smoke", result.stdout)
+
+    def test_optional_i2_multiple_hubs_and_failure_propagation(self):
+        worktree, hub, calls = self.setup_gate()
+        (worktree / "copi/crates/pi-sync").mkdir(parents=True)
+        (worktree / "copi/crates/pi-sync/Cargo.toml").write_text("# stub\n")
+        (hub / "empfang/test").mkdir(parents=True)
+        for name in ("a", "b"):
+            (hub / f"empfang/test/{name}.mjs").write_text("// stub\n")
+        (hub / "test/sync.mjs").write_text("// stub\n")
+        second = self.base / "second-hub"
+        subprocess.run(["git", "clone", "-q", str(hub), str(second)], check=True)
+        (second / "test/sync.mjs").write_text("// stub\n")
+        result = self.run_script("v3-gate.sh", worktree, hub, second,
+                                 V3_GATE_HUBS=f"{hub} {second}")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name in ("sync-rust-tests", "hub-empfang", "hub-sync", "hub-smoke-2", "hub-sync-2"):
+            self.assertIn(f"PASS {name} |", result.stdout)
+        self.assertIn("SKIP hub-empfang-2", result.stdout)
+        self.assertNotIn("hub-smoke-3", result.stdout)  # Doppelte Pfade ignorieren.
+        self.assertIn("cargo test --offline --locked -p pi-sync", calls.read_text())
+        self.assertIn("node empfang/test/a.mjs", calls.read_text())
+        self.assertIn("node empfang/test/b.mjs", calls.read_text())
+        self.assertIn("node test/sync.mjs", calls.read_text())
+        (hub / "fail-i2").touch()
+        (worktree / "copi/fail-test").touch()
+        result = self.run_script("v3-gate.sh", worktree, V3_GATE_HUBS=f"{hub} {second}")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for name in ("sync-rust-tests", "hub-empfang", "hub-sync"):
+            self.assertIn(f"FAIL {name} |", result.stdout)
+        self.assertIn("PASS hub-sync-2", result.stdout)  # Nicht beim ersten Fehler abbrechen.
+        self.assertIn("node empfang/test/b.mjs", calls.read_text())
+
+    def test_gate_optional_i2_skip_is_not_pass(self):
+        worktree, hub, _ = self.setup_gate()
+        (worktree / "test/i2").mkdir(parents=True)
+        (worktree / "test/i2/scenarios.test.mjs").write_text("// stub\n")
+        (worktree / "skip-i2").touch()
+        result = self.run_script("v3-gate.sh", worktree, hub)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("SKIP i2-szenarien | I2-Abnahme unvollständig", result.stdout)
+        self.assertNotIn("PASS i2-szenarien", result.stdout)
 
     def test_gate_rejects_empty_js_globs(self):
         worktree, _, _ = self.setup_gate()
