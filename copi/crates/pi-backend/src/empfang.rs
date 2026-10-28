@@ -188,7 +188,7 @@ impl Empfang {
         let auth_headers =
             if !matches!(path, "hallo" | "checkin" | "challenge") && !path.starts_with("warten/") {
                 if let Some((id, key)) = &self.auth {
-                    let c = self.request("POST", "challenge", json!({"checkin_id":id}))?;
+                    let c = self.request_once("POST", "challenge", json!({"checkin_id":id}))?;
                     let cid = c["challenge_id"]
                         .as_str()
                         .ok_or("Die Anmeldeprüfung fehlt.")?;
@@ -401,6 +401,23 @@ mod tests {
             |_| panic!("Kein Transportfehler"),
         );
         assert!(result.is_err());
+        for err in [
+            ureq::Error::BodyExceedsLimit(1),
+            ureq::Error::TooManyRedirects,
+            ureq::Error::Tls("Test"),
+        ] {
+            assert!(matches!(
+                request_error(err, "dauerhaft"),
+                RequestError::Dauerhaft(_)
+            ));
+        }
+        assert!(matches!(
+            request_error(
+                ureq::Error::Io(std::io::ErrorKind::UnexpectedEof.into()),
+                "verloren"
+            ),
+            RequestError::Verbindung(_)
+        ));
     }
     #[test]
     fn dropped_hallo_response_retries_but_checkin_never_does() {

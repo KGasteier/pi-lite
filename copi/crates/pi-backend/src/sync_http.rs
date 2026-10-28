@@ -279,6 +279,10 @@ mod tests {
     }
     #[test]
     fn sync_http_real_hub_upload_preview_archive_and_corruption() {
+        if std::env::var_os("COCOPI_HUB_TEST_DIR").is_none() {
+            eprintln!("Sync-Hub-Test übersprungen: COCOPI_HUB_TEST_DIR nicht gesetzt.");
+            return;
+        }
         for mode in ["", "header", "body", "oversize"] {
             let f = Fixture::new(mode);
             let hub = f.login();

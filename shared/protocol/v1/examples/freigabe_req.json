@@ -2,12 +2,11 @@
   "protokoll": 1,
   "typ": "freigabe",
   "freigabe": {
-    "inhalt": {
-      "v": 1,
-      "typ": "freigabe",
-      "slot": "account01",
-      "checkin_id": "test-checkin"
-    },
-    "signatur": "Zgw6RQsYayryTsbwYry0Ai2STRhngRibxRKPoSQJVXLCNPdjV6uXTVcDtISit3pQwc-BDAF-q_0rwIHKe9AhCw"
+    "v": 1,
+    "typ": "freigabe",
+    "slot": "account01",
+    "checkin_id": "test-checkin",
+    "epoche": 0,
+    "signatur": "6vyK2eu21xsrMAMqCjZklCaObA0FELW87gVqBFAMSx18DeQ8AIiZf0HJArHIgnEO_cxV2PTT2ZeWGF6ILEHOCg"
   }
 }
