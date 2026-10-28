@@ -70,4 +70,3 @@ subject to the following conditions:
   out of or in connection with the Software or the use or other dealings in the
   Software.
 ```
-

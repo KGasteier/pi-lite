@@ -31,9 +31,9 @@ pub struct Account { pub person: String, pub slot: String, pub device_name: Stri
 #[derive(Clone, Debug)]
 pub struct Device { pub id: String, pub name: String, pub kind: String, pub last_seen: String }
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SessionState { Resting, Working, NeedsYou, Done, Error }
+pub enum SessionState { Resting, Ready, Working, NeedsYou, Done, Error }
 impl SessionState {
-    pub fn text(self) -> &'static str { match self { Self::Resting => "ruht", Self::Working => "arbeitet", Self::NeedsYou => "wartet auf dich", Self::Done => "fertig", Self::Error => "Fehler" } }
+    pub fn text(self) -> &'static str { match self { Self::Resting | Self::Ready => "ruht", Self::Working => "arbeitet", Self::NeedsYou => "wartet auf dich", Self::Done => "fertig", Self::Error => "Fehler" } }
     fn color(self) -> Color32 { if self == Self::Working { WORKING } else { QUIET } }
 }
 #[derive(Clone, Debug)]
@@ -41,9 +41,9 @@ pub struct Session { pub id: String, pub title: String, pub state: SessionState,
 #[derive(Clone, Debug)]
 pub struct PairCode { pub url: String, pub code: String, pub valid_for: Duration }
 #[derive(Clone, Debug)]
-pub enum Request { Redeem(String), Devices, Pair, Revoke(String), Rename(String), Sessions, Open(String), Rest(String), Prompt(String, String), Stop(String) }
+pub enum Request { Redeem(String), Devices, Pair, PairDecision(String, bool), Revoke(String), Rename(String), Sessions, Open(String), Rest(String), Prompt(String, String), Stop(String) }
 #[derive(Clone, Debug)]
-pub enum Reply { SignedIn(Account), Devices(Vec<Device>), Pair(PairCode), Sessions(Vec<Session>), Messages(Vec<String>), Ok, Limit, Error(InviteError) }
+pub enum Reply { SignedIn(Account), Devices(Vec<Device>), Pair(PairCode), PairWaiting { id: String, name: String, words: String }, PairDone, Revoked(String), Sessions(Vec<Session>), Messages(Vec<String>), Ok, Limit, Error(InviteError) }
 /// Impl darf blockieren: Aufrufe werden immer in einen Worker ausgelagert.
 pub trait DesktopApi: Send + Sync { fn call(&self, request: Request) -> Reply; }
 struct Unavailable;
@@ -58,14 +58,14 @@ pub struct Desktop {
     pub enabled: bool,
     demo: bool, api: Arc<dyn DesktopApi>, tx: mpsc::Sender<Reply>, rx: mpsc::Receiver<Reply>, pending: usize,
     mode: Mode, pub account: Option<Account>, connected: bool, invitation: String, welcome_done: bool,
-    error: Option<String>, settings: Option<Section>, hybrid_dialog: bool, devices: Vec<Device>, revoke: Option<Device>,
-    pairing: Option<Pairing>, limit: bool, sessions: Vec<Session>, selected: Option<String>, messages: Vec<String>,
+    error: Option<String>, settings: Option<Section>, hybrid_dialog: bool, hybrid_focus: bool, devices: Vec<Device>, revoke: Option<Device>,
+    pairing: Option<Pairing>, pair_request: Option<(String, String, String)>, limit: bool, sessions: Vec<Session>, selected: Option<String>, messages: Vec<String>,
     prompt: String, files: bool, rename: bool, device_name: String,
 }
 impl Desktop {
     pub fn new(demo: bool) -> Self {
         let (tx, rx) = mpsc::channel();
-        Self { enabled: !demo, demo, api: Arc::new(Unavailable), tx, rx, pending: 0, mode: if demo { Mode::RemoteOnly } else { mode::current() }, account: None, connected: false, invitation: String::new(), welcome_done: false, error: None, settings: None, hybrid_dialog: false, devices: vec![], revoke: None, pairing: None, limit: false, sessions: vec![], selected: None, messages: vec![], prompt: String::new(), files: false, rename: false, device_name: String::new() }
+        Self { enabled: !cfg!(test) || !demo, demo, api: Arc::new(Unavailable), tx, rx, pending: 0, mode: if demo { Mode::RemoteOnly } else { mode::current() }, account: None, connected: false, invitation: String::new(), welcome_done: false, error: None, settings: None, hybrid_dialog: false, hybrid_focus: false, devices: vec![], revoke: None, pairing: None, pair_request: None, limit: false, sessions: vec![], selected: None, messages: vec![], prompt: String::new(), files: false, rename: false, device_name: String::new() }
     }
     pub fn set_api(&mut self, api: Arc<dyn DesktopApi>) { self.api = api; }
     fn call(&mut self, request: Request) {
@@ -79,6 +79,14 @@ impl Desktop {
             Reply::SignedIn(account) => { self.device_name = account.device_name.clone(); self.account = Some(account); self.connected = true; self.error = None; self.call(Request::Devices); self.call(Request::Sessions); }
             Reply::Devices(devices) => self.devices = devices,
             Reply::Pair(code) => self.pairing = Some(Pairing { expires: Instant::now() + code.valid_for, code, texture: None }),
+            Reply::PairWaiting { id, name, words } => { self.pair_request = Some((id, name, words)); self.pairing = None; }
+            Reply::PairDone => { self.pair_request = None; self.pairing = None; self.call(Request::Devices); }
+            Reply::Revoked(id) => {
+                self.devices.retain(|d| d.id != id);
+                if self.account.as_ref().is_some_and(|a| a.device_id == id) {
+                    self.apply(Reply::Error(InviteError::Revoked));
+                }
+            }
             Reply::Sessions(sessions) => { self.sessions = sessions; self.connected = true; }
             Reply::Messages(messages) => { self.messages = messages; self.connected = true; }
             Reply::Limit => self.limit = true,
@@ -176,7 +184,7 @@ impl Desktop {
                 Section::Mode => { ui.heading("Wo arbeitet der Agent?"); ui.add_space(18.0);
                     if ui.radio(self.mode == Mode::RemoteOnly, "Nur auf R2 (empfohlen)").clicked() { self.switch(Mode::RemoteOnly); }
                     ui.label("Auf diesem Rechner wird kein Agent gestartet. Deine Arbeit läuft auf dem Seminarserver."); ui.add_space(18.0);
-                    if ui.radio(self.mode == Mode::Hybrid, "Auch auf diesem Rechner (Hybrid) …").clicked() && self.mode != Mode::Hybrid { self.hybrid_dialog = true; }
+                    if ui.radio(self.mode == Mode::Hybrid, "Auch auf diesem Rechner (Hybrid) …").clicked() && self.mode != Mode::Hybrid { self.hybrid_dialog = true; self.hybrid_focus = true; }
                     ui.label("Für Fortgeschrittene. Dafür muss pi auf diesem Rechner installiert sein.");
                     ui.add_space(18.0); ui.label("Ein Wechsel startet und beendet keine Session. Offline wird niemals auf diesen Rechner ausgewichen.");
                 }
@@ -198,10 +206,20 @@ impl Desktop {
     fn dialogs(&mut self, ctx: &egui::Context) {
         if self.hybrid_dialog {
             egui::Modal::new(egui::Id::new("v3-hybrid")).show(ctx, |ui| { ui.set_max_width(500.0); ui.heading("Auch auf diesem Rechner arbeiten?"); ui.add_space(16.0); ui.label(HYBRID_TEXT); ui.add_space(20.0);
-                ui.horizontal(|ui| { let cancel = ui.button("Abbrechen"); if !ctx.memory(|m| m.focused().is_some()) { cancel.request_focus(); } if cancel.clicked() { self.hybrid_dialog = false; } if ui.button("Hybrid einschalten").clicked() { self.switch(Mode::Hybrid); } });
+                ui.horizontal(|ui| { let cancel = ui.button("Abbrechen"); if self.hybrid_focus { cancel.request_focus(); self.hybrid_focus = false; } if cancel.clicked() { self.hybrid_dialog = false; } if ui.button("Hybrid einschalten").clicked() { self.switch(Mode::Hybrid); } });
             });
         } else if let Some(d) = self.revoke.clone() {
             egui::Modal::new(egui::Id::new("v3-revoke")).show(ctx, |ui| { ui.set_max_width(500.0); let slot = self.account.as_ref().map(|a| a.slot.as_str()).unwrap_or("dein Konto"); ui.label(format!("‚{}‘ abmelden? Das Gerät verliert sofort den Zugang zu {slot}. Um es wieder zu nutzen, musst du es neu koppeln.", d.name)); ui.add_space(18.0); ui.horizontal(|ui| { if ui.button("Abbrechen").clicked() { self.revoke = None; } if ui.button(RichText::new("Abmelden").color(Color32::from_rgb(240,130,110))).clicked() { self.call(Request::Revoke(d.id)); self.revoke = None; } }); });
+        } else if let Some((id, name, words)) = self.pair_request.clone() {
+            egui::Modal::new(egui::Id::new("v3-pair-confirm")).show(ctx, |ui| {
+                ui.set_max_width(500.0);
+                ui.label(format!("Neues Gerät möchte sich verbinden: ‚{name}‘. Ist das dein Handy?"));
+                ui.label(format!("Prüfwort: {words}"));
+                ui.horizontal(|ui| {
+                    if ui.button("Ablehnen").clicked() { self.call(Request::PairDecision(id.clone(), false)); }
+                    if ui.button("Erlauben").clicked() { self.call(Request::PairDecision(id, true)); }
+                });
+            });
         } else if let Some(pair) = &mut self.pairing {
             let left = pair.expires.saturating_duration_since(Instant::now()).as_secs(); let mut cancel = false;
             egui::Modal::new(egui::Id::new("v3-pair")).show(ctx, |ui| { ui.set_max_width(500.0); ui.heading("Handy koppeln");
@@ -214,7 +232,7 @@ impl Desktop {
             }); if cancel { self.pairing = None; }
         } else if self.limit {
             egui::Modal::new(egui::Id::new("v3-limit")).show(ctx, |ui| { ui.set_max_width(520.0); ui.heading("Zwei Sessions sind offen"); ui.add_space(16.0); ui.label(LIMIT_TEXT); ui.add_space(20.0);
-                let candidate = self.sessions.iter().rev().find(|s| matches!(s.state, SessionState::Done | SessionState::Resting)).cloned();
+                let candidate = self.sessions.iter().rev().find(|s| matches!(s.state, SessionState::Done | SessionState::Ready)).cloned();
                 if let Some(s) = candidate { if ui.button(format!("‚{}‘ ruhen lassen", s.title)).clicked() { self.call(Request::Rest(s.id)); self.limit = false; } } else { ui.label("Warte, bis eine Session fertig ist. Arbeitende Sessions und offene Rückfragen werden nicht automatisch unterbrochen."); }
                 if ui.button("Abbrechen").clicked() { self.limit = false; }
             });
@@ -232,7 +250,7 @@ impl Desktop {
         self.messages = vec!["Mira\nErstelle einen Entwurf für ein zweiseitiges Seminar-Handout. Zeige zuerst die Gliederung. Nichts veröffentlichen.".into(), "cocopi · R2\nIch bereite die Gliederung vor und prüfe das freigegebene Material. Dateien und Ergebnisse bleiben zunächst auf R2.".into()];
         match scene {
             "v3-modus" => self.settings = Some(Section::Mode),
-            "v3-hybrid-dialog" => { self.settings = Some(Section::Mode); self.hybrid_dialog = true; }
+            "v3-hybrid-dialog" => { self.settings = Some(Section::Mode); self.hybrid_dialog = true; self.hybrid_focus = true; }
             "v3-geraete" => self.settings = Some(Section::Devices),
             "v3-koppeln-qr" => { self.settings = Some(Section::Devices); self.pairing = Some(Pairing { code: PairCode { url: "https://r2.example.invalid/c#1.k.K7QM-2XDA-9FHT-W3NB".into(), code: "K7QM-2XDA-9FHT-W3NB".into(), valid_for: Duration::from_secs(253) }, expires: Instant::now() + Duration::from_secs(253), texture: None }); }
             "v3-grenze" => self.limit = true,
@@ -254,7 +272,49 @@ mod tests {
     #[test] fn status_has_one_authoritative_mode_and_offline() { let mut d = Desktop::new(true); assert_eq!(d.status(), "☁ Nur Remote · nicht angemeldet"); d.scene("v3-main-remote"); assert_eq!(d.status(), "☁ Nur Remote · Mira · account03 @ R2 · verbunden"); d.connected = false; d.switch(Mode::Hybrid); assert_eq!(d.status(), "⇄ Hybrid · Mira · account03 @ R2 · offline"); }
     #[test] fn hybrid_requires_confirmation_and_preserves_sessions() { let mut d = Desktop::new(true); d.scene("v3-hybrid-dialog"); assert_eq!(d.mode, Mode::RemoteOnly); let before = d.sessions.len(); d.hybrid_dialog = false; assert_eq!(d.mode, Mode::RemoteOnly); d.switch(Mode::Hybrid); d.switch(Mode::RemoteOnly); assert_eq!(before, d.sessions.len()); assert!(HYBRID_TEXT.contains("Zugriff auf die Dateien dieses Rechners")); }
     #[test] fn exact_a3_errors() { assert_eq!(InviteError::Expired.text(), "Diese Einladung ist abgelaufen. Bitte deine Seminarleitung um eine neue."); assert_eq!(InviteError::Used.text(), "Diese Einladung wurde schon benutzt. Jede Einladung gilt nur einmal. Wenn du das nicht warst, sag deiner Seminarleitung Bescheid."); assert_eq!(InviteError::Unknown.text(), "Dieser Code passt zu keiner Einladung. Prüfe die Zeichen oder öffne den Link direkt."); assert_eq!(InviteError::RateLimited.text(), "Zu viele Versuche. Warte eine Minute und versuche es dann noch einmal."); assert!(InviteError::Offline("morgen 12:00".into()).text().ends_with("bis morgen 12:00.")); }
+    fn frame(d: &mut Desktop, ctx: &egui::Context, events: Vec<egui::Event>) -> egui::FullOutput {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 880.0));
+        let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| d.draw(ui));
+        out.textures_delta.clear();
+        out
+    }
+    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }
+    }
+    fn click(d: &mut Desktop, ctx: &egui::Context, pos: egui::Pos2) {
+        frame(d, ctx, vec![egui::Event::PointerMoved(pos), egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE }]);
+        frame(d, ctx, vec![egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE }]);
+    }
+    #[test] fn status_click_opens_mode_and_only_settings_shortcut_is_added() {
+        let ctx = egui::Context::default(); crate::setup_ctx(&ctx);
+        let mut d = Desktop::new(true); d.scene("v3-main-remote");
+        frame(&mut d, &ctx, vec![]); frame(&mut d, &ctx, vec![]);
+        click(&mut d, &ctx, egui::pos2(190.0, 859.0));
+        assert_eq!(d.settings, Some(Section::Mode));
+        frame(&mut d, &ctx, vec![key(egui::Key::Escape, egui::Modifiers::NONE)]);
+        assert_eq!(d.settings, None);
+        frame(&mut d, &ctx, vec![key(egui::Key::Comma, egui::Modifiers::COMMAND)]);
+        assert_eq!(d.settings, Some(Section::Account));
+    }
+    #[test] fn hybrid_escape_and_default_enter_cancel_without_switch() {
+        for keypress in [egui::Key::Escape, egui::Key::Enter] {
+            let ctx = egui::Context::default(); crate::setup_ctx(&ctx);
+            let mut d = Desktop::new(true); d.scene("v3-hybrid-dialog");
+            frame(&mut d, &ctx, vec![]); frame(&mut d, &ctx, vec![]);
+            frame(&mut d, &ctx, vec![key(keypress, egui::Modifiers::NONE)]);
+            assert!(!d.hybrid_dialog, "{keypress:?} must cancel");
+            assert_eq!(d.mode, Mode::RemoteOnly);
+        }
+    }
+    #[test] fn eight_v3_scenes_render_without_legacy_panels() {
+        for scene in ["v3-start", "v3-start-fehler", "v3-main-remote", "v3-modus", "v3-hybrid-dialog", "v3-geraete", "v3-koppeln-qr", "v3-grenze"] {
+            let ctx = egui::Context::default(); crate::setup_ctx(&ctx);
+            let mut d = Desktop::new(true); d.scene(scene);
+            for _ in 0..3 { let out = frame(&mut d, &ctx, vec![]); assert!(!out.shapes.is_empty()); }
+            assert_eq!(d.pending, 0); assert_eq!(d.mode, Mode::RemoteOnly);
+        }
+    }
     #[test] fn qr_pixels_match_encoder_and_have_quiet_zone() { let text = "https://r2.example.invalid/c#1.k.K7QM-2XDA-9FHT-W3NB"; let image = qr_image(text).unwrap(); let qr = QrCode::encode_text(text, QrCodeEcc::Medium).unwrap(); assert_eq!(image.size, [(qr.size()+8) as usize;2]); for y in 0..image.size[1] { for x in 0..image.size[0] { assert_eq!(image[(x,y)] == Color32::BLACK, qr.get_module(x as i32-4,y as i32-4)); } } }
-    #[test] fn only_working_uses_accent() { for s in [SessionState::Resting, SessionState::NeedsYou, SessionState::Done, SessionState::Error] { assert_ne!(s.color(), WORKING); } assert_eq!(SessionState::Working.color(), WORKING); }
+    #[test] fn only_working_uses_accent() { for s in [SessionState::Resting, SessionState::Ready, SessionState::NeedsYou, SessionState::Done, SessionState::Error] { assert_ne!(s.color(), WORKING); } assert_eq!(SessionState::Working.color(), WORKING); }
     #[test] fn revoked_returns_to_welcome() { let mut d = Desktop::new(true); d.scene("v3-main-remote"); d.apply(Reply::Error(InviteError::Revoked)); assert!(d.account.is_none()); assert!(d.sessions.is_empty()); assert_eq!(d.error.as_deref(), Some(REVOKED_TEXT)); }
 }
