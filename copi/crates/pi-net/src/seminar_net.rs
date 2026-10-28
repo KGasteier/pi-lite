@@ -190,7 +190,9 @@ impl NodeNet {
                     self.error("Zu viele Seminarnachrichten; bitte kurz warten".into());
                     return;
                 }
-                seen.push_back((id, now));
+                // Bis zum Ende der Gültigkeit aufbewahren, auch wenn die
+                // Senderuhr innerhalb der erlaubten 5 s leicht vorausläuft.
+                seen.push_back((id, sent_ms));
                 self.last_seen.insert(from.clone(), now);
                 self.presence.push((from.clone(), true, now));
                 if !matches!(*payload, Payload::SeminarPresence) {
