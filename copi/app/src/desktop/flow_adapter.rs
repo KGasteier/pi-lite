@@ -28,6 +28,8 @@ pub struct Config {
     pub issuer: String,
     pub empfang_pubkey: String,
     pub archiv_pubkey: String,
+    /// Legacy-Konfigurationsfeld; die persistente Identität hat Vorrang.
+    #[allow(dead_code)]
     pub net_pubkey: String,
     pub device_name: String,
     pub key_dir: PathBuf,
@@ -44,6 +46,8 @@ struct State {
     browser_url: Option<String>,
     hub: Option<Arc<HubAdapter>>,
     checkout: Option<Value>,
+    receipt_unconfirmed: bool,
+    imported: Option<ReturnSummary>,
     cancelled: bool,
     checkin_pending: bool,
     plan: Option<sync_flow::Plan>,
@@ -55,6 +59,7 @@ pub struct FlowAdapter {
     config: Config,
     state: Mutex<State>,
     cancelled_attempt: AtomicU64,
+    current_attempt: AtomicU64,
     transfer: sync_flow::Transfer,
     identity: pi_net::identity::Identity,
 }
@@ -72,6 +77,7 @@ impl FlowAdapter {
             identity,
             transfer: sync_flow::Transfer::default(),
             cancelled_attempt: AtomicU64::new(0),
+            current_attempt: AtomicU64::new(0),
             state: Mutex::new(State {
                 empfang,
                 key,
@@ -82,6 +88,8 @@ impl FlowAdapter {
                 browser_url: None,
                 hub: None,
                 checkout: None,
+                receipt_unconfirmed: false,
+                imported: None,
                 cancelled: false,
                 checkin_pending: false,
                 plan: None,
@@ -135,6 +143,11 @@ impl FlowAdapter {
             pickup: None,
         };
         s.receipt = Some(receipt.clone());
+        s.checkout = None;
+        s.receipt_unconfirmed = false;
+        s.imported = None;
+        s.plan = None;
+        s.preview = None;
         s.checkin_pending = false;
         s.queue = None;
         if s.cancelled || self.cancelled_attempt.load(Ordering::SeqCst) == s.attempt {
@@ -172,9 +185,15 @@ impl FlowAdapter {
     fn invoke(&self, request: Request) -> Result<Reply, String> {
         // Muss auch während eines blockierenden Check-in-HTTP-Aufrufs greifen.
         if let Request::CancelFlow(target) = &request {
-            if !target.abandon_checkin && self.transfer.progress().is_some() {
+            if !target.abandon_checkin {
+                if target.attempt == 0
+                    || target.attempt != self.current_attempt.load(Ordering::SeqCst)
+                {
+                    return Err("Dieser Abbruch gehört zu keinem aktuellen Versuch.".into());
+                }
                 self.transfer.cancel.store(true, Ordering::SeqCst);
-                // Kein Mutex-Warten hinter einem HTTP-Stream und kein Checkout beim Transferabbruch.
+                // Niemals nach dem Ende eines Transfers als Check-out interpretieren.
+                // Ein bereits autoritativ bestätigtes CheckedOut darf trotzdem folgen.
                 return Ok(Reply::Flow(FlowReply::Cancelled));
             }
             self.cancelled_attempt
@@ -196,6 +215,8 @@ impl FlowAdapter {
                     return Err("Beende zuerst den laufenden Check-in. Es wurde kein zweiter Platz angefordert.".into());
                 }
                 s.attempt = attempt;
+                self.current_attempt.store(attempt, Ordering::SeqCst);
+                self.transfer.cancel.store(false, Ordering::SeqCst);
                 s.cancelled = false;
                 let hello = s.empfang.hallo()?;
                 if hello["empfang_pubkey"] != self.config.empfang_pubkey
@@ -304,6 +325,7 @@ impl FlowAdapter {
             Request::SyncPlan(id) => {
                 require_receipt(&s, &id)?;
                 let plan = sync_flow::Plan::new(&self.config.local_root)?;
+                self.transfer.cancel.store(false, Ordering::SeqCst);
                 let reply = plan.ui();
                 s.plan = Some(plan);
                 FlowReply::Plan(reply)
@@ -324,7 +346,7 @@ impl FlowAdapter {
                     .as_ref()
                     .ok_or("Prüfe zuerst die lokale Dateiauswahl.")?;
                 let hub = s.hub.as_ref().ok_or("Die Slotverbindung fehlt.")?;
-                self.transfer.begin(TransferKind::Upload, &checkin_id, 0);
+                let _transfer = self.transfer.scope(TransferKind::Upload, &checkin_id, 0);
                 let result =
                     hub.with_hub(|h| plan.upload(h, &checkin_id, &selection, &self.transfer));
                 self.transfer.end();
@@ -338,6 +360,7 @@ impl FlowAdapter {
                 let preview_id = format!("vorschau-{}", now_ms());
                 let preview = sync_flow::preview(&value, preview_id.clone())?;
                 s.preview = Some((preview_id, value));
+                self.transfer.cancel.store(false, Ordering::SeqCst);
                 FlowReply::Preview(preview)
             }
             Request::Checkout {
@@ -345,6 +368,9 @@ impl FlowAdapter {
                 preview_id,
             } => {
                 require_receipt(&s, &checkin_id)?;
+                if s.receipt_unconfirmed {
+                    return Err("Die Empfangsbestätigung ist unklar. Prüfe den Empfang; erhalten wird nicht erneut gesendet und das Archiv nicht erneut importiert.".into());
+                }
                 if preview_id.is_empty() {
                     return Err("Die bestätigte Rückgabevorschau fehlt.".into());
                 }
@@ -358,7 +384,8 @@ impl FlowAdapter {
                 if preview["gross"].as_array().is_some_and(|a| !a.is_empty()) {
                     return Err("Auf R2 liegen große Dateien. Ihre sichere Rückgabe braucht eine zusätzliche Bestätigung, die dieser Empfang-Client noch nicht unterstützt. Der Arbeitsplatz bleibt belegt; es wird nichts gelöscht.".into());
                 }
-                self.transfer.begin(TransferKind::Checkout, &checkin_id, 0);
+                let _transfer = self.transfer.scope(TransferKind::Checkout, &checkin_id, 0);
+                self.transfer.check()?;
                 // Empfang baut das autoritative Archiv; kein zweites, abweichendes Clientarchiv.
                 let meta = match &s.checkout {
                     Some(v) => v.clone(),
@@ -367,8 +394,15 @@ impl FlowAdapter {
                 s.checkout = Some(meta.clone());
                 if meta["typ"] == "ausgecheckt" {
                     self.transfer.end();
+                    let folder = pi_sync::LocalFolder::create(&self.config.local_root)
+                        .map_err(|e| e.to_string())?;
+                    sync_flow::journal(
+                        &folder,
+                        json!({"ereignis":"ausgecheckt","checkin_id":checkin_id,"direkt":true}),
+                    )?;
                     s.receipt = None;
                     s.hub = None;
+                    s.seminar_hub = None;
                     s.preview = None;
                     return Ok(Reply::Flow(FlowReply::CheckedOut(ReturnSummary {
                         files: 0,
@@ -379,11 +413,18 @@ impl FlowAdapter {
                 let folder = pi_sync::LocalFolder::create(&self.config.local_root)
                     .map_err(|e| e.to_string())?;
                 let hub = s.hub.as_ref().ok_or("Die Slotverbindung fehlt.")?;
-                let imported =
-                    hub.with_hub(|h| sync_flow::receive(&folder, h, &meta, &self.transfer));
-                self.transfer.end();
-                let summary = imported?;
+                let summary = match &s.imported {
+                    Some(summary) => summary.clone(),
+                    None => {
+                        let imported = hub
+                            .with_hub(|h| sync_flow::receive(&folder, h, &meta, &self.transfer))?;
+                        s.imported = Some(imported.clone());
+                        imported
+                    }
+                };
                 self.transfer.check()?;
+                // Keine Wiederholung nach verlorener Antwort: serverseitig fehlt ein Tombstone.
+                s.receipt_unconfirmed = true;
                 let confirmed = s
                     .empfang
                     .erhalten(&field(&meta, "checkout_id")?, &field(&meta, "sha256")?)?;
@@ -396,6 +437,7 @@ impl FlowAdapter {
                 )?;
                 s.receipt = None;
                 s.hub = None;
+                s.seminar_hub = None;
                 s.preview = None;
                 FlowReply::CheckedOut(summary)
             }
@@ -452,8 +494,8 @@ impl DesktopApi for FlowAdapter {
     ) -> Result<Option<super::seminar::Seminar>, String> {
         let mut s = self
             .state
-            .lock()
-            .map_err(|_| "Die Seminaranmeldung wurde unterbrochen.")?;
+            .try_lock()
+            .map_err(|_| "Die Seminaranmeldung wird noch vorbereitet.")?;
         let receipt = s.receipt.as_ref().ok_or("Du bist nicht eingecheckt.")?;
         let ausweis = serde_json::from_value(s.ausweis.clone().ok_or("Der Geräteausweis fehlt.")?)
             .map_err(|e| format!("Der Geräteausweis ist ungültig: {e}"))?;
@@ -609,6 +651,10 @@ const {createFakeOidc}=await import(pathToFileURL(path.join(source,'empfang/test
 const {createV1}=await import(pathToFileURL(path.join(source,'lib/hub-v1.mjs')));
 const fake=await createFakeOidc(); let reception,hub,origin;
 const server=http.createServer((req,res)=>{
+  if(req.url.endsWith('/erhalten')&&fs.existsSync(path.join(root,'lose-erhalten'))) {
+    fs.appendFileSync(path.join(root,'ack-attempts'),'1\n');
+    res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({protokoll:1,typ:'fehler',code:'intern',was:'Antwort unklar',tun:'Empfang prüfen'}));return;
+  }
   if(req.url.startsWith('/slot/account01/')) {
     req.url=req.url.slice('/slot/account01'.length);
     return hub.handle(req,res,new URL(req.url,origin));
@@ -725,11 +771,11 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
                 transfer_id: None,
                 abandon_checkin: false
             })),
-            Reply::Error(_)
+            Reply::Flow(FlowReply::Cancelled)
         ));
-        assert_eq!(
-            std::fs::read_to_string(f.root.join("calls.json")).unwrap(),
-            "[\"archiv\"]"
+        assert!(
+            !f.root.join("calls.json").exists(),
+            "Transferabbruch darf keinen Archivauftrag senden"
         );
         let second = f.adapter("two");
         let reply = second.call(Request::Checkin {
@@ -895,6 +941,14 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
             matches!(uploaded, Reply::Flow(FlowReply::Uploaded)),
             "{uploaded:?}"
         );
+        let repeated = adapter.state.lock().unwrap().plan.as_ref().unwrap().ui();
+        assert_eq!(repeated.items.iter().filter(|i| i.selected).count(), 1);
+        assert!(
+            repeated
+                .items
+                .iter()
+                .any(|i| i.name == "Projekte / Buch" && i.selected)
+        );
         let remote = f.root.join("home/arbeit/Projekte/Buch");
         assert!(!remote.join("film.mp4").exists());
         assert_eq!(std::fs::read_dir(&remote).unwrap().count(), 3);
@@ -974,6 +1028,138 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         );
         assert!(f.root.join("pool-frei").exists());
         assert!(adapter.state.lock().unwrap().checkout.as_ref().unwrap()["typ"] == "ausgecheckt");
+    }
+    #[test]
+    fn cancelled_transfer_never_requests_checkout_even_after_stream_ended() {
+        let f = Fixture::start_mode(true).unwrap();
+        let adapter = f.adapter("cancel");
+        let Reply::Flow(FlowReply::CheckedIn(r)) = adapter.call(Request::Checkin {
+            attempt: 7,
+            method: CheckinMethod::Guest("test-invitation-one".into()),
+        }) else {
+            panic!("Check-in fehlt")
+        };
+        let guard = adapter.state.lock().unwrap();
+        // Kein Warten auf denselben Mutex und kein stiller Check-out nach dem Transfer.
+        assert!(matches!(
+            adapter.call(Request::CancelFlow(CancelTarget {
+                attempt: 7,
+                checkin_id: Some(r.checkin_id),
+                transfer_id: None,
+                abandon_checkin: false
+            })),
+            Reply::Flow(FlowReply::Cancelled)
+        ));
+        assert!(adapter.transfer.check().is_err());
+        assert!(guard.checkout.is_none());
+        assert!(!f.root.join("pool-frei").exists());
+        assert!(adapter.transfer.progress().is_none());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn failed_staged_import_never_acknowledges_or_frees_slot() {
+        let f = Fixture::start_mode(true).unwrap();
+        let adapter = f.adapter("unsafe-import");
+        let Reply::Flow(FlowReply::CheckedIn(r)) = adapter.call(Request::Checkin {
+            attempt: 1,
+            method: CheckinMethod::Guest("test-invitation-one".into()),
+        }) else {
+            panic!("Check-in fehlt")
+        };
+        let folder = pi_sync::LocalFolder::create(&adapter.config.local_root).unwrap();
+        let remote = f.root.join("home/arbeit/Projekte/Buch");
+        std::fs::create_dir_all(&remote).unwrap();
+        std::fs::write(remote.join("text.md"), "untrusted").unwrap();
+        std::os::unix::fs::symlink(&f.root, folder.root.join("Projekte/Buch")).unwrap();
+        let Reply::Flow(FlowReply::Preview(p)) =
+            adapter.call(Request::CheckoutPreview(r.checkin_id.clone()))
+        else {
+            panic!("Vorschau fehlt")
+        };
+        let reply = adapter.call(Request::Checkout {
+            checkin_id: r.checkin_id,
+            preview_id: p.id,
+        });
+        assert!(matches!(reply, Reply::Error(_)), "{reply:?}");
+        assert!(adapter.state.lock().unwrap().receipt.is_some());
+        assert!(!f.root.join("pool-frei").exists());
+        assert!(remote.join("text.md").exists());
+        assert!(!f.root.join("text.md").exists());
+        assert!(
+            adapter.transfer.progress().is_none(),
+            "Fehler beendet Fortschritt per Guard"
+        );
+    }
+    #[test]
+    fn p2p_identity_persists_and_is_used_instead_of_config_key() {
+        let f = Fixture::start_mode(true).unwrap();
+        let adapter = f.adapter("identity");
+        let original = adapter.identity.peer();
+        let again = f.adapter("identity");
+        assert_eq!(again.identity.peer(), original);
+        let reply = adapter.call(Request::Checkin {
+            attempt: 1,
+            method: CheckinMethod::Guest("test-invitation-one".into()),
+        });
+        assert!(
+            matches!(reply, Reply::Flow(FlowReply::CheckedIn(_))),
+            "{reply:?}"
+        );
+        let s = adapter.state.lock().unwrap();
+        assert_eq!(s.ausweis.as_ref().unwrap()["net_pubkey"], original.0);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(adapter.config.key_dir.join("seminar-net.key"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
+    #[test]
+    fn ambiguous_receipt_is_not_resent_or_reimported() {
+        let f = Fixture::start_mode(true).unwrap();
+        std::fs::write(f.root.join("lose-erhalten"), b"yes").unwrap();
+        let adapter = f.adapter("ack");
+        let Reply::Flow(FlowReply::CheckedIn(r)) = adapter.call(Request::Checkin {
+            attempt: 1,
+            method: CheckinMethod::Guest("test-invitation-one".into()),
+        }) else {
+            panic!("Check-in fehlt")
+        };
+        let remote = f.root.join("home/arbeit/Projekte/Buch");
+        std::fs::create_dir_all(&remote).unwrap();
+        std::fs::write(remote.join("text.md"), "einmal importieren").unwrap();
+        let Reply::Flow(FlowReply::Preview(p)) =
+            adapter.call(Request::CheckoutPreview(r.checkin_id.clone()))
+        else {
+            panic!("Vorschau fehlt")
+        };
+        for _ in 0..2 {
+            assert!(matches!(
+                adapter.call(Request::Checkout {
+                    checkin_id: r.checkin_id.clone(),
+                    preview_id: p.id.clone()
+                }),
+                Reply::Error(_)
+            ));
+        }
+        assert_eq!(
+            std::fs::read_to_string(f.root.join("ack-attempts")).unwrap(),
+            "1\n"
+        );
+        assert_eq!(
+            std::fs::read_dir(adapter.config.local_root.join("Projekte/Buch"))
+                .unwrap()
+                .count(),
+            1
+        );
+        assert!(adapter.state.lock().unwrap().receipt.is_some());
+        assert!(!f.root.join("pool-frei").exists());
     }
     #[test]
     fn local_fake_oidc_proof_is_verified_by_real_empfang() {

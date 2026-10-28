@@ -38,13 +38,16 @@ impl Transfer {
         self.progress.lock().ok()?.clone()
     }
     pub fn begin(&self, kind: TransferKind, id: &str, total: u64) {
-        self.cancel.store(false, Ordering::SeqCst);
         *self.progress.lock().unwrap() = Some(Progress {
             id: id.into(),
             kind,
             bytes: 0,
             total,
         });
+    }
+    pub fn scope(&self, kind: TransferKind, id: &str, total: u64) -> TransferScope<'_> {
+        self.begin(kind, id, total);
+        TransferScope(self)
     }
     pub fn end(&self) {
         *self.progress.lock().unwrap() = None;
@@ -60,6 +63,12 @@ impl Transfer {
         if let Some(p) = self.progress.lock().unwrap().as_mut() {
             p.bytes += n as u64;
         }
+    }
+}
+pub(super) struct TransferScope<'a>(&'a Transfer);
+impl Drop for TransferScope<'_> {
+    fn drop(&mut self) {
+        self.0.end();
     }
 }
 struct Meter<'a, T> {
@@ -315,6 +324,8 @@ pub(super) fn receive(
         .map_err(|e| e.to_string())?;
     // LocalFolder::import prüft SHA-256 erneut, read_archive vollständig in Stage,
     // prüft sämtliche Ziele vor dem Import und schreibt ausschließlich create_new.
+    // Kontrollierter Dateiname: die serverseitige opake ID ist kein lokaler Pfad.
+    let archive_name = format!("{}-{}.tar.gz", epoch(), sha256_name(id.as_bytes()));
     let result = folder
         .import(
             Meter {
@@ -322,7 +333,7 @@ pub(super) fn receive(
                 transfer,
             },
             sha,
-            &format!("{}_{id}.tar.gz", epoch()),
+            &archive_name,
             &stamp(),
         )
         .map_err(|e| e.to_string())?;
@@ -364,11 +375,67 @@ pub(super) fn journal(folder: &LocalFolder, mut event: Value) -> Result<(), Stri
         .and_then(|_| file.sync_all())
         .map_err(|e| e.to_string())
 }
+fn sha256_name(bytes: &[u8]) -> String {
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
 fn epoch() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn meter_counts_stream_and_aborts_read_and_write() {
+        let transfer = Transfer::default();
+        {
+            let _scope = transfer.scope(TransferKind::Upload, "test", 3);
+            let mut reader = Meter {
+                io: std::io::Cursor::new(b"abc"),
+                transfer: &transfer,
+            };
+            let mut bytes = [0; 3];
+            assert_eq!(reader.read(&mut bytes).unwrap(), 3);
+            assert_eq!(transfer.progress().unwrap().bytes, 3);
+            transfer.cancel.store(true, Ordering::SeqCst);
+            assert!(reader.read(&mut bytes).is_err());
+            assert!(
+                Meter {
+                    io: Vec::new(),
+                    transfer: &transfer
+                }
+                .write(b"abc")
+                .is_err()
+            );
+        }
+        assert!(transfer.progress().is_none());
+        assert!(
+            transfer.check().is_err(),
+            "Guard darf Abbruch nicht zurücksetzen"
+        );
+    }
+    #[test]
+    fn backend_stream_hash_is_real_sha256() {
+        let mut h = hash();
+        h.update(b"a");
+        h.update(b"bc");
+        let actual: String = h.finish().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            actual,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+    #[test]
+    fn server_archive_id_is_never_used_as_local_path() {
+        let name = sha256_name(b"../../secrets/evil");
+        assert_eq!(name.len(), 64);
+        assert!(name.bytes().all(|b| b.is_ascii_hexdigit()));
+    }
 }
 fn stamp() -> String {
     // libc ist bereits direkte App-Abhängigkeit; keine neue Datumsbibliothek.
