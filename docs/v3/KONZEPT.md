@@ -378,7 +378,7 @@ Quelle: FREEZE-I2 (E7–E10, A6–A9). Teil B erklärt diese Entscheidungen und 
 - **Konflikt:** lokal geänderte Datei bleibt; R2-Fassung als `Name (R2 TT.MM. HH-MM).ext` daneben.
 - **Abbruch** vor der Erhaltsbestätigung: Alles bleibt auf R2, Arbeitsplatz bleibt belegt. Text: „Abgebrochen. Der Arbeitsplatz bleibt belegt; deine Dateien bleiben auf R2, bis du auscheckst.“
 - **Leeren schlägt fehl:** Der Arbeitsplatz bleibt gesperrt, nie wird Erfolg gemeldet (B11 `leeren_unbestaetigt`).
-- **Erzwungener Check-out** (kein Gerät verbunden > 8 h, Tagesende 23:30, oder durch die Seminarleitung): Archiv → mit dem Geräteschlüssel verschlüsselt ins **Abholfach** (≤ 72 h) → gleicher Löschablauf. Abholen beim nächsten Check-in mit demselben Konto (gleiche Person), vor der Sync-Auswahl; nach bestätigtem Erhalt wird das Abholfach sofort gelöscht.
+- **Erzwungener Check-out** (kein Gerät verbunden > 8 h, Tagesende 23:30, oder durch die Seminarleitung): Archiv → mit dem Geräteschlüssel verschlüsselt ins **Abholfach** (≤ 72 h) → gleicher Löschablauf. Abholen beim nächsten Check-in derselben Person (gleiche `pid`), vor der Sync-Auswahl; nach bestätigtem Erhalt wird das Abholfach sofort gelöscht.
 
 ## B6 · Datenklassen: persönlich / flüchtig
 
