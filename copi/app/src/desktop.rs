@@ -893,6 +893,10 @@ impl Desktop {
         ui.ctx().all_styles_mut(|s| {
             s.visuals.selection.bg_fill = Color32::from_rgb(0x3c, 0x49, 0x5a);
             s.visuals.text_cursor.stroke.color = QUIET;
+            // Lesbare Knopftexte auf grauen Flächen; disabled bleibt separat gedimmt.
+            s.visuals.widgets.inactive.fg_stroke.color = Color32::from_rgb(0xf0, 0xf2, 0xf5);
+            s.visuals.widgets.hovered.fg_stroke.color = Color32::WHITE;
+            s.visuals.widgets.active.fg_stroke.color = Color32::WHITE;
         });
         let ctx = ui.ctx().clone();
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Comma)) {
@@ -1004,7 +1008,7 @@ impl Desktop {
                 } else {
                     ui.label("Dein Arbeitsplatz auf R2. Melde dich im Browser mit deinem UdK-Konto an.");
                     ui.add_space(18.0);
-                    if ui.add_sized([330.0, 42.0], egui::Button::new("Einchecken mit UdK-Konto")).clicked() {
+                    if ui.add_sized([330.0, 42.0], egui::Button::new("Einchecken mit UdK-Konto").fill(Color32::from_rgb(0x38, 0x5a, 0x6d))).clicked() {
                         if let Some(request) = self.flow.begin(CheckinMethod::Udk) { self.flow_call(request); }
                     }
                     ui.add_space(12.0);
@@ -1113,48 +1117,50 @@ impl Desktop {
                     self.call(a);
                 }
             });
-        egui::Panel::bottom("v3-input").show(ui, |ui| {
-            if !self.connected && !self.demo && ui.button("Verbindung erneut prüfen").clicked() {
-                self.start_watch();
-                self.call(Request::Sessions);
-            }
-            if let Some(e) = &self.error {
-                ui.label(e);
-                if e.contains("Hier startet kein Agent")
-                    && ui.button("Einstellungen öffnen").clicked()
+        if !self.seminar_selected {
+            egui::Panel::bottom("v3-input").show(ui, |ui| {
+                if !self.connected && !self.demo && ui.button("Verbindung erneut prüfen").clicked()
                 {
-                    self.settings = Some(Section::Mode);
+                    self.start_watch();
+                    self.call(Request::Sessions);
                 }
-            }
-            let working = self
-                .sessions
-                .iter()
-                .any(|s| Some(&s.id) == self.selected.as_ref() && s.state == SessionState::Working);
-            let text = if working { "Abbrechen" } else { "Senden" };
-            ui.add_sized(
-                [ui.available_width(), 86.0],
-                egui::TextEdit::multiline(&mut self.prompt)
-                    .hint_text("Nachricht an die gewählte Session auf R2 …"),
-            );
-            ui.horizontal(|ui| {
-                ui.label("Modell: Standard");
-                if ui
-                    .add_enabled(
-                        self.connected && self.selected.is_some() && self.pending == 0,
-                        egui::Button::new(text),
-                    )
-                    .clicked()
-                {
-                    let id = self.selected.clone().unwrap();
-                    if working {
-                        self.call(Request::Stop(id));
-                    } else if !self.prompt.trim().is_empty() {
-                        self.call(Request::Prompt(id, self.prompt.clone()));
+                if let Some(e) = &self.error {
+                    ui.label(e);
+                    if e.contains("Hier startet kein Agent")
+                        && ui.button("Einstellungen öffnen").clicked()
+                    {
+                        self.settings = Some(Section::Mode);
                     }
                 }
-                ui.label(RichText::new("Verbrauch: unbekannt").small().color(QUIET));
+                let working = self.sessions.iter().any(|s| {
+                    Some(&s.id) == self.selected.as_ref() && s.state == SessionState::Working
+                });
+                let text = if working { "Abbrechen" } else { "Senden" };
+                ui.add_sized(
+                    [ui.available_width(), 86.0],
+                    egui::TextEdit::multiline(&mut self.prompt)
+                        .hint_text("Nachricht an die gewählte Session auf R2 …"),
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Modell: Standard");
+                    if ui
+                        .add_enabled(
+                            self.connected && self.selected.is_some() && self.pending == 0,
+                            egui::Button::new(text),
+                        )
+                        .clicked()
+                    {
+                        let id = self.selected.clone().unwrap();
+                        if working {
+                            self.call(Request::Stop(id));
+                        } else if !self.prompt.trim().is_empty() {
+                            self.call(Request::Prompt(id, self.prompt.clone()));
+                        }
+                    }
+                    ui.label(RichText::new("Verbrauch: unbekannt").small().color(QUIET));
+                });
             });
-        });
+        }
         ui.horizontal(|ui| {
             ui.heading("Seminarprojekt");
             if ui
@@ -1967,6 +1973,32 @@ mod tests {
         }
         assert_eq!(SessionState::Working.color(), WORKING);
     }
+    #[test]
+    fn i3_seminar_has_no_second_agent_input() {
+        let ctx = egui::Context::default();
+        crate::setup_ctx(&ctx);
+        let mut d = Desktop::new(true);
+        d.scene("v3-mitsteuern-aktiv-leitung");
+        for _ in 0..3 {
+            frame(&mut d, &ctx, vec![]);
+        }
+        let output = frame(&mut d, &ctx, vec![]);
+        let texts = output
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::epaint::Shape::Text(t) => Some(t.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !texts
+                .iter()
+                .any(|t| t.contains("Nachricht an die gewählte Session"))
+        );
+        assert!(texts.contains(&"Als Seminarleitung senden"));
+    }
+
     #[test]
     fn i3_status_uses_own_receipt_even_when_viewing_someone_else() {
         let mut d = Desktop::new(true);

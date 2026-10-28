@@ -139,7 +139,7 @@ impl Desktop {
                             }
                             ui.label("Sie werden in ~/cocopi zurückgespielt. Lokale Änderungen bleiben erhalten.");
                             ui.add_space(20.0);
-                            if ui.button("Dateien vom letzten Mal abholen").clicked() {
+                            if ui.add(egui::Button::new("Dateien vom letzten Mal abholen").fill(Color32::from_rgb(0x38, 0x5a, 0x6d))).clicked() {
                                 if let Some(request) = self.flow.collect() { self.flow_call(request); }
                             }
                             if ui.small_button("Später abholen · weiter zur Auswahl").clicked() {
@@ -169,7 +169,7 @@ impl Desktop {
                             ui.label(format!("Builds/Cache werden nicht übertragen ({})", bytes(self.flow.plan.excluded_bytes)));
                             let total: u64 = self.flow.plan.items.iter().filter(|i| i.selected).map(|i| i.bytes).sum();
                             ui.add_space(22.0);
-                            if ui.add_enabled(self.flow.plan.items.iter().any(|i| i.selected), egui::Button::new(format!("Auswahl senden und starten · {}", bytes(total)))).clicked() {
+                            if ui.add_enabled(self.flow.plan.items.iter().any(|i| i.selected), egui::Button::new(format!("Auswahl senden und starten · {}", bytes(total))).fill(Color32::from_rgb(0x38, 0x5a, 0x6d))).clicked() {
                                 if let Some(request) = self.flow.upload() { self.flow_call(request); }
                             }
                             ui.horizontal(|ui| {
@@ -230,7 +230,7 @@ impl Desktop {
                             ui.add_space(22.0);
                             let ready = self.flow.preview.as_ref().is_some_and(|p| p.personal.iter().all(|f| !f.large || f.selected));
                             if !ready { ui.label("Bestätige jede große Datei einzeln. Ohne Rückgabe aller persönlichen Dateien bleibt der Arbeitsplatz belegt."); }
-                            if ui.add_enabled(ready, egui::Button::new("Auschecken und Dateien holen")).clicked() {
+                            if ui.add_enabled(ready, egui::Button::new("Auschecken und Dateien holen").fill(Color32::from_rgb(0x38, 0x5a, 0x6d))).clicked() {
                                 if let Some(request) = self.flow.checkout() { self.flow_call(request); }
                             }
                             if ui.small_button("Zurück zur Arbeit").clicked() { self.cancel_flow(); }
@@ -403,5 +403,21 @@ impl Desktop {
 }
 fn bytes(n: u64) -> String {
     // Dezimale MB in allen Sync-Karten, auch Fortschritt, Cache und große Dateien.
-    format!("{:.2} MB", n as f64 / 1_000_000.0).replace('.', ",")
+    let decimals = if n >= 1_000_000 { 1 } else { 2 };
+    format!("{:.*} MB", decimals, n as f64 / 1_000_000.0).replace('.', ",")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn all_sync_sizes_are_decimal_mb_with_german_separator() {
+        for (n, expected) in [
+            (4_200_000, "4,2 MB"),
+            (240_000_000, "240,0 MB"),
+            (1_100_000_000, "1100,0 MB"),
+            (12_000, "0,01 MB"),
+        ] {
+            assert_eq!(super::bytes(n), expected);
+        }
+    }
 }
