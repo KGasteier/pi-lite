@@ -48,3 +48,12 @@ Neue feste Entscheidungen (ergänzen E1–E6, ersetzen die personenfeste Slot-Zu
 - Teilnehmende bekommt Dialog: „Aylin (Seminarleitung) möchte in ‚Seminar-Handout‘ mitschreiben.“ — **Erlauben 30 min** / **Nur ansehen** / **Ablehnen** (Ablehnen fokussiert).
 - Aktiv: Teilnehmenden-Fenster mit farbigem Rahmen (`#4fb8d8`) und Leiste „Aylin steuert mit · noch 27 min · **Beenden**“; Seminarleitung sieht „Du steuerst Miras Session ‚Seminar-Handout‘ · **Zurückgeben**“. Prompts der Seminarleitung laufen über den Client der Teilnehmenden zum Hub (`senden{text, von:{person,rolle}}`, additiv) und erscheinen im Chat als „Aylin · Seminarleitung“ mit Farbmarke. Rückfragen beantwortet weiter die Teilnehmende, außer sie erlaubt es.
 - Jederzeit beendbar von beiden Seiten; Ende bei Check-out, Verbindungsverlust > 60 s oder Ablauf.
+
+## Nachtrag K nach I2-Runde 1 (28.10.2026, 22:40) — verbindlich für I2b
+
+- **N1 Signaturformat:** flach `{...inhalt, signatur}` ist kanonisch (S7-Erzeuger). Die verschachtelte Variante bleibt nur lesend erlaubt.
+- **N2 Idempotenz statt Recovery-Vertrag:** Kommt die *byte-gleiche* signierte Belegung erneut und ist für diese `checkin_id` aktiv, antwortet der Hub **200 `belegung_aktiv`** mit gleichem Inhalt. Eine erneute Freigabe einer bereits freigegebenen `checkin_id` ergibt **200 `freigegeben`**. Eine abweichende Nutzlast mit derselben `checkin_id` bleibt `verbraucht`. Der Empfang darf damit nach verlorenen Antworten gefahrlos wiederholen (höchstens 3-mal, Backoff 1/3/9 s).
+- **N3 Slot-Epoche gegen Replay nach Home-Leeren:** `cocopi-slotctl leeren` erhöht `/var/lib/cocopi/slots/accountNN.epoche` (root, 0644, Ganzzahl). Der Empfang liest sie und schreibt `epoche` in Belegung und Freigabe. Der Hub verlangt `epoche == aktuelle Datei` (Env `HUB_EPOCHE_DATEI`). Fehlt die Datei, gilt Epoche 0, nur im Test.
+- **N4 Zeiten und Schlüssel:** Ausweis-/Belegungszeiten in **Unix-Sekunden** (`iat`,`exp`,`gueltig_bis`). `net_pubkey` = iroh-Knoten-ID hex (64 Zeichen, klein).
+- **N5 Proxy:** Von außen gesperrt sind `/v1/belegung`, `/v1/freigabe` und `/v1/sync/dienst/*`, auch mit Präfix `/slot/accountNN/…`.
+- **N6 Abbruch während Check-in:** Kommt der Abbruch nach der Vergabe, ruft der Client `checkout` ohne Upload auf. Der Empfang gibt den Platz ohne Archiv frei, weil er leer ist.
