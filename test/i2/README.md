@@ -5,6 +5,7 @@
 ```sh
 node --test test/i2/*.test.mjs
 I2_HUB_DIR=/pfad/pi-hub-worktree node --test test/i2/*.test.mjs
+I2_SEMINAR_DIR=/pfad/pi-lite-s8 node --test test/i2/consent.test.mjs
 bash test/v3-gate.sh "$PWD" /pfad/hub-s3 /pfad/hub-s7
 V3_GATE_HUBS="/pfad/hub-s3 /pfad/hub-s7" bash test/v3-gate.sh "$PWD"
 python3 test/self-test.py
@@ -48,8 +49,17 @@ Sync-Archivfunktion. Der Fake-pi-Prozess ist ein modellfreier RPC-Prozess und
 kein Beweis für die produktive Hub-Prozessverwaltung. Lokales Rückspielen ist
 nur ein Testfixture, nicht die Rust-Client-Implementierung/deren Konfliktlogik.
 
-**Noch offen:** Mitsteuern ohne Zustimmung hat ein sichtbares TODO, bis die
-S8-Schnittstelle vereinbart ist. Kein UI-, Geräte-, Systemaccount-, Quoten-,
+**Mitsteuern:** `consent.test.mjs` kann über `I2_SEMINAR_DIR` den öffentlichen
+S8-Automaten prüfen. Es erzeugt eine eigene temporäre Rust-Testcrate aus
+`seminar-consent.rs` und baut offline mit drei Jobs im S6-Target (oder explizitem
+`CARGO_TARGET_DIR`), ohne S8-Quellen zu ändern. Zwei unabhängige Angriffstests
+prüfen erfundene Requests, ausstehende Zustimmung, Nur-Ansicht, Ablehnung,
+Check-out, falsche Session und Ende. Ein explizit erlaubter Prompt muss genau
+einmal mit Leitungsattribution im MemoryNet ankommen. Ohne gesetzten, passenden
+S8-Pfad bleibt ein sichtbares TODO. Auch das Gate reicht die Variable weiter.
+Das prüft den Automaten, **nicht** echte P2P-/UI-/Hub-Verdrahtung.
+
+**Noch offen:** Kein UI-, Geräte-, Systemaccount-, Quoten-,
 Systemd- oder echter R2-Löschtest. Weder Signatur-/Sync-Integration zwischen den
 separaten Hub-Worktrees noch Datenschutzkonformität wird durch diese Tests
 pauschal behauptet; siehe `coord/BUGS.md` und S6-Bericht im Koordinationsbaum.

@@ -106,7 +106,3 @@ test('Empfang Abholfach: anderer pid/falscher Schlüssel blockiert; richtiger Sc
   await packet(await f.signed(back, `/v1/empfang/abholfach/${oldId}/erhalten`, { sha256: f.hash(bytes) }), 200, 'abholfach_erhalten');
   assert.equal((await f.signed(back, '/v1/empfang/abholfach/' + oldId, undefined, 'GET')).status, 404);
 });
-
-test('Mitsteuern: ohne Zustimmung keine Eingabe an fremde Session', {
-  todo: 'S8: ausführbare Schnittstelle für Zustimmung/Promptweitergabe noch nicht vereinbart; kein Nachweis durch UI-Text.',
-}, () => {});
