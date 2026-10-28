@@ -134,6 +134,10 @@ pub enum Request {
 }
 #[derive(Clone, Debug)]
 pub enum Reply {
+    ConnectionEvent {
+        epoch: u64,
+        reply: Box<Reply>,
+    },
     Flow(FlowReply),
     FlowCompleted {
         generation: u64,
@@ -219,6 +223,7 @@ pub struct Desktop {
     tx: mpsc::Sender<Reply>,
     rx: mpsc::Receiver<Reply>,
     pending: usize,
+    connection_epoch: u64,
     mode: Mode,
     pub account: Option<Account>,
     connected: bool,
@@ -313,6 +318,7 @@ impl Desktop {
             tx,
             rx,
             pending: 0,
+            connection_epoch: 0,
             mode: if demo {
                 Mode::RemoteOnly
             } else {
@@ -367,13 +373,21 @@ impl Desktop {
             return;
         }
         self.pending += 1;
-        let (api, tx) = (self.api.clone(), self.tx.clone());
+        let (api, tx, epoch) = (self.api.clone(), self.tx.clone(), self.connection_epoch);
         std::thread::spawn(move || {
-            let _ = tx.send(Reply::Completed(Box::new(api.call(request))));
+            let _ = tx.send(Reply::ConnectionEvent {
+                epoch,
+                reply: Box::new(Reply::Completed(Box::new(api.call(request)))),
+            });
         });
     }
     fn apply(&mut self, reply: Reply) {
         match reply {
+            Reply::ConnectionEvent { epoch, reply } => {
+                if epoch == self.connection_epoch {
+                    self.apply(*reply);
+                }
+            }
             Reply::FlowCompleted { generation, reply } => {
                 if generation == self.flow_generation {
                     self.flow_pending = false;
@@ -381,6 +395,9 @@ impl Desktop {
                 }
             }
             Reply::Flow(reply) => {
+                if matches!(reply, FlowReply::CheckedIn(_)) {
+                    self.connected = true;
+                }
                 if let FlowReply::Browser { attempt, url } = &reply {
                     if !self.demo
                         && *attempt == self.flow.attempt
@@ -403,6 +420,10 @@ impl Desktop {
                     }
                 }
                 if self.flow.stage == Stage::Done {
+                    self.connection_epoch += 1;
+                    self.pending = 0;
+                    self.watch_started = false;
+                    self.last_event = None;
                     self.account = None;
                     self.connected = false;
                     self.welcome_done = false;
@@ -517,6 +538,8 @@ impl Desktop {
                     self.connected = false;
                 }
                 if e == InviteError::Revoked {
+                    self.connection_epoch += 1;
+                    self.pending = 0;
                     self.account = None;
                     self.flow = Flow::default();
                     self.flow_generation += 1;
@@ -606,8 +629,22 @@ impl Desktop {
         }
         self.watch_started = true;
         self.last_event = Some(Instant::now());
-        let (api, tx) = (self.api.clone(), self.tx.clone());
-        std::thread::spawn(move || api.watch(tx));
+        let (api, tx, epoch) = (self.api.clone(), self.tx.clone(), self.connection_epoch);
+        let (watch_tx, watch_rx) = mpsc::channel();
+        std::thread::spawn(move || api.watch(watch_tx));
+        std::thread::spawn(move || {
+            while let Ok(reply) = watch_rx.recv() {
+                if tx
+                    .send(Reply::ConnectionEvent {
+                        epoch,
+                        reply: Box::new(reply),
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
     }
     fn pi_event(&mut self, id: String, event: serde_json::Value) {
         match event["type"].as_str() {
@@ -1602,6 +1639,194 @@ mod tests {
             assert_ne!(s.color(), WORKING);
         }
         assert_eq!(SessionState::Working.color(), WORKING);
+    }
+    #[test]
+    fn i2_scenes_render_the_requested_cards_and_one_checkout_location() {
+        for (scene, expected) in [
+            ("v3-start", "Einchecken mit UdK-Konto"),
+            ("v3-checkin", "Warte auf Anmeldung im Browser …"),
+            (
+                "v3-warteschlange",
+                "Alle 10 Arbeitsplätze sind belegt. Du bist Nr. 2.",
+            ),
+            ("v3-sync-auswahl", "Was möchtest du nach R2 mitnehmen?"),
+            ("v3-arbeiten-eingecheckt", "Auschecken …"),
+            ("v3-checkout-vorschau", "Auschecken und Dateien holen"),
+            ("v3-checkout-fertig", "Alles zurück in ~/cocopi"),
+            ("v3-seminar-platzhalter", "Seminar"),
+            ("v3-sync-fortschritt", "Deine Auswahl geht nach R2 …"),
+            ("v3-checkout-fortschritt", "Dateien kommen zurück …"),
+            ("v3-abholfach", "Dateien vom letzten Mal abholen"),
+        ] {
+            let ctx = egui::Context::default();
+            crate::setup_ctx(&ctx);
+            let mut d = Desktop::new(true);
+            d.scene(scene);
+            for _ in 0..4 {
+                frame(&mut d, &ctx, vec![]);
+            }
+            let output = frame(&mut d, &ctx, vec![]);
+            let texts = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::epaint::Shape::Text(t) => Some(t.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(texts.contains(&expected), "{scene}: {texts:?}");
+            let checkouts = texts.iter().filter(|s| **s == "Auschecken …").count();
+            assert_eq!(
+                checkouts,
+                usize::from(
+                    scene == "v3-arbeiten-eingecheckt" || scene == "v3-seminar-platzhalter"
+                )
+            );
+            assert_eq!(d.pending, 0);
+            assert!(!d.flow_pending);
+            if scene == "v3-arbeiten-eingecheckt" {
+                assert_eq!(
+                    d.status(),
+                    "☁ Nur Remote · Mira · account03 @ R2 · eingecheckt seit 14:02"
+                );
+            }
+        }
+    }
+    fn click_text(d: &mut Desktop, ctx: &egui::Context, text: &str) {
+        for _ in 0..3 {
+            frame(d, ctx, vec![]);
+        }
+        let output = frame(d, ctx, vec![]);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::epaint::Shape::Text(t) if t.galley.job.text == text => {
+                    Some(t.pos + t.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("Knopf fehlt: {text}"));
+        click(d, ctx, pos);
+    }
+    #[test]
+    fn i2_ui_selection_requires_click_and_preview_cancel_does_not_checkout() {
+        let ctx = egui::Context::default();
+        crate::setup_ctx(&ctx);
+        let mut d = Desktop::new(true);
+        d.scene("v3-sync-auswahl");
+        assert_eq!(d.flow.stage, Stage::Selection);
+        click_text(&mut d, &ctx, "Ohne Dateien starten");
+        assert_eq!(d.flow.stage, Stage::Working);
+        assert!(d.flow_retry.is_none(), "kein Upload ohne Klick auf Senden");
+        d.scene("v3-checkout-vorschau");
+        click_text(&mut d, &ctx, "Zurück zur Arbeit");
+        assert_eq!(d.flow.stage, Stage::Working);
+        assert!(d.flow.receipt.is_some());
+        assert!(d.flow_retry.is_none());
+    }
+    #[test]
+    fn i2_escape_cancels_browser_queue_upload_checkout_and_preview() {
+        for scene in [
+            "v3-checkin",
+            "v3-warteschlange",
+            "v3-sync-fortschritt",
+            "v3-checkout-fortschritt",
+            "v3-checkout-vorschau",
+        ] {
+            let ctx = egui::Context::default();
+            crate::setup_ctx(&ctx);
+            let mut d = Desktop::new(true);
+            d.scene(scene);
+            frame(
+                &mut d,
+                &ctx,
+                vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+            );
+            if scene == "v3-checkout-vorschau" {
+                assert_eq!(d.flow.stage, Stage::Working);
+            } else {
+                assert_eq!(d.flow.stage, Stage::Cancelling);
+            }
+            assert_ne!(d.flow.stage, Stage::Done);
+        }
+    }
+    #[test]
+    fn i2_checkout_invalidates_late_session_and_heartbeat_events() {
+        let mut d = Desktop::new(true);
+        d.scene("v3-checkout-fortschritt");
+        let epoch = d.connection_epoch;
+        d.apply(Reply::Flow(FlowReply::CheckedOut(
+            checkin::MemoryApi::summary(),
+        )));
+        d.apply(Reply::ConnectionEvent {
+            epoch,
+            reply: Box::new(Reply::Sessions(vec![Session {
+                id: "old".into(),
+                title: "Alt".into(),
+                state: SessionState::Working,
+                local: false,
+                pinned: false,
+            }])),
+        });
+        d.apply(Reply::ConnectionEvent {
+            epoch,
+            reply: Box::new(Reply::Heartbeat),
+        });
+        assert!(d.sessions.is_empty());
+        assert!(!d.connected);
+        assert!(d.account.is_none());
+    }
+    #[test]
+    fn i2_stale_worker_reply_after_cancel_cannot_reopen_checkin() {
+        let mut d = Desktop::new(true);
+        d.flow.stage = Stage::Browser;
+        d.flow_generation = 4;
+        d.flow_pending = true;
+        d.apply(Reply::FlowCompleted {
+            generation: 3,
+            reply: Box::new(Reply::Flow(FlowReply::CheckedIn(
+                checkin::MemoryApi::receipt(),
+            ))),
+        });
+        assert_eq!(d.flow.stage, Stage::Browser);
+        assert!(d.account.is_none());
+        assert!(d.flow_pending, "altes Ergebnis beendet nicht neuen Request");
+    }
+    #[test]
+    fn i2_worker_boundary_runs_memory_checkin_plan_and_checkout_without_filesystem() {
+        let mut d = Desktop::new(true);
+        d.demo = false; // reine Konstruktion, kein Profilzugriff
+        d.set_api(Arc::new(checkin::MemoryApi::default()));
+        let request = d.flow.begin(CheckinMethod::Guest("mock".into())).unwrap();
+        d.flow_call(request);
+        for _ in 0..2 {
+            let reply = d.rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            d.apply(reply);
+        }
+        assert_eq!(d.flow.stage, Stage::Selection);
+        assert!(d.connected);
+        assert_eq!(d.pending, 0);
+        let request = d.flow.preview().unwrap();
+        d.flow_call(request);
+        let reply = d.rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        d.apply(reply);
+        assert_eq!(d.flow.stage, Stage::Preview);
+        let request = d.flow.checkout().unwrap();
+        d.flow_call(request);
+        loop {
+            let reply = d.rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            d.apply(reply);
+            if d.flow.stage == Stage::Done {
+                break;
+            }
+            let request = d.flow.poll().unwrap();
+            d.flow_call(request);
+        }
+        assert!(d.account.is_none());
+        assert!(d.sessions.is_empty());
+        assert!(!d.flow_pending);
+        assert_eq!(d.flow.summary.unwrap().conflicts, 2);
     }
     #[test]
     fn revoked_returns_to_welcome() {
