@@ -57,3 +57,17 @@ Neue feste Entscheidungen (ergänzen E1–E6, ersetzen die personenfeste Slot-Zu
 - **N4 Zeiten und Schlüssel:** Ausweis-/Belegungszeiten in **Unix-Sekunden** (`iat`,`exp`,`gueltig_bis`). `net_pubkey` = iroh-Knoten-ID hex (64 Zeichen, klein).
 - **N5 Proxy:** Von außen gesperrt sind `/v1/belegung`, `/v1/freigabe` und `/v1/sync/dienst/*`, auch mit Präfix `/slot/accountNN/…`.
 - **N6 Abbruch während Check-in:** Kommt der Abbruch nach der Vergabe, ruft der Client `checkout` ohne Upload auf. Der Empfang gibt den Platz ohne Archiv frei, weil er leer ist.
+
+## Nachtrag I3-O2 (K, 29.10.2026) — N7–N10
+- **N7 Leer-Nachweis:** Empfang wertet das JSON der letzten Zeile von `cocopi-slotctl leeren` aus
+  (`zustand:"leer"`, `nachweis:"vor_hubstart"`, passender `slot` + neue `epoche`) und ruft danach **kein** `pruefen` mehr.
+  `pruefen --beleg` (liest `/var/lib/cocopi-slots/<slot>.leer.json`) ist additiv für admin-check.
+- **N8 Aktiv-Signal:** Client sendet `POST /v1/empfang/aktiv {verbunden:true}` alle ≤ 60 s, solange Desktop- **oder** Mobilverbindung
+  zum Hub besteht; beim sauberen Trennen `false`. Zwangs-Check-out nur bei `!verbunden && now-zuletzt > 8 h` oder Tagesende
+  (nächstes 23:30 ≥ `seit`).
+- **N9 Seminarverzeichnis:** `GET /v1/empfang/seminar` (geräte-signiert wie andere Empfangsrouten, nur für eingecheckte Geräte) →
+  `{protokoll:1, verzeichnis:{ausgestellt, personen:[{person, anzeige, rolle, net_pubkey}]}, signatur}` signiert mit dem
+  Empfangsschlüssel (Format N1). Client prüft Signatur, füllt `add_person`/`set_contacts`; **Rolle bleibt nur aus dem
+  Geräteausweis** des Peers (Verzeichnis dient nur dem Finden). Abruf beim Check-in und alle 60 s.
+- **N10 Große Zwangsarchive:** bis zum Binärformat (I4) Grenze 384 MiB Klartext für Abholfach; darüber
+  `erzwingen_blockiert` mit Backoff 5/15/60 min und Sichtbarkeit für die Seminarleitung, Daten bleiben auf R2 bis manuell.
