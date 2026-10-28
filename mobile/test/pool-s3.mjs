@@ -7,7 +7,7 @@ import http from 'node:http';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { createTransport } from '../../ui/transport.js';
-const modulePath = process.env.COCOPI_V1_TEST_MODULE || '/home/medienhaus/Work/pi-hub-wt/s3/lib/hub-v1.mjs';
+const modulePath = process.env.COCOPI_V1_TEST_MODULE || path.join(os.homedir(), 'Work/pi-hub/lib/hub-v1.mjs');
 let available = false;
 try { await fs.access(modulePath); available = true; } catch {}
 
@@ -53,7 +53,7 @@ test('I2 S3-Pool: k-Kopplung, A1 Prompt/Rückfrage/Stopp, Freigabe → 401 und L
     const packet = await response.json(); assert.ok(response.ok, JSON.stringify(packet)); return packet;
   }
   const desktop = await identity(), mobile = await identity();
-  await post('/v1/belegung', { belegung: signed({ v: 1, typ: 'belegung', slot: 'account03', checkin_id: 'checkin-mobil', person: 'Mira', rolle: 'teilnehmende', geraete: [{ geraet_id: 'desktop', pubkey: desktop.pubkey, name: 'Test-Rechner', art: 'desktop' }], gueltig_bis: Date.now() + 60000 }) });
+  await post('/v1/belegung', { belegung: signed({ v: 1, typ: 'belegung', slot: 'account03', checkin_id: 'checkin-mobil', person: 'Mira', rolle: 'teilnehmende', geraete: [{ geraet_id: 'desktop', pubkey: desktop.pubkey, name: 'Test-Rechner', art: 'desktop' }], epoche: 0, gueltig_bis: Math.floor(Date.now() / 1000) + 60 }) });
   const desktopTransport = createTransport({ baseUrl, getToken: () => desktop.token });
   desktop.token = (await desktopTransport.hallo({ geraet_id: 'desktop', slot: 'account03', hub_origin: baseUrl, sign: desktop.sign })).zugangstoken;
   const opened = await post('/v1/sessions/oeffnen', { workspace: root, titel: 'I2-Test' }, desktop.token);
@@ -69,7 +69,7 @@ test('I2 S3-Pool: k-Kopplung, A1 Prompt/Rückfrage/Stopp, Freigabe → 401 und L
   assert.equal(answer.zustand, 'wartet'); assert.equal(answer.frage.id, 'q1');
   await transport.antwort(opened.session_id, 'q1', false);
   await transport.stopp(opened.session_id); assert.equal(aborted, true);
-  const freed = await post('/v1/freigabe', { freigabe: signed({ v: 1, typ: 'freigabe', slot: 'account03', checkin_id: 'checkin-mobil' }) });
+  const freed = await post('/v1/freigabe', { freigabe: signed({ v: 1, typ: 'freigabe', slot: 'account03', checkin_id: 'checkin-mobil', epoche: 0 }) });
   assert.equal(freed.typ, 'freigegeben');
   await assert.rejects(transport.sessions(), { status: 401 }); assert.equal(logout, 1);
   await assert.rejects(transport.hallo({ ...registration, sign: mobile.sign }), { status: 401 });
