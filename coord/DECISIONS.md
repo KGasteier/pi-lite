@@ -7,3 +7,11 @@
 - 28.10.2026 K: `coord/` lebt im Haupt-Worktree (Branch `cocopi-v3`); Subagenten schreiben nur `coord/heartbeat/<rolle>` und `coord/runs/<rolle>-*.md` (Berichte), sonst nichts in `coord/`.
 - 28.10.2026 Mensch: Agentenlauf bis Ende I1 freigegeben (D-K1 für I1). S4 nutzt `udk2/cx/gpt-6.1-sol` statt terra (D-T1). Opus (diese Sitzung) koordiniert als K. `coord/` auf `cocopi-v3` committen und pushen erlaubt.
 - 28.10.2026 K: S1-Ergebnis (`fdbde9f`) in `cocopi-v3` gemergt. A1–A5 eingefroren in `coord/FREEZE-I1.md` (Konflikt S1/S4 bei Namen/Port entschieden: `accountNN`, Port 88NN). Crate `qrcodegen 1.8.0` freigegeben. Spawn-Sperre (pi-backend) gehört S3, UI S2.
+
+## 28.10.2026 abends · I1-Verlauf
+- S1 (opus), S4 (+A4-Folge), S5 fertig; S6 (sol-pro) nach 100 min rc=124: Kontextverdichtung „Request timed out“ 3×. K hat den S6-Stand übernommen (`a66f63a`), Nachauftrag S6 läuft mit **sol statt sol-pro**.
+- Gemergt in cocopi-v3: v3/s1, v3/s4, v3/s5, v3/s6. **Noch nicht:** v3/s2, v3/s3.
+- Opus-Sicherheitsreview S3: „ja mit Auflagen“, H1 (Handybestätigung umgehbar), H2 (b-Code per SSE), H3 (T3 per spätem Exit) → Nachauftrag I1-S3-fix; S2-fix (mode::init, N4, Clippy, UI-Feinschliff).
+- T3: zweite aktive Session wird **abgewiesen** (kein Queue) — gilt für I1; globale Heavy-Job-Queue I2.
+- Gate fmt/js-tests scheitern bereits auf eb534bb → S6 macht sie baselinebezogen.
+- Laufprotokolle (jsonl/err/status/heartbeat/sessions) werden nicht versioniert (coord/.gitignore).
