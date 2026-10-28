@@ -63,11 +63,11 @@ pub fn classify(p: &str, bytes: u64, regular: bool) -> Klasse {
     if !AREAS.contains(&parts[0]) && parts[0] != "Verläufe" {
         return Klasse::Fluechtig;
     }
-    if parts.len() == 1 {
-        return Klasse::Persoenlich;
-    }
     if bytes > MAX_FILE {
         return Klasse::Gross;
+    }
+    if parts.len() == 1 {
+        return Klasse::Persoenlich;
     }
     if parts[0] == "Ergebnisse" {
         return Klasse::Persoenlich;
