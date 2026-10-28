@@ -1,0 +1,18 @@
+{
+  "protokoll": 1,
+  "typ": "empfang_willkommen",
+  "slots_gesamt": 10,
+  "slots_frei": 9,
+  "warteschlange": 0,
+  "oidc": {
+    "issuer": "https://auth.example/oidc/cocopi",
+    "client_id": "cocopi",
+    "scopes": [
+      "openid",
+      "profile",
+      "groups"
+    ]
+  },
+  "empfang_pubkey": "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik",
+  "vertrag": "cocopi-pool-v1"
+}

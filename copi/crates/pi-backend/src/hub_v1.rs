@@ -217,9 +217,6 @@ impl DeviceKey {
             .and_then(|_| f.sync_all())
             .map_err(|e| e.to_string())
     }
-    pub(crate) fn sign(&self, payload: &[u8]) -> String {
-        B64.encode(self.signing.sign(payload).to_bytes())
-    }
     pub(crate) fn remember(&mut self, id: &str) -> Result<(), String> {
         self.geraet_id = Some(id.to_string());
         let temp = self

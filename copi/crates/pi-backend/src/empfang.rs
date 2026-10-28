@@ -48,7 +48,8 @@ pub fn canonical_json(value: &Value) -> Result<String, String> {
 
 /// Prüft nur Integrität/Herkunft, NICHT Rolle, Zweck, Gültigkeitszeit oder Pin-Vertrauen.
 /// Aufrufer (S8) müssen `typ`, Schlüsselbindung und `iat`/`exp` zusätzlich prüfen.
-/// Flaches signiertes JSON, Feld `signatur` wird aus den signierten Nutzdaten entfernt.
+/// Empfangsformat `{inhalt,signatur}`; frühes flaches Format wird additiv akzeptiert.
+/// Zusätzliche unsignierte Hüllfelder werden abgewiesen.
 pub fn verify_signed(json: &Value, pubkey: &str) -> Result<Value, String> {
     let mut object = json
         .as_object()
@@ -68,7 +69,17 @@ pub fn verify_signed(json: &Value, pubkey: &str) -> Result<Value, String> {
         .map_err(|_| "Ungültige Signatur.")?
         .try_into()
         .map_err(|_| "Ungültige Signatur.")?;
-    let value = Value::Object(object);
+    let value = if object.contains_key("inhalt") {
+        if object.len() != 1 {
+            return Err("Die Ausweishülle enthält unsignierte Angaben.".into());
+        }
+        object.remove("inhalt").ok_or("Der Ausweisinhalt fehlt.")?
+    } else {
+        Value::Object(object)
+    };
+    if !value.is_object() {
+        return Err("Der Ausweisinhalt ist kein Objekt.".into());
+    }
     VerifyingKey::from_bytes(&key)
         .map_err(|_| "Ungültiger Empfangsschlüssel.")?
         .verify_strict(
@@ -82,7 +93,7 @@ pub fn verify_signed(json: &Value, pubkey: &str) -> Result<Value, String> {
 pub struct Empfang {
     origin: String,
     agent: ureq::Agent,
-    token: Option<String>,
+    auth: Option<(String, ed25519_dalek::SigningKey)>,
 }
 impl Empfang {
     pub fn new(origin: &str) -> Result<Self, String> {
@@ -91,15 +102,41 @@ impl Empfang {
         Ok(Self {
             origin: origin.to_string(),
             agent: agent(false),
-            token: None,
+            auth: None,
         })
     }
     fn request(&self, method: &str, path: &str, mut body: Value) -> Result<Value, String> {
         let url = format!("{}/v1/empfang/{path}", self.origin);
+        let auth_headers =
+            if !matches!(path, "hallo" | "checkin" | "challenge") && !path.starts_with("warten/") {
+                if let Some((id, key)) = &self.auth {
+                    let c = self.request("POST", "challenge", json!({"checkin_id":id}))?;
+                    let cid = c["challenge_id"]
+                        .as_str()
+                        .ok_or("Die Anmeldeprüfung fehlt.")?;
+                    let nonce = c["nonce"].as_str().ok_or("Die Anmeldeprüfung fehlt.")?;
+                    let payload = super::login_payload(&self.origin, "empfang", id, cid, nonce)?
+                        .replacen("cocopi-v1-anmelden", "cocopi-v1-empfang", 1)
+                        .replacen("\nempfang\n", "\n", 1);
+                    use ed25519_dalek::Signer;
+                    Some((
+                        id.clone(),
+                        cid.to_string(),
+                        B64.encode(key.sign(payload.as_bytes()).to_bytes()),
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
         let mut response = if method == "GET" {
             let mut req = self.agent.get(&url);
-            if let Some(t) = &self.token {
-                req = req.header("Authorization", format!("Bearer {t}"));
+            if let Some((id, cid, sig)) = &auth_headers {
+                req = req
+                    .header("X-Cocopi-Checkin", id)
+                    .header("X-Cocopi-Challenge", cid)
+                    .header("X-Cocopi-Signatur", sig);
             }
             req.call()
         } else {
@@ -108,8 +145,11 @@ impl Empfang {
                 .agent
                 .post(&url)
                 .header("Content-Type", "application/json");
-            if let Some(t) = &self.token {
-                req = req.header("Authorization", format!("Bearer {t}"));
+            if let Some((id, cid, sig)) = &auth_headers {
+                req = req
+                    .header("X-Cocopi-Checkin", id)
+                    .header("X-Cocopi-Challenge", cid)
+                    .header("X-Cocopi-Signatur", sig);
             }
             req.send(serde_json::to_vec(&body).map_err(|_| "Die Anfrage ist ungültig.")?)
         }
@@ -147,40 +187,16 @@ impl Empfang {
     pub fn warten(&self, id: &str) -> Result<Value, String> {
         self.request("GET", &format!("warten/{}", identifier(id)?), Value::Null)
     }
-    pub fn anmelden(&mut self, key: &DeviceKey) -> Result<Value, String> {
-        let id = key
-            .geraet_id
-            .as_ref()
-            .ok_or("Dieses Gerät ist noch nicht eingecheckt.")?;
-        let challenge = self.request("POST", "anmelden/challenge", json!({"geraet_id":id}))?;
-        let cid = challenge["challenge_id"]
-            .as_str()
-            .ok_or("Die Anmeldeprüfung fehlt.")?;
-        let nonce = challenge["nonce"]
-            .as_str()
-            .ok_or("Die Anmeldeprüfung fehlt.")?;
-        let payload = super::login_payload(&self.origin, "empfang", id, cid, nonce)?.replacen(
-            "cocopi-v1-anmelden",
-            "cocopi-v1-empfang",
-            1,
-        );
-        let v = self.request(
-            "POST",
-            "anmelden",
-            json!({"challenge_id":cid,"signatur":key.sign(payload.as_bytes())}),
-        )?;
-        self.token = Some(
-            v["zugangstoken"]
-                .as_str()
-                .ok_or("Der Empfang hat die Anmeldung nicht bestätigt.")?
-                .to_string(),
-        );
-        Ok(v)
+    /// Gerätegebundene Empfangsanfragen nutzen je eine frische Challenge, keinen Bearer.
+    /// Nach geprüftem Check-in automatisch durch `uebernehmen` eingerichtet.
+    pub fn anmelden(&mut self, checkin_id: &str, key: &DeviceKey) -> Result<(), String> {
+        self.auth = Some((identifier(checkin_id)?.to_string(), key.signing.clone()));
+        Ok(())
     }
     /// Erst nach Bestätigung des Empfangsschlüssels durch die Person aufrufen.
     /// Prüft Belegung/Ausweis gegen denselben Pin und bindet beide an das lokale Gerät.
     pub fn uebernehmen(
-        &self,
+        &mut self,
         result: &Value,
         key: &mut DeviceKey,
         pubkey: &str,
@@ -212,13 +228,33 @@ impl Empfang {
                 "Die Belegung und der Geräteausweis passen nicht zu diesem Check-in.".into(),
             );
         }
+        let slot = result["slot"].as_str().ok_or("Der Arbeitsplatz fehlt.")?;
+        if !matches!(
+            belegung["rolle"].as_str(),
+            Some("seminarleitung" | "teilnehmende" | "gast")
+        ) || result["hub_pfad"] != format!("/slot/{slot}")
+            || super::HubV1::new(&format!("{}/slot/{slot}", self.origin)).is_err()
+            || belegung["gueltig_bis"] != result["gueltig_bis"]
+            || ausweis["exp"]
+                .as_u64()
+                .zip(ausweis["iat"].as_u64())
+                .is_none_or(|(exp, iat)| exp <= iat || exp - iat > 43200)
+        {
+            return Err("Der Check-in enthält ungültige Kontoangaben.".into());
+        }
         let device = belegung["geraete"]
             .as_array()
             .and_then(|a| a.iter().find(|d| d["pubkey"] == key.public_key()))
             .ok_or("Dieses Gerät steht nicht in der Belegung.")?;
         key.remember(identifier(
             device["geraet_id"].as_str().ok_or("Die Geräte-ID fehlt.")?,
-        )?)
+        )?)?;
+        self.anmelden(
+            result["checkin_id"]
+                .as_str()
+                .ok_or("Die Check-in-ID fehlt.")?,
+            key,
+        )
     }
     pub fn checkout(&self, checkin_id: &str) -> Result<Value, String> {
         self.request(
@@ -266,6 +302,82 @@ mod tests {
             canonical_json(&json!({"\u{e000}":1,"\u{10000}":2})).unwrap(),
             "{\"\u{10000}\":2,\"\u{e000}\":1}"
         );
+    }
+    #[test]
+    fn empfang_envelope_matches_node_vector() {
+        let example: Value = serde_json::from_str(include_str!(
+            "../../../../shared/protocol/v1/examples/empfang_eingecheckt.json"
+        ))
+        .unwrap();
+        let k = SigningKey::from_bytes(&[0; 32]);
+        let pk = B64.encode(k.verifying_key().as_bytes());
+        assert_eq!(
+            verify_signed(&example["belegung"], &pk).unwrap()["checkin_id"],
+            "test-checkin"
+        );
+        assert_eq!(
+            verify_signed(&example["geraeteausweis"], &pk).unwrap()["rolle"],
+            "teilnehmende"
+        );
+        let mut bad = example["belegung"].clone();
+        bad["person"] = json!("unsigniert");
+        assert!(verify_signed(&bad, &pk).is_err());
+    }
+    #[test]
+    fn authenticated_request_uses_empfang_challenge_headers() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let expected_origin = origin.clone();
+        let key = SigningKey::from_bytes(&[4; 32]);
+        let verifying = key.verifying_key();
+        let thread = std::thread::spawn(move || {
+            for i in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                    .unwrap();
+                let mut buf = [0; 8192];
+                let n = stream.read(&mut buf).unwrap();
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let text = if i == 0 {
+                    assert!(req.starts_with("POST /v1/empfang/challenge "));
+                    json!({"protokoll":1,"typ":"challenge","challenge_id":"test-cid","nonce":"test-nonce","gueltig_bis":1900000000000u64}).to_string()
+                } else {
+                    assert!(req.starts_with("GET /v1/empfang/status "));
+                    let headers: std::collections::BTreeMap<_, _> = req
+                        .lines()
+                        .skip(1)
+                        .filter_map(|l| {
+                            l.split_once(':')
+                                .map(|(k, v)| (k.to_ascii_lowercase(), v.trim().to_string()))
+                        })
+                        .collect();
+                    assert_eq!(headers["x-cocopi-checkin"], "test-checkin");
+                    assert_eq!(headers["x-cocopi-challenge"], "test-cid");
+                    let sig: [u8; 64] = B64
+                        .decode(&headers["x-cocopi-signatur"])
+                        .unwrap()
+                        .try_into()
+                        .unwrap();
+                    verifying.verify_strict(format!("cocopi-v1-empfang\n{expected_origin}\ntest-checkin\ntest-cid\ntest-nonce").as_bytes(),&Signature::from_bytes(&sig)).unwrap();
+                    json!({"protokoll":1,"typ":"empfang_status","belegung":[]}).to_string()
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                    text.len()
+                )
+                .unwrap();
+            }
+        });
+        let c = Empfang {
+            origin,
+            agent: agent(false),
+            auth: Some(("test-checkin".into(), key)),
+        };
+        assert_eq!(c.status().unwrap()["typ"], "empfang_status");
+        thread.join().unwrap();
     }
     #[test]
     fn client_local_mock_201_202_checkout_and_limits() {

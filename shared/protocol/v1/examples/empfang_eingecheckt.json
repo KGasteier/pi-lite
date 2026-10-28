@@ -1,0 +1,44 @@
+{
+  "protokoll": 1,
+  "typ": "eingecheckt",
+  "checkin_id": "test-checkin",
+  "slot": "account01",
+  "hub_pfad": "/slot/account01",
+  "person": "Mira",
+  "rolle": "teilnehmende",
+  "belegung": {
+    "inhalt": {
+      "v": 1,
+      "typ": "belegung",
+      "slot": "account01",
+      "checkin_id": "test-checkin",
+      "person": "Mira",
+      "rolle": "teilnehmende",
+      "geraete": [
+        {
+          "geraet_id": "test-geraet",
+          "pubkey": "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik",
+          "name": "Testrechner",
+          "art": "desktop"
+        }
+      ],
+      "gueltig_bis": 1900000000000
+    },
+    "signatur": "W1KXkiTidGbP1xlUUqxTwhrgzXPuoaR5QCOkL91Dr5D_jsJuHCccCcEkS4VYtVRRA58uhlBT9yp9ty6EkmHZBA"
+  },
+  "geraeteausweis": {
+    "inhalt": {
+      "v": 1,
+      "typ": "geraeteausweis",
+      "pid": "test-pseudonym",
+      "person": "Mira",
+      "rolle": "teilnehmende",
+      "net_pubkey": "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik",
+      "geraet_pubkey": "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik",
+      "iat": 1899956800,
+      "exp": 1900000000
+    },
+    "signatur": "GXsi_qq-mAmmA8xww45bIEex69PcC2CmTd_YrHXqXdybWLknmvkO3fV_POfHCvgL8U55bK33bKGaauz9VvEQAQ"
+  },
+  "gueltig_bis": 1900000000000
+}

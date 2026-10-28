@@ -1,0 +1,13 @@
+{
+  "protokoll": 1,
+  "typ": "freigabe",
+  "freigabe": {
+    "inhalt": {
+      "v": 1,
+      "typ": "freigabe",
+      "slot": "account01",
+      "checkin_id": "test-checkin"
+    },
+    "signatur": "Zgw6RQsYayryTsbwYry0Ai2STRhngRibxRKPoSQJVXLCNPdjV6uXTVcDtISit3pQwc-BDAF-q_0rwIHKe9AhCw"
+  }
+}

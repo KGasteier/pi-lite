@@ -1,0 +1,6 @@
+{
+  "protokoll": 1,
+  "typ": "warteschlange",
+  "warte_id": "test-warte-id",
+  "platz": 2
+}

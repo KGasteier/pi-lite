@@ -52,6 +52,78 @@ Koppeln registriert erst nach Zustimmung des erzeugenden Desktops. Dessen Widerr
 
 Replay mit `Last-Event-ID: <hub-epoch>:<seq>`. Begrenzter RAM-Ring; unbekannte Epoche/zu alte ID → `fehler{code:"neu_abgleichen"}` und frische `sessions_liste`. Clients ersetzen dann ihre Liste und deduplizieren IDs; keine Garantie auf lückenlose alte Chat-Historie oder Exactly-once-Prompts. Keine automatische Promptwiederholung. Tokenablauf → erneut Challenge, dann SSE verbinden. Rust verwendet keinen Umgebungs-Proxy. Sein SSE-Body ist auf 45 s begrenzt (ureq 3.4: Gesamtbudget, kein gleitender Idle-Timer); danach bewusst neu verbinden und letzte ID zum Replay nutzen. Ein erfolgreicher Puls hebt dieses Gesamtbudget nicht auf.
 
+## I2 · Empfang, Pool und Belegung (additiv, FREEZE-I2 A6)
+
+I1 bleibt unverändert verwendbar. Im Poolbetrieb (`HUB_EMPFANG_PUBKEY` gesetzt) sind Geräte nur während einer gültigen Belegung nutzbar. Personen wählen keinen Unix-Slot selbst. Der Empfang läuft lokal `127.0.0.1:8800`; außen werden `/v1/empfang/*` dorthin und `/slot/accountNN/*` zum jeweiligen Hub weitergeleitet. Letzterer Präfix wird am Proxy entfernt. Der Rust-Hub-Client akzeptiert diese zehn expliziten Slot-Basispfade, keine beliebigen Pfade.
+
+### Empfangs-Endpunkte
+
+| Methode | Pfad | Auth | Body / Antwort |
+|---|---|---|---|
+| POST | `/v1/empfang/hallo` | keine | `{protokoll:1}` → `empfang_willkommen{slots_gesamt,slots_frei,warteschlange,oidc:{issuer,client_id,scopes},empfang_pubkey,vertrag:"cocopi-pool-v1"}` |
+| POST | `/v1/empfang/checkin` | OIDC oder Einladung | `{nachweis:{art:"oidc",id_token,nonce}\|{art:"einladung",code},geraet:{pubkey,name,art:"desktop"},net_pubkey?,archiv_pubkey}` → **201** `eingecheckt{checkin_id,slot,hub_pfad,person,rolle,belegung,geraeteausweis,gueltig_bis,geraet_id?}` oder **202** `warteschlange{warte_id,platz,geschaetzt_min?}` |
+| GET | `/v1/empfang/warten/:warte_id` | unerratbare Warte-ID | **202** `warteschlange` oder **200** `eingecheckt`; FIFO, verfällt 90 s nach letzter Abfrage |
+| POST | `/v1/empfang/challenge` | keine | `{checkin_id}` → `challenge{challenge_id,nonce,gueltig_bis}` (60 s, einmalig) |
+| POST | `/v1/empfang/checkout` | Gerät (siehe unten) | `{checkin_id}` → `checkout_bereit{checkout_id,archiv_id?,sha256?,bytes?}`; Archiv muss zuerst lokal geprüft und rückgespielt werden |
+| POST | `/v1/empfang/checkout/:checkout_id/erhalten` | Gerät | `{sha256}` → `ausgecheckt`; danach Leeren und Freigabe, niemals bei fehlender Archivbestätigung |
+| GET | `/v1/empfang/status` | Gerät, Rolle seminarleitung | `empfang_status{belegung:[{slot,person,seit,zustand}]}`; keine Sessioninhalte |
+
+`archiv_pubkey` = roher X25519-Schlüssel (32 Bytes, Base64url), nötig für den verschlüsselten Rückläufer bei Zwangs-Check-out. Kein privater Schlüssel verlässt das Gerät. `net_pubkey` bindet den P2P-Knoten; ohne solchen Schlüssel bleibt Seminar gesperrt. `pool_voll` ist **kein Fehler**: der HTTP-202-Erfolgszustand heißt `warteschlange`, nicht `fehler`; die App zeigt den Platz.
+
+Geschützte Empfangsanfragen verwenden je eine frische Challenge. Die Anfrage führt `X-Cocopi-Checkin`, `X-Cocopi-Challenge`, `X-Cocopi-Signatur`. Signiert wird (LF, kein abschließender LF):
+
+```text
+cocopi-v1-empfang\n<empfang_origin>\n<checkin_id>\n<challenge_id>\n<nonce>
+```
+
+Ursprung wie bei I1 kanonisiert. Empfang prüft die Signatur gegen das Gerät der Belegung und verbraucht die Challenge einmalig; weder Bearer noch OIDC-Token werden für Slot-Hub-Login wiederverwendet. I1-Hub-Challenge bleibt unverändert. Der Rust-Client exportiert `pi_backend::hub_v1::empfang::{Empfang,verify_signed,canonical_json}`. `uebernehmen` prüft Belegung/Ausweis gegen den bewusst bestätigten Empfangsschlüssel, bindet das lokale Gerät und richtet danach die Challenge-Anfragen ein. S8 muss zusätzlich Zweck, Gültigkeit und P2P-Schlüsselbindung des Ausweises prüfen; `verify_signed` allein vergibt keine Rechte.
+
+### OIDC / authentik
+
+Öffentlicher Client: Authorization Code mit PKCE **S256**, System-Browser nach Klick, Rückweg `http://127.0.0.1:<zufälliger Port>/oidc/callback`. Zufällige 32-Byte-Werte für Verifier (43 Base64url-Zeichen), `state`, `nonce`; gültige Verifierlänge 43–128 (RFC 7636). Discovery liefert Autorisierungs- und Token-Endpunkt, `issuer` muss exakt zur konfigurierten Anbieteradresse passen; HTTPS darf nie auf HTTP herabgestuft werden. Kein Proxy, keine Redirect-Verfolgung, 1 MiB Discovery-/Tokenantwort, Zeitlimits. Loopback nimmt genau einen HTTP-Rückruf an, prüft Host, Pfad und `state`, antwortet ohne Skript/Remoteinhalte: „Du kannst zu cocopi zurückkehren.“ Falscher State beendet den Versuch. Nonce wird mit dem `id_token` an den Empfang weitergereicht. Dieser prüft Signatur/JWKS, iss/aud/exp/iat/nonce und groups, nicht die Desktop-UI.
+
+Rust-API `hub_v1::oidc::{Discovery,Login,pkce_challenge}`: Browseröffnen ausschließlich per `open_browser`-Callback. **Integrationsgrenze:** SHA-256 ist als Callback einer geprüften Bibliothek injiziert, da keine zusätzliche Abhängigkeit ohne Freigabe eingebaut werden darf; kein eigener Kryptocode. Der RFC-Test prüft Challengekodierung gegen vorgegebene Hashbytes, nicht eine im Backend implementierte SHA-256-Funktion. Produktive App muss einen echten SHA-256-Callback liefern.
+
+### Signierte Nutzdaten und Hub-Belegung
+
+Übertragungsformat des Empfangs: `{inhalt:<Nutzdaten>,signatur:"<Base64url>"}`. Signiert wird nur `inhalt`, rekursiv sortierte Objektschlüssel (UTF-16-Reihenfolge wie JavaScript), keine Leerzeichen, UTF-8, keine abschließende neue Zeile. Zahlen müssen sichere Ganzzahlen im Bereich ±(2^53−1) sein; keine Fließkommazahlen. Arrays behalten ihre Reihenfolge. Keine unsignierten Hüllfelder. Additiv akzeptieren S3-Client und Hub auch das frühe flache Format `{...Nutzdaten,signatur}`; darin wird alles außer `signatur` signiert. Erzeuger verwenden die Hülle. Zeiten sind Unix-Millisekunden, **Ausnahme** Ausweis `iat`/`exp`: Unix-Sekunden.
+
+- Belegung: `{v:1,typ:"belegung",slot,checkin_id,person,rolle,geraete:[{geraet_id,pubkey,name,art}],gueltig_bis}`.
+- Freigabe: `{v:1,typ:"freigabe",slot,checkin_id}`.
+- Geräteausweis: `{v:1,typ:"geraeteausweis",pid,person,rolle,net_pubkey,geraet_pubkey,iat,exp}`; höchstens 12 h, Rollen `seminarleitung|teilnehmende|gast` nur aus geprüftem Ausweis.
+
+| Methode | Pfad | Zugriff | Body / Antwort |
+|---|---|---|---|
+| POST | `/v1/belegung` | nur Empfang, Ed25519 + echter Socket 127.0.0.1 | `{protokoll:1,belegung:<signiert>}` → 200 `belegung_ok{slot,checkin_id}` |
+| POST | `/v1/freigabe` | wie oben | `{protokoll:1,freigabe:<signiert>}` → 200 `freigegeben{slot,checkin_id}`, **erst nach Prozessende** |
+
+Hub konfiguriert `HUB_SLOT` und den **außerhalb des Netzwerks bestätigten** Pin `HUB_EMPFANG_PUBKEY` (raw Ed25519/Base64url). Keine automatische Pinübernahme aus eingehendem JSON. Fehlt der Pin, liefern interne Endpunkte 501. Falsche Signatur, fremder Slot, abgelaufene/aktive andere Belegung → 403 `belegung_ungueltig`. Genau die signierten Geräte werden als Quelle `belegung` registriert; alte Geräte/Codes/Anfragen werden ersetzt. Die `checkin_id` wird persistent nur gehasht als Replaymarker gespeichert und bleibt nach Freigabe gesperrt (409 `verbraucht`). Keine personenbezogenen Inhalte im Replaymarker. Slot-Leeren durch S4 löscht auch dieses Register; daher gilt der Replay-Schutz innerhalb der Lebensdauer des Hub-State, nicht über ein vollständiges Home-Leeren hinweg. Empfang darf alte Belegungen nach Leeren nicht erneut senden; ein stärkerer installationsübergreifender Replayvertrag benötigt einen außerhalb des flüchtigen Homes liegenden Marker (Änderungsbitte an K/S4).
+
+Freigabe widerruft **alle** Geräte einschließlich gekoppelter Handys, beendet SSE, sperrt neue Anfragen, sendet SIGTERM an alle vom v1-Hub gehaltenen pi-Instanzen und nach **10 s** SIGKILL. Erfolg erst nach bestätigtem Exit aller Kinder; fehlt nach weiteren 5 s der Nachweis, Fehler statt 200, Belegung bleibt gesperrt und erneuter Freigabeversuch ist möglich. Sessionregister/Replay-Inhalte werden erst nach Prozessende geleert. Das ersetzt **nicht** S4s UID-weites Beenden und nachgewiesenes Dateileeren; diese Schutzschicht beendet auch unabhängige Toolprozesse und entfernt alle Daten.
+
+**Proxy-Pflicht für S4:** `/v1/belegung` und `/v1/freigabe` dürfen niemals weitergeleitet werden, auch nicht unter `/slot/accountNN/` oder durch einen allgemeinen `/v1/*`-Fallback. Rückgabe z. B. 404/403. Allein die Loopback-Prüfung reicht hinter einem lokalen Proxy nicht, weil dessen Socket ebenfalls 127.0.0.1 ist. Keine Auswertung von `X-Forwarded-For` als Autorisierung. Hub zusätzlich weiterhin ausschließlich an 127.0.0.1 binden.
+
+### Mitsteuern (A9, nur Kennzeichnung)
+
+`senden{text,von?:{person,rolle}}` ist additiv. Hub prüft Format, erzeugt zur Anzeige ein `session_ereignis{session_id,von,pi_event:{type:"cocopi_absender",text}}` und reicht den unveränderten Prompt an pi durch. **Keine** Rollen-/Zugriffsrechte aus `von` ableiten; es ist unbeglaubigte Darstellungsinformation. Zustimmung und gültiger Leitungs-Ausweis werden vom teilnehmenden Client vor dem Weiterreichen geprüft (S8). Ein Anzeigename im Hub-Chat ist kein Identitätsnachweis.
+
+## I2 · Sync-Endpunkte (A7, Besitzer S7)
+
+Normative Pfad-/Archiv-/Konfliktregeln: [shared/sync/SYNC.md](../../sync/SYNC.md). Alle Routen sind geräteauthentisiert (S7: Desktop), **außer** den unten beschriebenen signierten Dienst-Routen. `handleSync(req,res,ctx)` wird **vor** dem allgemeinen JSON-Leser aufgerufen, damit Uploads gestreamt bleiben. Kontext enthält `devices`, authentisiertes `device`, `slot`, `url`, `roots`, `inRoots`, `read`, `send`, `msg`, `failure`, und den lazy erzeugten `sync`-Dienst (`createSync`). Fehlt `lib/sync-v1.mjs` oder private Zustandablage, 501 `nicht_verfuegbar`. Importfehler eines vorhandenen Moduls werden nicht als fehlende Funktion verschluckt.
+
+| Methode | Pfad | Body / Antwort |
+|---|---|---|
+| POST | `/v1/sync/hoch` | tar.gz-Stream; `X-Cocopi-Bereich: Projekte|Ergebnisse|Skills|Verlaeufe`, `X-Cocopi-Name`; → 201 `sync_hoch_ok{bereich,name,dateien,bytes,manifest_sha256}` |
+| POST | `/v1/sync/vorschau` | `{protokoll:1}` → `sync_vorschau{persoenlich:[{pfad,bytes,status}],fluechtig:{bytes,dateien,beispiele},gross:[…]}` |
+| POST | `/v1/sync/archiv` | `{protokoll:1,auswahl:{zusaetzlich:[pfad…],ausschliessen:[pfad…]}}` → 201 `archiv_bereit{archiv_id,sha256,bytes}` (noch kein Download) |
+| GET | `/v1/sync/archiv/:archiv_id` | tar.gz-Stream, Header `X-Cocopi-Sha256`; Client prüft Hash und entpackt ohne Überschreiben, erst danach Empfang `erhalten` |
+
+Wurzeln: `<HUB_ROOTS[0]>/Projekte`, `<HUB_ROOTS[0]>/Ergebnisse`, `~/.pi/agent/skills`, `~/.pi/agent/sessions`; in Tests ausschließlich Temp-HOME. Maximal 2 GiB je Check-in, einzelne Dateien >200 MB nur ausdrücklich, niemals Symlinks/Devices/FIFOs/Pfadausbrüche. Keine automatische Ausführung. Proxy muss Upload-/Timeoutgrenzen entsprechend setzen.
+
+### Empfang → Sync: eng begrenztes Dienstarchiv (S7-Erweiterung)
+
+`POST /v1/sync/dienst/archiv` und `POST /v1/sync/dienst/archiv/:archiv_id` benötigen **keinen Geräte-Bearer**, aber echten Loopback-Socket **und** Empfangssignatur. Der Hub delegiert vor Geräteauth an S7 mit `{devices,slot,url,sync,empfangPubkey,now}`. Body `{protokoll:1,auftrag:<flach signiertes JSON>}`, Inhalt `{v:1,typ:"sync_dienst",aktion:"archiv"|"holen",slot,checkin_id,iat,nonce,archiv_id?}`. `iat` Sekunden ±60 s, `nonce` zufällige 32 Byte Base64url, persistent einmalig. Aktiver Slot und Check-in müssen passen; `holen` bindet exakt die Archiv-ID. Antworten: erst 201 `archiv_bereit`, dann gzip-Stream mit SHA256-Header. Keine Modell-/Shell-/beliebigen Dateirechte. Diese Sonderroute verwendet S7s flachen Signaturvertrag, **nicht** die `{inhalt,signatur}`-Hülle der Belegung. Auch `/v1/sync/dienst/*` darf der Proxy niemals weiterleiten. Wiederholung eines konsumierten Auftrags ist kein Erfolg; Empfang muss für einen neuen Versuch frisch signieren.
+
 ## Fehlertexte (verbindlich)
 
 Rust-API bleibt additiv kompatibel bei `Result<Value, String>`: Protokollfehler haben exakt die Form `[code] was tun`. S2 kann das Präfix ohne zweiten HTTP-Client auswerten. Ein typisierter Rückgabefehler würde bestehende Aufrufer brechen; deshalb hier kein API-Wechsel. Alle unten bekannten Codes werden auf fest eingebaute deutsche Clienttexte abgebildet, fremde Servertexte werden dafür ignoriert. Nur bei unbekannten, syntaktisch gültigen Codes dienen `was`/`tun` als Rückfall. Ungültiges Codepräfix fällt auf `intern` zurück.
@@ -77,6 +149,12 @@ Rust-API bleibt additiv kompatibel bei `Result<Value, String>`: Protokollfehler 
 | ungueltig | 400 | Die Anfrage konnte nicht gelesen werden. | Prüfe die Eingabe und versuche es erneut. |
 | register_belegt | 503 | Die Geräteliste ist gerade gesperrt. | Warte kurz. Bleibt die Meldung, frage die Seminarleitung. |
 | register_veraltet | 503 | Die Geräteliste hat eine Sperre eines beendeten Prozesses. | Bitte die Seminarleitung, die alte Sperrdatei zu prüfen und zu entfernen. |
+| pool_voll | 202 | Alle Arbeitsplätze sind belegt. | Du wartest in der Warteschlange; dein Platz wird angezeigt. **Kein Fehlerpaket**, Typ `warteschlange`. |
+| keine_berechtigung | 403 | Du darfst diesen Bereich nicht öffnen. | Frage deine Seminarleitung. |
+| ausweis_ungueltig | 401 | Dein Geräteausweis ist ungültig. | Melde dich erneut am Empfang an. |
+| belegung_ungueltig | 403 | Diese Belegung konnte nicht bestätigt werden. | Bitte die Seminarleitung, den Empfang zu prüfen. |
+| nicht_verfuegbar | 501 | Dieser Bereich ist noch nicht verfügbar. | Versuche es später erneut. |
+| archiv_fehlt | 404 | Dieses Archiv wurde nicht gefunden. | Prüfe den Check-out am Rechner. |
 | intern | 500 | R2 konnte die Anfrage nicht abschließen. | Versuche es später erneut oder frage die Seminarleitung. |
 
 Keine Telemetrie. TLS-Vorschaltung, Hostpinning, globale CPU-Queue, sichere Transfers und echte Kontenprovisionierung sind nicht Teil dieses I1-Codes.

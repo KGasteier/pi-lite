@@ -1,0 +1,19 @@
+{
+  "protokoll": 1,
+  "typ": "sync_vorschau",
+  "persoenlich": [
+    {
+      "pfad": "Ergebnisse/Handout.md",
+      "bytes": 1200,
+      "status": "neu"
+    }
+  ],
+  "fluechtig": {
+    "bytes": 400,
+    "dateien": 1,
+    "beispiele": [
+      "Projekte/Entwurf/target/cache.o"
+    ]
+  },
+  "gross": []
+}
