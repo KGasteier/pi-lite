@@ -1,0 +1,103 @@
+{
+  "iteration": 1,
+  "phase": "I1-start",
+  "base": {
+    "pi-lite": "cocopi-v2@eb534bb",
+    "pi-hub": "master@3dae8ca"
+  },
+  "branch": "cocopi-v3",
+  "freigaben_offen": [
+    "D-R1 R2-Ausführung",
+    "D-M1",
+    "D-P1"
+  ],
+  "tasks": {
+    "I1-S1-inventar": {
+      "owner": "s1",
+      "status": "offen",
+      "heartbeat": null,
+      "tries": 0,
+      "worktree": "../pi-lite-wt/s1",
+      "checkpoint": "eb534bb"
+    },
+    "I1-A1-protokoll": {
+      "owner": "s3",
+      "status": "blockiert",
+      "wait": "I1-S1-inventar",
+      "tries": 0,
+      "worktree": "../pi-lite-wt/s3 + ../pi-hub-wt/s3",
+      "checkpoint": "eb534bb"
+    },
+    "I1-A2-modus": {
+      "owner": "s3",
+      "status": "blockiert",
+      "wait": "I1-S1-inventar",
+      "tries": 0
+    },
+    "I1-A3-qr": {
+      "owner": "s3",
+      "status": "blockiert",
+      "wait": "I1-S1-inventar",
+      "tries": 0
+    },
+    "I1-A4-konten": {
+      "owner": "s4",
+      "status": "blockiert",
+      "wait": "I1-S1-inventar",
+      "tries": 0,
+      "worktree": "../pi-lite-wt/s4"
+    },
+    "I1-A5-inventar": {
+      "owner": "s1",
+      "status": "blockiert",
+      "wait": "I1-S1-inventar",
+      "tries": 0
+    },
+    "I1-T1-remoteonly": {
+      "owner": "s2+s3",
+      "status": "blockiert",
+      "wait": "A2",
+      "tries": 0
+    },
+    "I1-T2-qrlogin": {
+      "owner": "s2+s3",
+      "status": "blockiert",
+      "wait": "A3",
+      "tries": 0
+    },
+    "I1-T3-sessions": {
+      "owner": "s3+s2",
+      "status": "blockiert",
+      "wait": "A1",
+      "tries": 0
+    },
+    "I1-S4-provision": {
+      "owner": "s4",
+      "status": "blockiert",
+      "wait": "A4",
+      "tries": 0
+    },
+    "I1-S5-transport": {
+      "owner": "s5",
+      "status": "blockiert",
+      "wait": "A1",
+      "tries": 0,
+      "worktree": "../pi-lite-wt/s5"
+    },
+    "I1-S6-gates": {
+      "owner": "s6",
+      "status": "offen",
+      "tries": 0,
+      "worktree": "../pi-lite-wt/s6"
+    }
+  },
+  "modelle": {
+    "K": "udk2/cc/claude-opus-5-5 (diese Sitzung)",
+    "s1": "udk2/cc/claude-opus-5-5",
+    "s2": "udk2/cx/gpt-6.1-sol",
+    "s3": "udk2/cx/gpt-6.1-sol (+Review opus)",
+    "s4": "udk2/cx/gpt-6.1-sol (statt terra)",
+    "s5": "udk2/cx/gpt-6.1-sol",
+    "s6": "udk2/openai/gpt-6.1-sol-pro (+Persona sonnet)"
+  }
+}
