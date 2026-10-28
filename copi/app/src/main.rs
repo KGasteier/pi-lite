@@ -1,5 +1,7 @@
 // copi – native Oberfläche für pi (Rust + egui).
 #[cfg(feature = "cocopi")]
+mod desktop;
+#[cfg(feature = "cocopi")]
 mod coco;
 #[cfg(feature = "cocopi")]
 mod coco_view;
@@ -25,6 +27,19 @@ mod tests;
 #[cfg(test)]
 mod args_tests {
     fn v(a: &[&str]) -> Vec<String> { std::iter::once("cocopi").chain(a.iter().copied()).map(String::from).collect() }
+    #[test]
+    fn mode_is_initialized_before_any_backend_including_sync_states() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        super::with_startup_mode(false, || calls.borrow_mut().push("mode::init"), || {
+            calls.borrow_mut().push("Backend-Aufbau");
+        });
+        assert_eq!(*calls.borrow(), ["mode::init", "Backend-Aufbau"]);
+        calls.borrow_mut().clear();
+        super::with_startup_mode(true, || panic!("Demo darf keine Konfiguration lesen"), || {
+            calls.borrow_mut().push("Demo");
+        });
+        assert_eq!(*calls.borrow(), ["Demo"]);
+    }
     #[test]
     fn foreign_launcher_calls_are_rejected() {
         assert!(super::check_args(&v(&[])).is_ok());
@@ -165,6 +180,15 @@ fn check_args(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Initialisiert den gespeicherten Modus vor allen Backend-/App-Konstruktoren.
+/// Demo und Screenshots bleiben vollständig ohne Zugriff auf echte Einstellungen.
+fn with_startup_mode<T>(demo: bool, init: impl FnOnce(), build: impl FnOnce() -> T) -> T {
+    if !demo {
+        init();
+    }
+    build()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
@@ -176,6 +200,12 @@ fn main() {
         eprintln!("{}: {e}. Kein Fenster geöffnet.\nVermutlich ruft ein Desktop-Eintrag {0} als Terminal oder Browser auf; siehe scripts/check-desktop.sh.", app_name());
         std::process::exit(2);
     }
+    let demo_env = std::env::var("COPI_DEMO").map(|v| !v.is_empty() && v != "0").unwrap_or(false);
+    let screenshot = args.iter().any(|a| a == "--shot") || std::env::var_os("COPI_SHOT").is_some();
+    with_startup_mode(demo_env || screenshot, || { pi_backend::mode::init(); }, || run(args, demo_env));
+}
+
+fn run(args: Vec<String>, demo_env: bool) {
     let arg = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     // Spiegel der Fern-Zustände auffrischen und sofort enden. Ohne Fenster, ohne pi-Start –
     // der Screensaver ruft das auf, wenn copi geschlossen ist.
@@ -192,7 +222,6 @@ fn main() {
         }
     }
     let shot = arg("--shot").or_else(|| std::env::var("COPI_SHOT").ok());
-    let demo_env = std::env::var("COPI_DEMO").map(|v| !v.is_empty() && v != "0").unwrap_or(false);
     if let Some(path) = shot {
         // Screenshots laufen immer im Demo-Modus: pi wird nie gestartet.
         let size = arg("--size")

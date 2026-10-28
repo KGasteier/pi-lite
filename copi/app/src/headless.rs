@@ -9,6 +9,7 @@ use crate::app::App;
 struct Tex {
     w: usize,
     h: usize,
+    nearest: bool,
     px: Vec<Color32>,
 }
 
@@ -23,7 +24,7 @@ fn apply(textures: &mut HashMap<TextureId, Tex>, delta: &mut egui::TexturesDelta
             let [w, h] = img.size;
             match d.pos {
                 None => {
-                    textures.insert(id, Tex { w, h, px: img.pixels.clone() });
+                    textures.insert(id, Tex { w, h, nearest: d.options.magnification == egui::TextureFilter::Nearest, px: img.pixels.clone() });
                 }
                 Some([x0, y0]) => {
                     if let Some(t) = textures.get_mut(&id) {
@@ -45,6 +46,11 @@ fn apply(textures: &mut HashMap<TextureId, Tex>, delta: &mut egui::TexturesDelta
 }
 
 fn sample(t: &Tex, u: f32, v: f32) -> [f32; 4] {
+    if t.nearest {
+        let x = ((u * t.w as f32).floor() as usize).min(t.w - 1);
+        let y = ((v * t.h as f32).floor() as usize).min(t.h - 1);
+        return t.px[y * t.w + x].to_array().map(|c| c as f32 / 255.0);
+    }
     let x = (u * t.w as f32 - 0.5).clamp(0.0, (t.w - 1) as f32);
     let y = (v * t.h as f32 - 0.5).clamp(0.0, (t.h - 1) as f32);
     let (x0, y0) = (x.floor() as usize, y.floor() as usize);

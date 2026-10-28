@@ -7,7 +7,7 @@ description = "Natives egui-Frontend für pi (Nachfolger-Prototyp von pi-lite)"
 
 [features]
 default = []
-cocopi = ["dep:pi-net"]
+cocopi = ["dep:pi-net", "dep:qrcodegen"]
 
 [[bin]]
 name = "cocopi"
@@ -15,6 +15,7 @@ path = "src/cocopi.rs"
 required-features = ["cocopi"]
 
 [dependencies]
+qrcodegen = { version = "1.8.0", optional = true }
 pi-net = { path = "../crates/pi-net", optional = true }
 eframe.workspace = true
 egui.workspace = true

@@ -127,6 +127,11 @@ fn tri(p: &egui::Painter, c: Pos2, open: bool, col: Color32) {
 
 impl App {
     pub fn draw(&mut self, ui: &mut Ui) {
+        #[cfg(feature = "cocopi")]
+        if self.desktop.enabled {
+            self.desktop.draw(ui);
+            return;
+        }
         let ctx = ui.ctx().clone();
         self.pump();
         // Signalfarbe: Cyan, solange der Hauptbereich eine Server-Instanz zeigt (sonst Magenta).
