@@ -56,13 +56,13 @@ class SafeScripts(unittest.TestCase):
                               text=True, capture_output=True, timeout=10)
 
     def test_bash_syntax(self):
-        for path in [*BASE.glob('*.sh'), BASE / 'slots.conf']:
+        for path in [*BASE.rglob('*.sh'), BASE / 'slots.conf']:
             with self.subTest(path=path.name):
                 result = subprocess.run(['bash', '-n', str(path)], capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_default_is_explicit_dry_run(self):
-        for script in ('provision.sh', 'check.sh', 'teardown.sh', 'admin-check.sh'):
+        for script in ('einrichten.sh', 'provision.sh', 'check.sh', 'teardown.sh', 'admin-check.sh'):
             with self.subTest(script=script):
                 default = self.run_script(script, '--slots', 'account01,account02')
                 explicit = self.run_script(script, '--dry-run', '--slots', 'account01,account02')
@@ -75,14 +75,14 @@ class SafeScripts(unittest.TestCase):
                 self.assertNotIn('--- account10', default.stdout)
 
     def test_apply_requires_root_without_mutation(self):
-        for script in ('provision.sh', 'check.sh', 'teardown.sh', 'admin-check.sh'):
+        for script in ('einrichten.sh', 'provision.sh', 'check.sh', 'teardown.sh', 'admin-check.sh'):
             with self.subTest(script=script):
-                result = self.run_script(script, '--apply', '--slots', 'account01,account02')
+                result = self.run_script(script, '--ausfuehren', '--slots', 'account01,account02')
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('benötigt Root', result.stderr)
 
     def test_bad_arguments_fail_closed(self):
-        for script in ('provision.sh', 'check.sh', 'teardown.sh', 'admin-check.sh'):
+        for script in ('einrichten.sh', 'provision.sh', 'check.sh', 'teardown.sh', 'admin-check.sh'):
             for args in (('--slots', ''), ('--slots', 'account00'), ('--slots', 'account11'),
                          ('--slots', 'account01,account01'), ('--slots', 'account01, account02'),
                          ('--slots', '../../root'), ('--slots', 'account01;true'),
@@ -121,7 +121,7 @@ done
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines(), [
             f'account{n:02}:account{n:02}:{20000+n}:{8800+n}:'
-            f'cocopi-hub@account{n:02}.service:/mnt/data/cocopi/account{n:02}/hub-state'
+            f'cocopi-hub@account{n:02}.service:/home/account{n:02}/.cocopi-hub'
             for n in range(1, 11)
         ])
 
@@ -130,7 +130,7 @@ done
         fixture = r'''
 getent() { return 2; }
 managed_file() {
-    if [[ $1 == */hub.env ]]; then
+    if [[ $1 == /etc/cocopi/hub-*.env ]]; then
         /usr/bin/cat
     else
         /usr/bin/cat >/dev/null
@@ -146,13 +146,82 @@ set -- --slots account01,account02
         for n in (1, 2):
             for line in (f'HUB_SLOT=account{n:02}', 'HUB_MAX_OPEN_SESSIONS=2',
                          'HUB_MAX_ACTIVE_SESSIONS=1', 'HUB_GLOBAL_HEAVY_JOBS=1',
-                         f'HUB_STATE=/mnt/data/cocopi/account{n:02}/hub-state'):
+                         f'HUB_STATE=/home/account{n:02}/.cocopi-hub',
+                         f'HUB_ROOTS=/home/account{n:02}/arbeit',
+                         'HUB_EMPFANG_PUBKEY=BITTE_EINTRAGEN'):
                 self.assertIn(line, env_lines)
-            self.assertIn(f'runuser -u account{n:02} -- env -i HOME=/home/account{n:02} '
-                          f'PATH=/usr/bin:/bin /usr/bin/install -d -m 700 -- '
-                          f'/mnt/data/cocopi/account{n:02}/hub-state', result.stdout)
+            self.assertIn(f'PLAN: bei neuem Konto Skelett /etc/cocopi/skel als account{n:02}', result.stdout)
         self.assertNotIn('HUB_STATE=off', result.stdout)
         self.assertFalse(self.sentinel.exists())
+
+    def test_pool_projection_rejects_stale_incomplete_and_personal_fields(self):
+        import copy
+        import datetime
+        reader = load('pool-read')
+        now = datetime.datetime.now(datetime.timezone.utc)
+        packet = {'protokoll': 1, 'zeit': now.isoformat(), 'slots': [
+            {'slot': f'account{n:02}', 'zustand': 'frei' if n % 2 else 'belegt'}
+            for n in range(1, 11)]}
+        self.assertEqual(len(reader.validate(packet, now)), 10)
+        for change in ('stale', 'missing', 'duplicate', 'name', 'state'):
+            bad = copy.deepcopy(packet)
+            if change == 'stale':
+                bad['zeit'] = (now - datetime.timedelta(seconds=121)).isoformat()
+            elif change == 'missing': bad['slots'].pop()
+            elif change == 'duplicate': bad['slots'][0]['slot'] = 'account02'
+            elif change == 'name': bad['slots'][0]['person'] = 'nicht ausgeben'
+            else: bad['slots'][0]['zustand'] = 'alles gut'
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                reader.validate(bad, now)
+
+    def test_proxy_checks_are_mocked_and_fail_closed(self):
+        from unittest.mock import patch
+        checker = load('proxy-check')
+        seen = []
+        def fake(args, **kwargs):
+            seen.append(args)
+            return subprocess.CompletedProcess(args, 0, b'403', b'')
+        with patch.object(sys, 'argv', ['proxy-check', 'https://example.invalid']), \
+             patch.object(checker.subprocess, 'run', fake):
+            self.assertEqual(checker.main(), 0)
+        self.assertEqual(len(seen), 71)
+        self.assertTrue(all('--path-as-is' in args and '--location' not in args and '--insecure' not in args for args in seen))
+        for code in (b'200', b'401', b'404', b'500', b'302', b'000'):
+            with patch.object(sys, 'argv', ['proxy-check', 'https://example.invalid']), \
+                 patch.object(checker.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, code, b'')):
+                self.assertEqual(checker.main(), 1)
+
+    def test_system_units_and_sudoers_have_narrow_contract(self):
+        hub = (BASE / 'systemd/cocopi-hub@.service').read_text()
+        reception = (BASE / 'systemd/cocopi-empfang.service').read_text()
+        for text in ('User=%i', 'Slice=cocopi-%i.slice', 'EnvironmentFile=/etc/cocopi/hub-%i.env', 'KillMode=control-group'):
+            self.assertIn(text, hub)
+        for text in ('User=cocopi-empfang', 'StateDirectory=cocopi-empfang', 'StateDirectoryMode=0700', '/empfang/empfang.mjs'):
+            self.assertIn(text, reception)
+        sudoers = (BASE / 'sudoers/cocopi-slotctl').read_text()
+        import re
+        commands = re.findall(r'/usr/local/sbin/cocopi-slotctl ([^,\n\\]+)', sudoers)
+        self.assertEqual(len(commands), 31)
+        allowed = {'status'} | {f'{action} account{n:02}' for n in range(1, 11)
+            for action in ('status', 'pruefen', '--ausfuehren leeren')}
+        self.assertEqual(set(commands), allowed)
+        self.assertIn('NOSETENV:', sudoers)
+        self.assertNotIn('SETENV:', sudoers.replace('NOSETENV:', ''))
+
+    def test_tailscale_default_is_only_plan(self):
+        env = dict(self.env)
+        env['BASH_FUNC_tailscale%%'] = f'() {{ echo forbidden >> "{self.sentinel}"; return 97; }}'
+        result = subprocess.run(['bash', str(BASE / 'proxy/tailscale-serve.sh')], env=env,
+                                text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.sentinel.exists())
+        self.assertIn('127.0.0.1:8799', result.stdout)
+
+    def test_admin_proxy_argument_rejects_tokens_and_unsafe_urls(self):
+        for url in ('http://example.invalid', 'https://user:token@example.invalid',
+                    'https://example.invalid/token', 'https://example.invalid?token=x'):
+            result = self.run_script('admin-check.sh', '--proxy-url', url)
+            self.assertNotEqual(result.returncode, 0)
 
     def test_sudo_listing_rejects_any_allow_rule(self):
         fixtures = (
@@ -197,6 +266,7 @@ parse_args provision --slots account01,account02
 HOME_BASE=$HOME/homes
 DATA_BASE=$HOME/data
 STATE_BASE=$HOME/state
+HUB_EMPFANG_PUBKEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 preflight
 '''
         result = subprocess.run(['bash', '-c', 'source "$1/common.sh"; ' + definition + fixture,
@@ -268,7 +338,9 @@ slot_vars() {
 }
 require_commands() { :; }
 assert_account() { return 0; }
-user_systemctl() { [[ $* == 'is-active --quiet cocopi-hub@account01.service' ]]; }
+user_systemctl() { return 97; }
+hub_systemctl() { [[ $* == 'is-active --quiet cocopi-hub@account01.service' ]]; }
+pool_checks() { :; }
 hub_loopback() { [[ $SLOT == account01 ]]; }
 quota_usage() { printf '%s' '1.00/10.00 GB'; }
 '''
@@ -306,14 +378,14 @@ quota_usage() { printf '%s' '1.00/10.00 GB'; }
                 self.assertIn(expected, rows[0])
 
     def test_admin_fixture_all_observed_checks_pass(self):
-        result = self.admin_fixture('user_systemctl() { return 0; }; hub_loopback() { return 0; };\n')
+        result = self.admin_fixture('hub_systemctl() { return 0; }; hub_loopback() { return 0; };\n')
         self.assertEqual(result.returncode, 0, result.stderr)
         # Bekannte Betriebswerte ergeben noch keinen erfundenen Aktivitätszeitpunkt.
         self.assertEqual(sum(line.endswith('unbekannt') for line in result.stdout.splitlines()), 2)
 
     def test_admin_activity_is_labelled_service_start_not_student_work(self):
         result = self.admin_fixture(r'''
-user_systemctl() {
+hub_systemctl() {
     if [[ $1 == show && $* == *ActiveEnterTimestamp* ]]; then
         printf '%s\n' '2026-10-28 18:00:00 UTC'
     else
@@ -326,7 +398,7 @@ hub_loopback() { return 0; }
         self.assertIn('Dienststart 2026-10-28 18:00:00 UTC', result.stdout)
         self.assertIn('letzte Arbeit am Hub ist noch unbekannt', result.stdout)
         result = self.admin_fixture(r'''
-user_systemctl() { if [[ $1 == show ]]; then printf '%s\n' 'secret-unparseable'; else return 0; fi; }
+hub_systemctl() { if [[ $1 == show ]]; then printf '%s\n' 'secret-unparseable'; else return 0; fi; }
 hub_loopback() { return 0; }
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -337,7 +409,7 @@ hub_loopback() { return 0; }
 UID_NUM=20001
 PORT=8801
 UNIT=cocopi-hub@account01.service
-user_systemctl() {
+hub_systemctl() {
     if [[ $1 == show ]]; then printf '123\n'; fi
 }
 stat() { printf '%s\n' "$MOCK_UID"; }

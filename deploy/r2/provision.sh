@@ -13,6 +13,8 @@ preflight() {
     root_controlled "$HOME_BASE" && root_controlled "$DATA_MOUNT" || fail 'Home-/SSD-Mountwurzel nicht rootkontrolliert (siehe BEFUND).'
     [[ $(stat -fc %T /sys/fs/cgroup) == cgroup2fs ]] || fail 'cgroup v2 fehlt.'
     root_controlled "$HUB_PI" && root_controlled "$HUB_NODE" || fail 'Gemeinsames pi / Node nicht rootverwaltet.'
+    [[ ${HUB_EMPFANG_PUBKEY:-} =~ ^[A-Za-z0-9_-]{43}$ ]] || fail 'Öffentlicher Empfangsschlüssel fehlt (raw Ed25519/base64url, 43 Zeichen).'
+    root_controlled /etc/cocopi/skel || fail 'Geprüftes Skelett fehlt.'
     local tool resolved slot
     for tool in "${REQUIRED_TOOLS[@]}"; do
         resolved=$(PATH="$TOOL_PATH" command -v "$tool") || fail "Gemeinsames Werkzeug fehlt: $tool."
@@ -24,6 +26,8 @@ preflight() {
         [[ ! -e $STATE_BASE/$SLOT.teardown ]] || fail "Rückbau für $SLOT begonnen; zuerst diesen abschließen."
         if [[ -n $UID_NUM ]]; then
             assert_account
+            [[ $(loginctl show-user "$USER_NAME" -p Linger --value 2>/dev/null || true) != yes ]] || fail "Linger für $SLOT aktiv; Migration separat nötig."
+            [[ ! -e /mnt/data/cocopi/$SLOT ]] || fail "Alter I1-Datenpfad für $SLOT vorhanden."
             [[ -f $STATE_BASE/$SLOT.uid && $(< "$STATE_BASE/$SLOT.uid") == "$UID_NUM" ]] || fail "UID-Inventar für $SLOT fehlt / weicht ab. Keine Übernahme fremder Konten."
         else
             [[ ! -e $SLOT_HOME && ! -L $SLOT_HOME && ! -e $SLOT_DATA && ! -L $SLOT_DATA ]] || fail "Verwaiste Slotpfade bei $SLOT; erst Recovery prüfen."
@@ -39,6 +43,8 @@ preflight() {
 }
 
 if [[ $MODE == apply ]]; then
+    # Noch vor Verwaltungspfaden sicherstellen: kein stiller Pool-/I1-Bypass.
+    [[ ${COCOPI_D_R1:-} == freigegeben && ${COCOPI_POOL_ABNAHME:-} == bestaetigt ]] || fail 'Poolausführung nur nach D-R1 und dokumentierter S3/S7-Abnahme.'
     preflight
     acquire_lock
     # Zweiter Blick unter Sperre verhindert konkurrierende Kontoanlagen.
@@ -57,21 +63,24 @@ fi
 managed_dir "$DATA_BASE" 755 root root
 managed_dir /etc/cocopi/slots 755 root root
 managed_dir /usr/local/libexec 755 root root
-managed_dir /etc/systemd/user 755 root root
+managed_dir /etc/systemd/system 755 root root
 managed_dir /etc/sudoers.d 750 root root
 
 managed_file /usr/local/libexec/cocopi-hub 755 root root < "$BASE/hub-launch.sh"
-managed_file /etc/systemd/user/cocopi-hub@.service 644 root root < "$BASE/cocopi-hub@.service"
+managed_file /etc/systemd/system/cocopi-hub@.service 644 root root < "$BASE/systemd/cocopi-hub@.service"
+managed_file /etc/systemd/system/cocopi.slice 644 root root < "$BASE/systemd/cocopi.slice"
 
 for slot in "${SELECTED[@]}"; do
     slot_vars "$slot"
     note "--- $SLOT ($USER_NAME), Port $PORT ---"
+    NEW_ACCOUNT=false
     if [[ -z $UID_NUM ]]; then
+        NEW_ACCOUNT=true
         # Home sofort 0700 erstellen lassen, niemals für einen Moment aus /etc/skel 0755.
         run groupadd --gid "$EXPECTED_UID" "$USER_NAME"
         run useradd --create-home --uid "$EXPECTED_UID" --gid "$USER_NAME" --groups "$SLOT_GROUP" --shell /bin/bash \
             --home-dir "$SLOT_HOME" --comment "cocopi managed slot $SLOT" \
-            --key UMASK=077 --key HOME_MODE=0700 "$USER_NAME"
+            --key UMASK=077 --key HOME_MODE=0700 --skel /etc/cocopi/skel "$USER_NAME"
         if [[ $MODE == apply ]]; then
             UID_NUM=$(id -u "$USER_NAME")
             managed_file "$STATE_BASE/$SLOT.uid" 600 root root <<< "$UID_NUM"
@@ -82,15 +91,14 @@ for slot in "${SELECTED[@]}"; do
     if [[ $MODE == apply ]]; then assert_account; fi
     managed_dir "$SLOT_HOME" 700 "$USER_NAME" "$USER_NAME"
     managed_dir "$SLOT_DATA" 700 "$USER_NAME" "$USER_NAME"
-    # Geräte-Register im quotierten Datenbereich. Nie als Root in ein vom Slot
-    # beschreibbares Unterverzeichnis schreiben (auch bei Pfadtausch/Symlinkrennen).
-    # Das Slotkonto erstellt/korrigiert nur sein eigenes Verzeichnis; Inhalt bleibt.
-    run runuser -u "$USER_NAME" -- env -i HOME="$SLOT_HOME" PATH=/usr/bin:/bin \
-        /usr/bin/install -d -m 700 -- "$HUB_STATE"
-    if [[ $MODE == apply ]]; then
-        [[ -d $HUB_STATE && ! -L $HUB_STATE &&
-           $(stat -c '%a:%U:%G' -- "$HUB_STATE") == "700:$USER_NAME:$USER_NAME" ]] || fail "Geräte-Register für $SLOT nicht privat. Kein Dienststart."
+    # Nur frische Konten erhalten das geprüfte Skelett; niemals Bestandsdaten überdecken.
+    if [[ $MODE == dry-run ]]; then
+        note "PLAN: bei neuem Konto Skelett /etc/cocopi/skel als $USER_NAME übernehmen (ohne Links)"
+    elif [[ $NEW_ACCOUNT == true ]]; then
+        runuser -u "$USER_NAME" -- cp -R --no-dereference -- /etc/cocopi/skel/. "$SLOT_HOME/"
     fi
+    # Register wird erst beim System-Hubstart als Slotkonto erzeugt.
+    # Vorher bleibt das Konto ausschließlich Skelett, damit pruefen möglich ist.
     managed_dir "$SLOT_ETC" 755 root root
     # Root schreibt nie in vom Slot beschreibbare Home-Unterverzeichnisse.
     # Die Werkzeugumgebung für Login-Shells kommt aus /etc/profile.d.
@@ -113,6 +121,7 @@ SUDOERS
         # Das gesamte Listing muss verweigern; nicht nur ein ausgewählter Befehl.
         sudo_denied "$USER_NAME" || fail "Effektive sudo-Rechte für $USER_NAME nicht sicher ausgeschlossen. Nicht freigeben."
     fi
+    managed_file "/etc/systemd/system/cocopi-$SLOT.slice" 644 root root < "$BASE/systemd/cocopi-account.slice.in"
     managed_dir "/etc/systemd/system/user-$UID_NUM.slice.d" 755 root root
     managed_file "/etc/systemd/system/user-$UID_NUM.slice.d/50-cocopi.conf" 644 root root <<SLICE
 [Slice]
@@ -136,20 +145,21 @@ SLICE
         quota_matches "$NVME_MOUNT" "$NVME_QUOTA_KIB" "$NVME_INODES" || fail "NVMe-Quote für $SLOT nach Setzen nicht bestätigt. Kein Dienststart."
         quota_matches "$DATA_MOUNT" "$DATA_QUOTA_KIB" "$DATA_INODES" || fail "SATA-Quote für $SLOT nach Setzen nicht bestätigt. Kein Dienststart."
     fi
-    managed_file "$SLOT_ETC/hub.env" 644 root root <<ENV
+    managed_file "/etc/cocopi/hub-$SLOT.env" 600 root root <<ENV
 HUB_SLOT=$SLOT
 HUB_HOST=$HUB_BIND
 HUB_PORT=$PORT
 HUB_NODE=$HUB_NODE
 HUB_DIR=$HUB_DIR
 HUB_PI_BIN=$HUB_PI
-HUB_ROOTS=$SLOT_HOME:$SLOT_DATA
+HUB_ROOTS=$SLOT_HOME/arbeit
+HUB_EMPFANG_PUBKEY=${HUB_EMPFANG_PUBKEY:-BITTE_EINTRAGEN}
 HUB_STATE=$HUB_STATE
 HUB_MAX_OPEN_SESSIONS=$HUB_MAX_OPEN_SESSIONS
 HUB_MAX_ACTIVE_SESSIONS=$HUB_MAX_ACTIVE_SESSIONS
 HUB_GLOBAL_HEAVY_JOBS=$HUB_GLOBAL_HEAVY_JOBS
 PATH=$TOOL_PATH
-TMPDIR=$SLOT_HOME
+TMPDIR=/tmp
 DO_NOT_TRACK=1
 ENV
     if [[ $MODE == dry-run ]]; then
@@ -170,8 +180,8 @@ ENV
     fi
     if [[ $MODE == dry-run ]]; then
         note "PLAN: systemd daemon-reload, bestehende Slice $UID_NUM nur bei Limitabweichung aktualisieren"
-        note "PLAN: Linger für $USER_NAME nur falls fehlend einschalten; eigenen Usermanager starten falls inaktiv"
-        note "PLAN: als $USER_NAME $UNIT nur falls nicht aktiviert/gestartet enable/start; KEIN automatischer Restart"
+        note "PLAN: kein Linger, kein Usermanager; nur System-Hubs starten nach Leerprüfung"
+        note "PLAN: System-Unit $UNIT nur aktivieren; Start erst nach Leer-Nachweis in einrichten.sh; KEIN automatischer Restart"
     else
         systemctl daemon-reload
         if systemctl is-active --quiet "user-$UID_NUM.slice"; then
@@ -184,15 +194,11 @@ ENV
                     "CPUQuota=$CPU_QUOTA" "MemoryHigh=$MEMORY_HIGH" "MemoryMax=$MEMORY_MAX" "TasksMax=$TASKS_MAX"
             fi
         fi
-        if [[ $(loginctl show-user "$USER_NAME" -p Linger --value 2>/dev/null || true) != yes ]]; then
-            loginctl enable-linger "$USER_NAME"
+        if [[ $(loginctl show-user "$USER_NAME" -p Linger --value 2>/dev/null || true) == yes ]]; then
+            fail "Linger für $USER_NAME aktiv; alte Userdienst-Migration separat freigeben."
         fi
-        if ! systemctl is-active --quiet "user@$UID_NUM.service"; then
-            systemctl start "user@$UID_NUM.service"
-        fi
-        user_systemctl daemon-reload
-        if ! user_systemctl is-enabled --quiet "$UNIT"; then user_systemctl enable "$UNIT"; fi
-        if ! user_systemctl is-active --quiet "$UNIT"; then user_systemctl start "$UNIT"; fi
+        if ! systemctl is-enabled --quiet "$UNIT"; then systemctl enable "$UNIT"; fi
+        note "Hub noch nicht starten: erst cocopi-slotctl pruefen $SLOT; einrichten.sh führt diesen Nachweis aus."
     fi
     note "Geplant/gesetzt: $SLOT; Abnahme separat mit check.sh. Kein Geräte-Enrollment und keine Pilotfreigabe."
 done

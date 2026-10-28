@@ -1,0 +1,36 @@
+[Unit]
+Description=cocopi-Empfang für den Arbeitsplatz-Pool
+After=network.target
+
+[Service]
+Type=simple
+User=cocopi-empfang
+Group=cocopi-empfang
+Slice=cocopi.slice
+EnvironmentFile=/etc/cocopi/empfang.env
+Environment=HOME=/var/lib/cocopi-empfang
+Environment=DO_NOT_TRACK=1
+WorkingDirectory=/opt/cocopi/pi-hub
+ExecStart=/usr/bin/node /opt/cocopi/pi-hub/empfang/empfang.mjs
+StateDirectory=cocopi-empfang
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+PrivateTmp=yes
+ProtectSystem=full
+# Kein ProtectHome: sudo-Löschhelfer muss geerbten Namespace beschreiben können.
+# Empfangsaccount selbst hat durch Unixrechte keinen Zugang zu Slot-Homes.
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+# Absichtlich KEIN NoNewPrivileges: enger sudo-Helfer muss Root erreichen.
+# Kein unbereinigter Node-Output im Journal; strukturierte Metadaten separat.
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target

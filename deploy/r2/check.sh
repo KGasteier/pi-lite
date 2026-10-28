@@ -52,11 +52,11 @@ slice_limits() {
     expected_cpu=$(python3 -c 'import sys; print(int(float(sys.argv[1].rstrip("%"))*10000))' "$CPU_QUOTA")
     expected_high=$(numfmt --from=iec "$MEMORY_HIGH")
     expected_max=$(numfmt --from=iec "$MEMORY_MAX")
-    systemctl is-active --quiet "user-$UID_NUM.slice" || return 1
-    actual=$(systemctl show "user-$UID_NUM.slice" -p CPUQuotaPerSecUSec -p MemoryHigh -p MemoryMax -p TasksMax) || return 1
+    systemctl is-active --quiet "cocopi-$SLOT.slice" || return 1
+    actual=$(systemctl show "cocopi-$SLOT.slice" -p CPUQuotaPerSecUSec -p MemoryHigh -p MemoryMax -p TasksMax) || return 1
     python3 "$BASE/slice-read.py" "$expected_cpu" "$expected_high" "$expected_max" "$TASKS_MAX" <<< "$actual"
 }
-linger_active() { [[ $(loginctl show-user "$USER_NAME" -p Linger --value) == yes ]]; }
+linger_off() { [[ $(loginctl show-user "$USER_NAME" -p Linger --value 2>/dev/null || true) != yes ]]; }
 token_private() {
     [[ -f $SLOT_ETC/token && ! -L $SLOT_ETC/token &&
        $(stat -c '%a:%U:%G' "$SLOT_ETC/token") == "600:$USER_NAME:$USER_NAME" ]] &&
@@ -79,7 +79,7 @@ for slot in "${SELECTED[@]}"; do
         note 'PLAN: effektives sudo-Listing + sudo -n true müssen verweigert werden; keine docker-/anderen Zusatzgruppen und kein Docker-Socketzugriff'
         note "PLAN: aktive ext4-Userquote + Q_GETQUOTA lesend: NVMe $NVME_QUOTA_KIB KiB, SATA $DATA_QUOTA_KIB KiB; Soft=Hard und Inodes"
         note "PLAN: effektive Account-Slice: CPUQuota=$CPU_QUOTA, MemoryHigh=$MEMORY_HIGH, MemoryMax=$MEMORY_MAX, TasksMax=$TASKS_MAX"
-        note "PLAN: Linger=yes, Token 0600 ohne Inhalt, Dienst/PID-Besitzer und ausschließlich 127.0.0.1:$PORT via ss prüfen"
+        note "PLAN: Linger=nein, System-Hub, Token 0600 ohne Inhalt, Dienst/PID-Besitzer und ausschließlich 127.0.0.1:$PORT via ss prüfen"
         note 'PLAN: Werkzeuge via runuser auffindbar; Hub-Vertrag prüfen (kein Session-/Lasttest, keine Modellaufrufe)'
         continue
     fi
@@ -107,7 +107,7 @@ for slot in "${SELECTED[@]}"; do
     point "$SLOT: NVMe-Quote aktiv und exakt" quota_exact "$NVME_MOUNT" "$NVME_QUOTA_KIB" "$NVME_INODES"
     point "$SLOT: SATA-Quote aktiv und exakt" quota_exact "$DATA_MOUNT" "$DATA_QUOTA_KIB" "$DATA_INODES"
     point "$SLOT: Account-Slice-Grenzen effektiv" slice_limits
-    point "$SLOT: Linger aktiv" linger_active
+    point "$SLOT: kein Linger / kein dauerhafter Usermanager nötig" linger_off
     point "$SLOT: Token vorhanden und 0600" token_private
     point "$SLOT: Hub nur an 127.0.0.1:$PORT und richtige UID/PID" hub_loopback
     for tool in "${REQUIRED_TOOLS[@]}"; do

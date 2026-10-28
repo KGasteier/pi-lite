@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lehrenden-Sicht (Entwurf): nur Zustandsabfragen, keine Hub-/Modellaufrufe.
+# Lehrenden-Sicht: Zustandsabfragen und explizite Diagnose-HTTPs, keine Modellaufrufe.
 set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
 parse_args admin-check "$@"
@@ -9,7 +9,7 @@ parse_args admin-check "$@"
 # Bis dahin ausschließlich den belegten Dienststart mit seiner Quelle benennen.
 last_activity() {
     local stamp normalized
-    stamp=$(user_systemctl show "$UNIT" -p ActiveEnterTimestamp --value 2>/dev/null) || stamp=
+    stamp=$(hub_systemctl show "$UNIT" -p ActiveEnterTimestamp --value 2>/dev/null) || stamp=
     if [[ -n $stamp ]] && normalized=$(date --date="$stamp" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null); then
         printf 'Dienststart %s' "$normalized"
     else
@@ -40,8 +40,8 @@ admin_row() {
         activity=unbekannt
         ISSUES=$((ISSUES + 1))
     else
-        # "failed"/fehlender Usermanager darf nicht als ruhende Session erscheinen.
-        if user_systemctl is-active --quiet "$UNIT" 2>/dev/null; then
+        # Fehlender System-Hub darf nicht als ruhende Sitzung erscheinen.
+        if hub_systemctl is-active --quiet "$UNIT" 2>/dev/null; then
             service=aktiv
         else
             service='nicht aktiv'
@@ -67,13 +67,40 @@ admin_row() {
         "$SLOT" "$account" "$service" "$access" "$usage" "$activity"
 }
 
+pool_checks() {
+    if [[ $MODE == dry-run ]]; then
+        note 'Pool: nicht geprüft. PLAN: alle zehn Slots frei / belegt / leeren / gesperrt aus aktuellem lokalem Empfangsstatus lesen.'
+        note 'PLAN: freie Plätze nur mit Löschbeleg nachweisen, beide Quoten und Empfang an 127.0.0.1:8800 prüfen.'
+        note 'PLAN: Proxy-Sperren direkt und unter allen zehn Slotpfaden via HTTPS testen (auch Encoding/Traversal).'
+        return
+    fi
+    if python3 "$BASE/pool-read.py"; then :; else ISSUES=$((ISSUES + 1)); fi
+    # hallo ist ein inhaltsfreier Discovery-Aufruf, keine Anmeldung/kein Modell.
+    if curl --silent --fail --noproxy '*' --max-time 5 --max-filesize 65536 \
+        -H 'Content-Type: application/json' -d '{"protokoll":1}' \
+        http://127.0.0.1:8800/v1/empfang/hallo | python3 -c '
+import json,sys
+x=json.load(sys.stdin)
+assert x.get("protokoll")==1 and x.get("vertrag")=="cocopi-pool-v1"
+assert x.get("slots_gesamt")==10 and 0 <= x.get("slots_frei",-1) <= 10
+'; then note 'Empfang: erreichbar, Poolvertrag bestätigt.'
+    else note 'Empfang: nicht bestätigt.'; ISSUES=$((ISSUES + 1)); fi
+    if [[ -z $PROXY_URL ]]; then
+        note 'Proxy-Sperren: nicht geprüft. Bitte --proxy-url https://NAME angeben.'
+        ISSUES=$((ISSUES + 1))
+    elif ! python3 "$BASE/proxy-check.py" "$PROXY_URL"; then
+        ISSUES=$((ISSUES + 1))
+    fi
+}
+
 ISSUES=0
 if [[ $MODE == apply ]]; then
-    require_commands getent id stat runuser systemctl ss awk findmnt python3 date
+    require_commands getent id stat runuser systemctl ss awk findmnt python3 date curl
     note 'R2: kurze Betriebsübersicht (Entwurf, nur gelesen). Keine Pilotfreigabe.'
 else
     note 'R2: Vorschau der Betriebsübersicht. Nichts geprüft oder geändert.'
 fi
+pool_checks
 printf '%-10s  %-14s  %-14s  %-14s  %-70s  %s\n' \
     'Konto' 'Eingerichtet' 'Verbindung' 'Zugang' 'Speicher belegt / Grenze (GB dezimal)' 'Letzte Aktivität (Quelle beachten)'
 for slot in "${SELECTED[@]}"; do

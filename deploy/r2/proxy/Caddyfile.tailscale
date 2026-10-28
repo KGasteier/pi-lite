@@ -1,0 +1,6 @@
+# Variante hinter tailscale serve: Caddy nur lokal, Tailscale liefert TLS.
+# NICHT Empfang oder Slotports direkt an tailscale serve hängen: Sperren fehlen!
+http://127.0.0.1:8799 {
+    bind 127.0.0.1
+    import /etc/cocopi/proxy/routes.caddy
+}

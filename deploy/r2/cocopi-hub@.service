@@ -1,22 +1,9 @@
+# I1-Userdienst absichtlich deaktiviert. I2 verwendet ausschließlich die
+# System-Unit systemd/cocopi-hub@.service (User=%i, Slice, neues Env).
 [Unit]
-Description=cocopi: persönlicher Hub für %i
-After=network.target
+Description=VERALTET - cocopi I1 User-Hub nicht starten
+ConditionPathExists=/nicht-vorhanden/cocopi-i1-gesperrt
 
 [Service]
-Type=simple
-EnvironmentFile=/etc/cocopi/slots/%i/hub.env
-ExecStart=/usr/local/libexec/cocopi-hub %i
-WorkingDirectory=%h
-UMask=0077
-NoNewPrivileges=yes
-RestrictSUIDSGID=yes
-# Unixkonto mit vollem Tool-Use, keine Container-/Filesystem-Sandbox behaupten.
-Restart=on-failure
-RestartSec=5
-TimeoutStopSec=30
-# Konservativ: ungeprüfter Hub könnte Token/Prompt-Inhalte loggen.
-StandardOutput=null
-StandardError=null
-
-[Install]
-WantedBy=default.target
+Type=oneshot
+ExecStart=/usr/bin/false

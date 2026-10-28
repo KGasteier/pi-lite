@@ -1,355 +1,180 @@
-# R2: persönliche cocopi-Slots vorbereiten
+# R2 · flüchtiger cocopi-Pool (I2)
 
-**Stand I1: Skripte und lokaler Dry-Run, keine installierte Slotumgebung.**
-Keine Konten angelegt, keine Dienste gestartet, keine Quoten aktiviert. Die
-reale Maschine und die bewusst offenen Voraussetzungen stehen in [BEFUND.md](BEFUND.md).
-Der alte Hub von `medienhaus` bleibt unangetastet. Diese Anleitung ist für die
-Administration; Studierende benötigen später nur ihre bestätigte Anmeldung.
+**Nicht installiert. Kein Deployment ausführen.** Arbeitsstand nur lokal mit
+Fake-Root/Fixtures getestet; bestehende R2-Konten, Dienste, Mounts und Netzregeln
+wurden nicht geändert. Frühere I1-Dateien `BEFUND.md`, `DRYRUN.txt`, `TESTS.txt`
+sind historische Befunde, keine Pool-Abnahme.
 
-## 1. Was geliefert ist
+## Ziel und Dateien
 
-- `slots.conf`: zehn Slots, account10 Reserve; Standardauswahl nur **account01,account02**.
-- `provision.sh`: erst Voraussetzungen prüfen, dann persönliche Konten, private
-  Datenpfade, Account-Slice, Linger und getrennte Hub-Userdienste einrichten.
-- `check.sh`: pro Punkt `OK` / `FEHLER`; `--apply` bedeutet hier ausschließlich
-  lesende Abnahme und unprivilegierte Negativversuche (kein Lasttest).
-- `admin-check.sh`: ruhige Lehrenden-Tabelle (Entwurf), rein lesend: Konto,
-  Verbindungsdienst, lokaler Port, Speicherbelegung und belegter Dienststart.
-  Kein Zugriff auf Gespräche, Dateien oder Token; Arbeitsaktivität noch unbekannt.
-- `teardown.sh`: ausdrücklich ausgewählte Konten sperren, Dienste geordnet
-  anhalten, Home/Daten/Konfiguration archivieren. Nur `--purge` löscht Nutzdaten.
-- `common.sh`, `quota-read.py`, `slice-read.py`: gemeinsame sichere Hilfen,
-  Quota-Abfrage über Linux **Q_GETQUOTA**, Vergleich effektiver systemd-Grenzen.
-- `cocopi-hub@.service`, `hub-launch.sh`: rootverwaltete Dienstvorlage und
-  Startwrapper; keine eingebetteten Zugangsdaten.
-- `test_scripts.py`: lokale Regression mit temporärem HOME und gesperrten
-  Änderungsbefehlen. Keine echten Modellaufrufe, keine echten Configdaten.
-- `DRYRUN.txt`, `TESTS.txt`: reproduzierbarer Nachweis, **keine Pilotabnahme**.
+Zehn gleichberechtigte Plätze `account01`–`account10`, UID/GID 20001–20010.
+Keine persönliche Dauerzuordnung, auch account10 keine Reserve. Empfang bindet
+nur `127.0.0.1:8800`; Hubs nur 8801–8810. Erst zwei synthetische Testplätze,
+Zehnerfreigabe separat. Ein Platz umfasst **`/home/accountNN` und
+`/mnt/data/accountNN`**. Der alte I1-Pfad `/mnt/data/cocopi/accountNN` wird nicht
+übernommen. Sämtliche persönlichen Sitzungen, Geräte-/Hubzustände und Caches
+müssen innerhalb der beiden flüchtigen Wurzeln liegen. `HUB_ROOTS` erlaubt nur
+`/home/accountNN/arbeit` für Dateirouten, ist aber keine Sandbox für Shelltools.
 
-Alle Shellskripte verwenden Bash und `set -euo pipefail`. Standard ist stets
-`--dry-run`, auch bei Root. Nur `--apply` **und** Root erlauben Bereitstellung /
-Rückbau. `check.sh --apply` verlangt Root für runuser, sudo-Listing, Quoten und
-Listener-PID-Zuordnung. Kein Skript installiert Pakete, ändert Mounts/Netzwerk,
-verwendet Docker oder ruft ein Modell auf.
+| Datei | Aufgabe |
+|---|---|
+| `systemd/cocopi-hub@.service` | System-Hub, `User=%i`, eigene Slice, `/etc/cocopi/hub-%i.env` |
+| `systemd/cocopi-empfang.service` | Systemkonto, privater State `/var/lib/cocopi-empfang` |
+| `systemd/cocopi.slice`, `cocopi-account.slice.in` | globale und je-Platz-CPU/RAM/Taskgrenzen |
+| `cocopi-slotctl` | fd-basierter Root-Löschhelfer mit Leer-Nachweis |
+| `sudoers/cocopi-slotctl`, `slotctl-empfang` | exakt enumerierte Rootrechte nur für Empfang |
+| `einrichten.sh` | acht nummerierte Schritte, Standard Dry-Run |
+| `provision.sh`, `check.sh` | Poolkonten/Teilquoten/System-Units, technische Leseabnahme |
+| `admin-check.sh`, `pool-read.py`, `proxy-check.py` | belegte/freie Plätze, Leerbelege, Quoten, Empfang und HTTPS-Sperren |
+| `proxy/` | Caddy-TLS oder Tailscale-TLS vor lokalem Caddy |
+| `AUTHENTIK.md` | Public Client, PKCE S256, Loopback beliebiger Port, Rollenclaim |
+| `EINRICHTEN-MIT-PI.md` | kopierbarer interaktiver Prompt; ja vor jedem sudo |
+| `DATENSCHUTZ.md` | einfache Information und Kontaktplatzhalter |
 
-## 2. Jetzt gefahrlos prüfen (normaler Nutzer)
+Die alte Root-Level-Unit `cocopi-hub@.service` ist absichtlich deaktiviert, nicht
+mehr installieren. Keine neuen User-Hubs und kein Linger. I1-`teardown.sh` ist
+für echte Ausführung gesperrt: dessen dauerhafte Nutzdatenarchive widersprechen
+E9. Normaler Check-out entfernt Daten, nicht die feste Unix-Identität.
 
-Im Repository-Root:
+## Sichere lokale Vorschau
 
-```bash
-bash deploy/r2/provision.sh --slots account01,account02
-bash deploy/r2/check.sh --slots account01,account02
-bash deploy/r2/admin-check.sh --slots account01,account02
-bash deploy/r2/teardown.sh --slots account01,account02
-PYTHONDONTWRITEBYTECODE=1 python3 deploy/r2/test_scripts.py
-for f in deploy/r2/*.sh deploy/r2/slots.conf; do bash -n "$f" || exit 1; done
+Als normaler Nutzer, ohne sudo und ohne Netzwerk:
+
+```sh
+python3 deploy/r2/test_scripts.py
+bash deploy/r2/einrichten.sh --dry-run --slots account01,account02
+bash deploy/r2/admin-check.sh --dry-run --slots account01,account02
 ```
 
-Dry-Run beschreibt Schritte; er erfindet weder UIDs noch Erfolgsnachweise.
-Eine leere, doppelte oder ungültige Slotliste wird abgewiesen. Rückbau hat
-absichtlich **keine** Standardauswahl. `--purge` ist nur dort zulässig.
+Standard ohne Flag ist ebenfalls Dry-Run. Neuer deutscher Ausführungsschalter
+`--ausfuehren`; `--apply` bleibt nur als kompatibler Alias der alten Skripte.
+Echte Einrichtung erfordert zusätzlich `COCOPI_D_R1=freigegeben`,
+`COCOPI_POOL_ABNAHME=bestaetigt`, einen unabhängig bestätigten öffentlichen
+Empfangsschlüssel und einen bestätigten Hubvertrag `cocopi-pool-v1`. **Diese
+Flags erst nach tatsächlichen Nachweisen setzen**, nicht um Prüfungen zu umgehen.
+Skripte als Root nur aus unveränderlicher root:root-Kopie
+`/usr/local/lib/cocopi-r2` ausführen, nie aus dem beschreibbaren Worktree.
 
-## 3. Vor jeder späteren echten Einrichtung
+Keine automatische Paketinstallation, Quotaaktivierung, Mount-/Firewalländerung,
+kein Proxy-Start und keine Migration alter aktiver Userdienste. Werkzeuge,
+rootkontrollierter ext4-Mount `/mnt/data`, aktive Userquoten auf `/` und
+`/mnt/data`, gemeinsame Node-/pi-/Buildwerkzeuge sind Voraussetzungen.
+`slots.conf` bleibt `HUB_CONTRACT=unconfirmed`, bis K die zusammenpassenden
+S3/S7-Commits bestätigt. Öffentliche Umgebungswerte gehen über explizit
+freigegebenes `sudo env`, geheime Werte nur in private Dateien/sudoedit.
 
-**Diese Schritte benötigen separate menschliche Freigabe. Nicht im I1 ausführen.**
+## Löschhelfer-Vertrag
 
-1. A4 aus `coord/FREEZE-I1.md` ist verbindlich. S3 implementiert den Hubvertrag;
-   K muss ihn nach S3-Review freigeben. Identitäts-/Gerätebindung,
-   Sessionlimits und Widerruf mit Mock nachweisen. Die alten Hub-Variablen allein
-   beweisen diese Funktionen nicht.
-2. Externes, verschlüsseltes Backupziel und Zuständigkeit festlegen; Restore
-   auf getrennter Testmaschine proben. Root-/Filesystem-Sicherung vor Änderungen.
-3. Für beide vorhandenen **ext4**-Dateisysteme Userquoten administrativ vorbereiten:
-   Quota-Tools, geprüfte Mount-/ext4-Konfiguration mit `usrquota`, aktive
-   Durchsetzung. Root-Dateisystem nicht während des Seminarbetriebs blind remounten
-   oder `quotacheck` ausführen. Skript macht ausdrücklich **nichts davon**.
-   Interne Quota-Features ohne belegte Mountoption werden konservativ abgewiesen.
-4. `/mnt/data` ist derzeit medienhaus-eigen. Mountwurzel und Eltern der
-   rootverwalteten Slotpfade separat root-kontrolliert bereitstellen; keine
-   bestehenden Daten rekursiv umchownen. Home-Basis muss ebenso rootverwaltet sein.
-5. Gemeinsame, rootverwaltete Werkzeuge bereitstellen: Node ≥20, pi, Rust/Cargo,
-   Python, Git, ffmpeg, C-Compiler und make. Konfiguration erwartet
-   `/opt/cocopi/bin` + Systemwerkzeuge. **Keine** Symlinks in das Home von
-   medienhaus, keine Übernahme privater mise-/Provider-/pi-Konfigurationen.
-   Slotkonten dürfen eigene Bibliotheken/Buildwerkzeuge ohne sudo nutzen.
-6. Geprüfte, unveränderliche Hubkopie einschließlich benötigter Begleitdateien
-   nach `/opt/cocopi/pi-hub` bereitstellen (nicht den Arbeitsbaum eines Nutzers).
-   K muss den Vertrag `cocopi-slots-v1` nach S3-Review freigeben. Erst danach in
-   `slots.conf` `HUB_CONTRACT=cocopi-slots-v1` setzen und den gleichnamigen Text in
-   `slots-contract` der geprüften Hubauslieferung bereitstellen. **Der Marker ist
-   eine administrative Freigabe, kein automatischer Sicherheitsbeweis.**
-7. Skripte vollständig prüfen und als root-eigene, nicht gruppen-/weltschreibbare
-   Kopie unter einem rootverwalteten Pfad bereitstellen (z. B.
-   `/usr/local/lib/cocopi-r2/`). **Nicht als Root aus dem nutzerbeschreibbaren
-   Worktree starten.** `common.sh` prüft Konfiguration/Eltern zusätzlich; diese
-   Prüfung ersetzt nicht den Schutz der bereits geladenen Skripte.
-8. Anfangs nur account01,account02; keine automatischen SSH-Schlüssel, Passwörter, Provider-
-   oder Gerätezutritte. Diese werden in einem separaten begleiteten Enrollment
-   vergeben. Konten sind neu mit gesperrtem Passwort angelegt.
-
-Spätere, ausdrücklich freizugebende Root-Befehle (hier NICHT ausgeführt):
-
-```bash
-bash /usr/local/lib/cocopi-r2/provision.sh --dry-run --slots account01,account02
-bash /usr/local/lib/cocopi-r2/provision.sh --apply --slots account01,account02
-bash /usr/local/lib/cocopi-r2/check.sh --apply --slots account01,account02
+```text
+cocopi-slotctl leeren account01                 # nur Plan, keine Änderung
+cocopi-slotctl --ausfuehren leeren account01    # tatsächlich löschen
+cocopi-slotctl status [account01]               # aktueller, lesender Zustand
+cocopi-slotctl pruefen account01                # Live-Prüfung, ohne Schreiben
+cocopi-slotctl --ausfuehren pruefen account01   # Prüfung + Erstbeleg vor Hubstart
 ```
 
-Jeder Fehler blockiert Freigabe. Prüfung erneut ausführen, nicht blind weitermachen.
-Vorhandene Konten müssen Kommentar, UID-Inventar, Home und private Primärgruppe
-passen; weitere Gruppen werden abgewiesen, nicht automatisch entfernt.
-Nur die Slotgruppe `cocopi-slots` kommt hinzu; diese erteilt **keinen** gemeinsamen
-Datenzugriff. Keine sudo-/docker-/lxd-/disk-/adm-Gruppen. Zusätzlich sudoers-
-Verbot und effektives Listing; jede erlaubende Regel ist ein Fehler.
+Nur Root; Tests ausschließlich unprivilegiert mit temporärem `COCOPI_ROOT`.
+Unter sudo wird `COCOPI_ROOT` abgewiesen. Keine freien Pfade/UIDs, Regex exakt
+`^account(0[1-9]|10)$`, keine Shell. Verwaltungsverzeichnisse rootverwaltet;
+Wurzeln/Eltern keine Links, innere Links werden nur selbst entfernt. Keine
+Mounts im Löschbaum, auch keine gleich-Dateisystem-Bindmounts. Serielle Sperre.
 
-## 4. Limits: was sie tatsächlich bedeuten
+Reihenfolge: bestätigte Empfangsfreigabe/Widerruf → Hub stoppen → Wurzeln
+rootprivat sperren → Usermanager stoppen → UID-Prozesse TERM/KILL → bei Resten
+abbrechen → fd-relativ ohne Link-Folgen löschen → geprüftes Skelett einspielen →
+Hashes/Tree und aktive Teilquoten prüfen → Leerbeleg atomar schreiben →
+Besitz zurückgeben → Hub starten. Kein persistentes Nutzdatenbackup. Fehler
+liefern Exit ungleich 0 und keine Freigabe. Teilweise gelöschter Zustand ist
+möglich und bleibt gesperrt; nicht als Transaktion/Undelete verstehen.
 
-| Grenze | Vorschlag je Slot | Durchsetzung / Grenze des Nachweises |
-|---|---|---|
-| CPU | CPUQuota 100 % (ein CPU-Kern als Zeitbudget) | rootverwaltete `user-UID.slice`, umfasst auch SSH-/Usermanager-Prozesse; keine garantierte CPU-Reservierung |
-| RAM weich/hart | MemoryHigh 2 GiB / MemoryMax 2,5 GiB | ganze Account-Slice, TasksMax 256; Last-/OOM-Test separat in Testumgebung |
-| Platte NVMe | 10.000.000.000 Byte | Userquote auf `/`, Soft=Hard 9.765.625 KiB; 200.000 Inodes |
-| Platte SATA | 70.000.000.000 Byte | Userquote auf `/mnt/data`, Soft=Hard 68.359.375 KiB; 800.000 Inodes |
-| Platte gesamt | höchstens 80 GB **dezimal** | feste Teilbudgets, nicht 80 GB pro SSD und nicht dynamisch summiert |
-| Sessions | höchstens 2 offen, 1 aktiv je Slot | **S3-Hub-Vertrag nötig**, nicht durch systemd bewirkt |
-| Schwerer CPU-Job | 1 global über alle Hubinstanzen | **globale S3-Queue nötig**, getrennte Env-Werte erzeugen keinen gemeinsamen Semaphore |
+JSON-Erfolg: `slot`, `zustand:"leer"`, `nachweis:"vor_hubstart"`, `zeit`,
+`dauer_ms`, `bytes_geloescht`, `quota_bytes`, `grenze_bytes`. Beleg unter
+`/var/lib/cocopi-slots/accountNN.leer.json` root:root 0600, nur Zeit/Zähler,
+keine Personen oder Dateinamen. `pruefen --ausfuehren` schreibt beim ersten
+Start denselben Beleg, löscht aber nichts. Nach Hubstart gilt der Livebaum
+wegen neuer Hubdateien/Prozesse nicht mehr als leer. Empfang muss den
+**vorherigen** erfolgreichen Nachweis benutzen, niemals einen Fehler wegfiltern.
 
-Ext4-Userquoten zählen die UID auf dem gesamten jeweiligen Dateisystem, auch
-Dateien außerhalb Home. Homes liegen auf NVMe unter `/home/accountNN`, Daten auf
-SATA unter `/mnt/data/cocopi/accountNN`, beide **0700** mit privater Primärgruppe.
-Unix-Konto und Slot-ID sind gleich; alte Slotbezeichnungen werden abgewiesen.
-Dies ist keine automatische Migration bestehender Konten oder Daten.
-Nur zustandssetzende Abweichungen werden korrigiert; vorhandene Token bleiben
-unverändert, laufende Hubs werden **nicht automatisch neu gestartet**. Änderungen
-an Unit/Umgebung benötigen nach Zustimmung einen getrennten Wartungsneustart;
-`daemon-reload` allein aktiviert keine neue Prozessumgebung.
+Quote: 9.765.625 KiB (10 GB) NVMe + 68.359.375 KiB (70 GB) Daten = 80 GB dezimal;
+Soft=Hard, Inodes 200000/800000. Leer-Nachweis verlangt ≤1 MiB Gesamtbelegung
+für Skelett/Verzeichnisblöcke und **exakt passende UID-Inodezahlen** innerhalb
+der Wurzeln plus dem bekannten Legacy-Token. So blockieren auch kleine
+Restdateien, offene gelöschte Dateien oder Hardlinks außerhalb der Wurzeln die
+Freigabe. Der alte rootverwaltete Token bleibt bis zur S3-Tokenbereinigung
+bestehen; der Geräteausweis/Check-in muss trotzdem Hubzugriffe begrenzen.
 
-Tmpfs/weitere Mounts und privilegierte Dienste anderer UID sind keine Diskquote.
-Vor Pilot alle Schreibpfade und `/run/user`/`/dev/shm` prüfen. Eine User-Slice ist
-keine vollständige Sandbox: voller Tool-Use bleibt erlaubt, Netzwerk/Egress und
-fremde öffentlich lesbare Systemdateien sind nicht gesperrt. Ein globales
-Schwerlastlimit kann direkte Shelljobs ohne zusätzliche Ausführungsregeln nicht
-technisch erzwingen; Pilotpolicy und Hubqueue haben diese ehrliche Grenze.
+Skelett `/etc/cocopi/skel`: nur leere Verzeichnisse `arbeit/Projekte`,
+`arbeit/Ergebnisse`, `.pi/agent/{skills,sessions}`. Keine Links, Spezialdateien,
+Provider-/Authentifizierungsdaten, unkontrollierte Shellprofile oder Autoextensions.
+PrivateTmp entsorgt `/tmp` und `/var/tmp` mit dem Hub; Prozesse außerhalb seiner
+Cgroup oder UID-Reste werden nicht als „leer“ behauptet. Vor Pilot Hostpfade,
+IPC, Spool, mögliche externe Schreiborte und Quoten-Inodeverhalten wirklich
+testen. Unixkonto/Quoten sind keine vollständige Container-/Egress-Isolation.
 
-## 5. Hub und Geheimnisse
+## Proxy-Varianten (separate Netzfreigabe)
 
-Pro Slot `cocopi-hub@accountNN.service` unter dem eigenen systemd-Usermanager;
-rootverwaltete gemeinsame Unit in `/etc/systemd/user`, Drop-in in
-`/etc/systemd/system/user-UID.slice.d/50-cocopi.conf`. Linger nur bei Bedarf setzen.
-Hubbindung **127.0.0.1**, account01 Port 8801, …, account10 Port 8810. Kein öffentlicher Port,
-kein TLS-/Tailscale-/SSH-Setup durch diese Skripte. Ein späterer geprüfter
-Zugang muss auf die richtige Instanz und Geräteberechtigung abbilden.
+A: `proxy/Caddyfile` als öffentliche TLS-Site, geprüfte `routes.caddy` nach
+`/etc/cocopi/proxy/`. B: `Caddyfile.tailscale` bindet ausschließlich
+`127.0.0.1:8799`; `tailscale serve --bg --https=443 http://127.0.0.1:8799` setzt
+TLS davor. Das Hilfsskript zeigt standardmäßig nur diesen Befehl; keine direkte
+Weiterleitung auf Empfang/Slots, kein Funnel. Vor Änderungen existierende Serve-
+Konfiguration prüfen. Kein Überschreiben ohne eigene Freigabe.
 
-Der Startwrapper prüft Unixkonto/Slot/Loopback und lädt ein kryptografisch
-zufälliges, 0600 geschütztes Bootstrap-Token aus
-`/etc/cocopi/slots/accountNN/token` (Slotkonto-eigen, Eltern root-eigen).
-Token nie in Argumenten, URLs, Dry-Run, Git oder Journal. xtrace wird abgeschaltet;
-stdout/stderr des Hubs gehen im konservativen Pilot nicht ins Journal. Daher sind
-Status-/Exitcodes sichtbar, Inhaltslogs aber nicht verfügbar. Der Token wird nicht
-rotiert, wenn er bereits existiert. Es ist **kein Ersatz für Geräte-Token**.
-Root und das Slotkonto können den eigenen Token lesen; nicht vor seinem eigenen
-Agenten geschützt. Keine fremden Home-Konfigurationen werden gelesen/kopiert.
-`HUB_STATE=/mnt/data/cocopi/accountNN/hub-state` ist im Vertrag
-`cocopi-slots-v1` ein **Verzeichnis**, nicht eine JSON-Datei und nicht `off`.
-Es wird als Slotkonto (nicht als Root innerhalb des beschreibbaren Datenbereichs)
-mit 0700 angelegt; Besitzer/Gruppe werden danach geprüft. Es zählt zur SATA-Quote
-und enthält das Geräte-Register des Slots. Vorhandene Inhalte bleiben unberührt.
-Der Startwrapper prüft Pfad und Rechte vor dem Tokenlesen.
+Nur `/v1/empfang/*` und `/slot/accountNN/v1/*` werden weitergegeben (SSE mit
+ungepuffertem Flush). `/v1/belegung`, `/v1/freigabe` direkt UND unter allen
+Slotpräfixen liefern 403. Encodierte/normalisierte Angriffspfade werden gesperrt;
+sonst 404. Keine automatische PWA-/Dateistatik und keine Access-Logs. Auch
+`/v1/sync/dienst/*` ist intern und muss gesperrt bleiben. Signierte
+Dienstaufträge im Hub bleiben zwingend: der Proxy selbst verbindet über Loopback!
 
-Die Hub-Umgebung verwendet exakt `HUB_SLOT=accountNN`,
-`HUB_MAX_OPEN_SESSIONS=2`, `HUB_MAX_ACTIVE_SESSIONS=1`,
-`HUB_GLOBAL_HEAVY_JOBS=1` und `HUB_STATE` wie oben. Der bisherige Hub deutet
-`HUB_STATE` als Datei; er ist damit **nicht kompatibel**. S3 passt das parallel an.
-`HUB_CONTRACT=unconfirmed` bleibt bis zur Freigabe durch K nach S3-Review bestehen.
-Ein Verzeichnis beweist weder sichere Persistenz noch verbotenen Auto-Resume;
-beides ist im Hubreview und in Mocktests gesondert abzunehmen.
+Vor Installation mit verfügbarer Software separat prüfen:
 
-## 6. Abnahme und Negativtests
-
-### Kurze Lehrenden-Sicht (Aylin; Entwurf)
-
-```bash
-bash deploy/r2/admin-check.sh --slots account01,account02  # nur Vorschau
-# Erst später, separat freigegeben, als Root aus der geprüften Skriptkopie:
-bash /usr/local/lib/cocopi-r2/admin-check.sh --apply --slots account01,account02
+```sh
+caddy validate --config /etc/cocopi/proxy/Caddyfile --adapter caddyfile
+visudo -cf /usr/local/lib/cocopi-r2/sudoers/cocopi-slotctl
 ```
 
-`--apply` liest hier **nur**; es startet/stoppt keinen Dienst, schreibt keine Datei
-und fragt keinen Hub über das Netzwerk ab. Keine zusätzlichen Lehrendenrechte
-auf private Konten: Die Administration führt den Bericht aus. Die Tabelle zeigt:
+Hier sind Caddy und visudo nicht vorhanden; Syntax/Proxybetrieb damit **nicht
+validiert**. Python-Fixtures sind kein Ersatz. Erst echte HTTPS-403 plus positive
+Empfang-/Slot-/SSE-Abnahme nach Netzfreigabe erlauben Pilotbetrieb.
 
-- **Eingerichtet:** Konto vorhanden und eindeutig verwaltet, fehlt oder bitte prüfen.
-- **Verbindung:** persönlicher Hubdienst aktiv oder nicht aktiv. Aktiv heißt nicht
-  „Studentin arbeitet“, sondern nur „Verbindungsdienst läuft“.
-- **Zugang:** „nur lokal“ nur nach gleicher Dienst-/PID-/Portprüfung wie `check.sh`;
-  zusätzliche Wildcard-/IPv6-/fremde Listener werden nicht als sicher ausgegeben.
-  Das ist kein Test der Erreichbarkeit vom Mac oder Handy.
-- **Speicher:** belegte/harte GB je SSD aus lesendem Q_GETQUOTA (NVMe 10 + SATA 70).
-  Falsche Grenzen heißen „Grenze pruefen“, erschöpfte Byte- **oder Inodequote**
-  heißt „voll“. Kein Lesen oder Summieren privater Dateinamen.
-- **Letzte Aktivität:** vorerst ausdrücklich **Dienststart** aus systemd mit
-  Datum/Uhrzeit/Zeitzone, nicht letzte Anmeldung, Nachricht oder Agentenarbeit.
-  Fehlende/ungültige Messung bleibt „unbekannt“. Für echte Arbeitsaktivität fehlt
-  eine geprüfte, inhaltsfreie Hubquelle; Änderungsbitte an S3 bleibt offen.
+## Admin-Abnahme und offene Integration
 
-Die Vorschau zeigt ausschließlich „nicht geprueft“. Fehlende/falsche Konten,
-inaktive Dienste, fehlender Loopbacknachweis, fehlende Quotenabfrage sowie volle
-oder abweichende Quoten ergeben Exitcode 1, sonst 0. Eine unbekannte letzte
-Arbeitsaktivität ist eine erklärte Entwurfsgrenze, kein Anwesenheitsnachweis.
-Der Dienststart ist auch bei ruhenden Sessions kein Beleg für einen KI-Auftrag.
-Kein Journal, keine `/proc`-Argumente, Home-/Sessioninhalte, Geräte-IDs oder Token
-werden gelesen. Nur für die Listenerzuordnung wird der Besitzer von `/proc/PID`
-per `stat` abgefragt. Kein Ersatz für die technische Abnahme unten oder den Pilot.
+`admin-check.sh --ausfuehren --slots account01,account02 --proxy-url https://NAME`
+liest nur Konto/UID, Systemdienst/PID, lokale Listener, Quote und Poolprojektion;
+ruft `POST /v1/empfang/hallo` inhaltsfrei auf und testet absichtlich ungültige
+POSTs gegen externe Sperrpfade. Kein Modell, keine Namen/Sessiondateien/Token.
+Kein URL-Credential, Pfad oder Query im Parameter erlaubt, TLS niemals abschalten.
+Ein aktiver Dienst zeigt keine Anwesenheit; „Dienststart“ ist nicht letzte Arbeit.
 
-### Technische Abnahme
+**Derzeit noch Integrationsblocker (an S7/K gemeldet):**
 
-`check.sh --apply` verlangt Root und prüft ohne Inhalte fremder Homes zu lesen:
+1. S7 muss `leeren`-JSON (Exit 0 und Beleg) prüfen und darf nach Hubstart kein
+   zweites `pruefen` verlangen. Rootzugriff über `slotctl-empfang`/enge sudoers,
+   nicht direkt vom Systemkonto auf Roothelfer. Vorläufig verweigert Live-Prüfen
+   nach Start korrekt; keine Freigabe.
+2. Aktuelle inhaltsfreie Projektion `/var/lib/cocopi-empfang/pool-status.json`:
+   `{protokoll:1,zeit:<ISO8601 UTC>,slots:[{slot:"account01",zustand:"frei"},…]}`,
+   genau zehn Einträge, Zustände `frei|belegt|leeren|gesperrt`, Alter ≤120 s,
+   atomar geschrieben, keine zusätzlichen personenbezogenen Felder. S7 muss sie
+   produzieren; Admin zeigt sonst unbekannt/Exit 1, liest niemals private Pooldaten.
+   Zwei-Slot-Test ist daher noch keine grüne Zehnerpoolabnahme.
+3. S3/S7 signierten Archivweg, Ausweise, Erstinitialisierung und Replayverhalten
+   gemeinsam nachweisen. OIDC-Scopes `groups` versus `openid profile` abstimmen.
+4. Live-Quoten, sudoers, Caddy, systemd und echter Check-out inkl. `/tmp` und
+   externen UID-Inodes sind nicht getestet. 72-h-Löschung/7-Tage-Logs gehören
+   zum Empfang und müssen auch ohne Aktivität/bei Wiederanlauf durchgesetzt sein.
 
-- UID-Inventar, Home/Daten 0700 und passende Besitzer;
-- via `runuser`: fehlendes Lese-/Suchrecht auf andere vorhandene Slot-Homes und
-  `/home/medienhaus` (inklusive effektiver ACL-Wirkung);
-- keine privilegierten Zusatzgruppen, kein schreibbarer Docker-Socket;
-- vollständiges `sudo -l -U` muss verweigern, zusätzlich `sudo -n true` als Slot;
-- aktive ext4-Userquote und über **nur lesendes** Q_GETQUOTA exakte Hard-/Soft-
-  und Inodegrenzen sowie keine schon überhöhte Belegung;
-- effektive Slice-Grenzen, Linger, privater Token ohne Inhaltsausgabe;
-- aktiver eigener Hub, PID-Besitzer und genau ein Listener
-  `127.0.0.1:Port`; weder `0.0.0.0` noch IPv6-Wildcard/weitere TCP-Listener des Hubs;
-- Werkzeuge im Slot-PATH auffindbar (kein Ausführen von pi/Modellen).
+Globale Slice 800 % / 24G high / 26G max, je Slot 100 % / 2G high / 2560M max /
+256 Tasks. Das sind konservative Vorlagen, keine gemessene Lastabnahme; ein
+schwerer Job global bleibt Hubvertrag. Empfang-Unit setzt absichtlich weder
+NoNewPrivileges noch ProtectHome=read-only, da der enge sudo-Helfer sonst
+unwirksam wäre; dies verlangt besonders sorgfältiges Review des Empfangscodes.
 
-Das ersetzt NICHT: echte Quotenüberschreitung, RAM-/Prozessbombentest,
-Sessiongrenzen, Gerätewiderruf, Hostidentität, TLS, API-Pfadausbrüche oder Lasttest.
-Diese zuerst auf separater Testmaschine/klein quotiertem Wegwerfkonto mit Mock
-abnehmen; niemals 80 GB Testfüllung oder Forkbomben auf dem laufenden R2.
+## Nachweise lokal
 
-## 7. Rückbau, Sicherung und Wiederherstellung
-
-### Rückbau (separate Freigabe nötig)
-
-```bash
-bash /usr/local/lib/cocopi-r2/teardown.sh --slots account01,account02             # nur Plan
-bash /usr/local/lib/cocopi-r2/teardown.sh --apply --slots account01,account02     # sperrt + sichert; behält Daten/Konto
-bash /usr/local/lib/cocopi-r2/teardown.sh --apply --slots account01,account02 --purge  # zusätzlich löscht
-```
-
-S3 muss Geräte-/Enrollmentzugänge **vor Wiedervergabe** widerrufen. Das Skript
-macht keine Netzwerkanfrage. Es stoppt ausschließlich Dienste der expliziten
-Slotkonten, sperrt Passwort/Accountablauf/Login-Shell und beendet deren
-Usermanager. Bei weiteren Prozessen bricht es ab, statt breit Prozesse zu töten.
-Erst dann Archiv von Home, SATA-Daten, Slotkonfiguration und UID-Inventar unter
-`/var/backups/cocopi-slots/accountNN/`, root-only, mit numerischen UIDs, ACLs, xattrs,
-SHA-256 und Lesbarkeitsprüfung. Symlinks werden nicht dereferenziert, untergeordnete
-Mounts blockieren. Platzmangel/Archivfehler: keine Quelldatenlöschung.
-
-Standard behält Konto und sämtliche Home-/Datenquellen. `--purge` erstellt
-unmittelbar vor Löschung ein zusätzliches frisches Archiv (erfasst zwischenzeitlich
-hinzugekommene Dateien). Marker `preparing → archived → purging → purged` erlauben
-Wiederaufnahme. Unterbrochene Sicherung ohne Manifest verlangt manuelle Recovery;
-niemals einfach eine neue Prüfsumme über einen verdächtigen Altbestand erzeugen.
-Lokale Snapshots sind **kein externes Backup** und enthalten Geheimnisse.
-
-UID-Inventar/Tombstone, Quoten und Slice-Limits bleiben nach Purge erhalten:
-Restdateien außerhalb Home/Datapfad gehören weiter derselben UID. Keine automatischen
-UID-Recyclings oder Slot-Neuanlagen nach begonnenem Rückbau. UID-/Restdatei-Inventar,
-Gerätewiderruf und externe Sicherung administrativ abschließen; sonst könnten neue
-Konten alte Dateien erben. Gemeinsame Gruppe/Unit/Wrapper bleiben für andere Slots.
-Löschen des restlichen Verwaltungsgerüsts nur separat und bei null belegten Slots.
-
-### Externer Backupplan (Vorschlag, noch nicht eingerichtet)
-
-1. Verantwortliche Person und institutionelles Ziel **außerhalb R2**, z. B.
-   verschlüsseltes Repository auf getrenntem Speicher, festlegen. Keine Ziel-URLs
-   oder Schlüssel hier eintragen. Zweite interne SSD ist kein Backup.
-2. Täglich inkrementell, vor Provisionierung/Migration zusätzlich Vollsicherung;
-   zunächst 7 tägliche + 4 wöchentliche + 3 monatliche Stände als zu bestätigender
-   Aufbewahrungsvorschlag. Private Datenfristen mit Seminar/Datenschutz abstimmen.
-3. Home, SATA-Daten, Slotkonfiguration, UID/GID-Inventar, Slice-/Dienstvorlagen,
-   rootverwaltete Deploymentversion und Quota-Sollwerte sichern; reproduzierbare
-   Caches optional ausschließen, Sessiondateien nicht. Konsistente Sicherung nach
-   Nutzerankündigung/Slotruhe; nicht parallel in aktive JSONL-Dateien schreiben.
-4. Backupverschlüsselung + getrennte Schlüsselablage, Zugriff nur zuständige
-   Administration, Prüfprotokoll ohne Token/Inhalte; automatische Fehleralarmierung
-   ohne vertrauliche Nutzdaten. Lokales Archiv erst nach extern bestätigter Kopie
-   und getesteter Wiederherstellung gemäß Frist entfernen (nicht dieses Skript).
-5. Restore zunächst in isoliertes Temp-/Testziel, Archivpfade und Prüfsumme prüfen,
-   keine blinde Extraktion als Root über das echte `/`. Danach kontrolliert mit
-   ursprünglicher UID/GID, Rechten/ACLs, Quoten und Slice herstellen. Geräte- und
-   Bootstrap-Token nach Vorfall neu ausstellen, alte widerrufen; Providerdaten
-   separat und persönlich wieder einrichten. Hub zuerst mit Mock und ohne Registry-
-   Auto-Resume prüfen. Niemals alte Requests blind erneut senden.
-6. Vor Pilot eine Datei + komplette Session wiederherstellen; anschließend monatlich
-   Stichprobe, quartalsweise kompletter Slot auf separatem Host. RPO ≤24 h / RTO
-   ≤4 h als **Zielvorschlag**, nicht heute gemessene Zusage.
-
-## 8. Lasttestplan: zwei Personen, dann neun
-
-Nur nach Freigabe, mit Mocks und synthetischen unkritischen Daten. Keine echten
-Modelle, keine fremden Prozesse/Windows steuern. Zehnter Slot bleibt Reserve.
-
-| Stufe | Ablauf | Nachweis / Abbruch |
-|---|---|---|
-| 0 getrennte Testumgebung | kleine Quote füllen, Speicher-/Tasklimit kontrolliert erreichen, Restore/Widerruf | reproduzierbarer Fehler statt fremdem Zugriff; keine Forkbombe auf R2 |
-| 1 zwei Personen account01/account02 | je 2 offene, max. 1 aktive Mocksession; dritte abweisen; Prompt, Rückfrage, Abbruch, Reconnect, Datei, Loginabbruch | keine doppelten Requests, private Homes/Token unerreichbar, verständliche Fehlermeldung |
-| 2 ein schwerer CPU-Job global | kontrollierter Build oder synthetischer Export; anderer Slot reiht zweiten Job ein | globale Queue über beide Hubs belegen; direkte Shelljobs als Policygrenze separat dokumentieren |
-| 3 schrittweise 3 → 6 → 9 | gleicher Ablauf, ein schwerer Job bleibt global; je Stufe 15 min plus Lastspitze | 9 Personen erst nach stabiler Vorstufe; Reserve unverändert |
-| 4 Neustart-/Recoveryfenster | nur Test-Hub/Slot nach Zustimmung, Replay/Restore/Tokenwiderruf | neue Prozesse korrekt benennen, kein blindes Resume, geprüfte Sicherung |
-
-Je Stufe Basis + Peaks messen: CPU/PSI, Account-cgroup-RAM, MemoryAvailable,
-Swap-I/O, Tasks, Dateisystembelegung/Inodes/Quota, I/O-Wartezeit, Queuezeit,
-UI-/Mockantwortzeiten. Werkzeuge nur sofern vorhanden, keine Paketinstallation
-im Test. Rohdaten ohne Token/Prompts, Messzeit und Deploymentcommit festhalten.
-
-Vorgeschlagene Pilot-Stopps: OOM-Kill, Rechte-/Quoteverletzung, doppelte Requests,
->90 % Dateisystembelegung, MemoryAvailable <4 GiB für 30 s oder dauerhaftes
-Swap-Thrashing; UI-Steuerung >2 s wiederholt unter synthetischer Last. Bei Fehler
-keine weitere Last hinzufügen, eigenen Test geordnet abbrechen und zur letzten
-stabilen Belegung zurück. Werte sind vor Test mit Betrieb abzustimmen. Zweiter
-schwerer Job / zwei aktive Sessions erst nach neuer ausdrücklicher Entscheidung.
-
-## 9. A4-Kontomodell (eingefroren)
-
-**Verbindlich: `coord/FREEZE-I1.md` §A4. Hubumsetzung noch unbestätigt.**
-Slot-ID ist stabil und kein Anzeigename. Person,
-Unixkonto, Hubinstanz und Geräte-ID werden serverseitig gebunden. Ein Port ist
-keine Autorisierung. Pro Gerät eigener widerrufbarer Token, niemals im Inventar
-als Klartext; Tabelle enthält nur einen symbolischen Verweis.
-
-| Slot | Unixkonto | Hub-Userdienst / Loopbackport | Geräte-Token (nur Verweis) | Grenzen |
-|---|---|---|---|---|
-| account01 | account01 | cocopi-hub@account01 / 8801 | account01/<device-id> | G |
-| account02 | account02 | cocopi-hub@account02 / 8802 | account02/<device-id> | G |
-| account03 | account03 | cocopi-hub@account03 / 8803 | account03/<device-id> | G |
-| account04 | account04 | cocopi-hub@account04 / 8804 | account04/<device-id> | G |
-| account05 | account05 | cocopi-hub@account05 / 8805 | account05/<device-id> | G |
-| account06 | account06 | cocopi-hub@account06 / 8806 | account06/<device-id> | G |
-| account07 | account07 | cocopi-hub@account07 / 8807 | account07/<device-id> | G |
-| account08 | account08 | cocopi-hub@account08 / 8808 | account08/<device-id> | G |
-| account09 | account09 | cocopi-hub@account09 / 8809 | account09/<device-id> | G |
-| account10 Reserve | account10 | cocopi-hub@account10 / 8810 | erst bei Vergabe | G |
-
-Private Primärgruppen und feste UID/GID **20001…20010** sind eingefroren;
-`SLOT_UID_BASE=20000` muss vor Apply gegen lokale/NSS-Kollisionen geprüft werden.
-Zwischen Slots werden keine UIDs automatisch wiederverwendet. Hostweite
-Administrationswerkzeuge müssen diesen Bereich separat reservieren; ein
-Tombstone allein verhindert außerhalb dieser Skripte keine UID-Wiedervergabe.
-
-**G:** CPU 100 %, RAM High 2 GiB / Max 2,5 GiB, 256 Tasks, 10+70 GB,
-200.000+800.000 Inodes, 2 offene / 1 aktive Session. Schwerer Job **1 global**.
-Grenzen sind keine garantierten Ressourcen, Änderungen nur nach Lastbefund.
-
-### Konkrete Änderungsbitten an S3
-
-- Vertrag/Variablennamen bestätigen: `HUB_SLOT`, `HUB_MAX_OPEN_SESSIONS=2`,
-  `HUB_MAX_ACTIVE_SESSIONS=1`, `HUB_GLOBAL_HEAVY_JOBS=1`, `HUB_STATE` als
-  privates Verzeichnis 0700 für das Geräte-Register, Loopback/Port/ROOTS.
-  Aktueller Hub ignoriert die neuen Grenzen; deshalb Apply-Sperre nicht entfernen.
-- Geräte-Token dem authentifizierten Slot binden; fremde Slots/Roots/IDs abweisen;
-  Ablauf/Widerruf inklusive bestehender Streams abnehmen. Bootstrap-Token nicht als
-  Gerätetoken oder Einladung behandeln; Adminpfad getrennt halten.
-- Prozessübergreifende globale Schwerlastqueue definieren (neun Hubs!), ohne
-  gemeinsame vertrauliche Sessions. Direkter Unix-Shellzugriff kann sie umgehen;
-  keine stärkere Garantie behaupten, als tatsächlich erzwungen wird.
-- Vertrag `cocopi-slots-v1` nach Negativtests K zum Review/Freigeben vorlegen; Pfad/Registry/Persistenz,
-  Restart/Schlafmodus und Queue-Autorisierung schriftlich festlegen.
-
-Tutorial bleibt in I1 unverändert; Überarbeitung erst I3 nach Freigabe von S1.
+`python3 deploy/r2/test_scripts.py`: 38 grün (inkl. zehn Fake-Root-Angriffstests).
+Nur Tempverzeichnisse, keine System-/Netzänderungen. Bash-Syntax, Dry-Run-
+Mutationssentinel, Argumente, Quoten/Slices/Listenerfixtures, Poolstatus/Proxy-
+Mocks und enumerierte sudoers geprüft. Kein R2-Deployment, authentik-Login,
+Modellaufruf oder produktiver End-to-End-/Securitynachweis.

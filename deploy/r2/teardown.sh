@@ -4,6 +4,8 @@ set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
 parse_args teardown "$@"
 note "Rückbau: $MODE; Slots: $SLOT_LIST; purge=$PURGE. Nur ausdrücklich verwaltete Konten."
+# I1-Rückbau archiviert dauerhaft und widerspricht E9. In I2 absichtlich gesperrt.
+[[ $MODE != apply ]] || fail 'I1-Rückbau mit Nutzdatenarchiv ist im Pool gesperrt. Erst regulär auschecken; Kontenabbau separat freigeben.'
 
 # Rückbau ist ein wiederaufnehmbarer Ablauf, keine userdel -r-Abkürzung.
 # Der Slot bleibt standardmäßig gesperrt erhalten, damit UID/Dateibesitz nicht neu vergeben werden.
@@ -97,6 +99,9 @@ for slot in "${SELECTED[@]}"; do
         if user_systemctl is-active --quiet "$UNIT"; then user_systemctl stop "$UNIT"; fi
         if user_systemctl is-enabled --quiet "$UNIT"; then user_systemctl disable "$UNIT"; fi
     fi
+    # I2: System-Hub ebenfalls stoppen; Userdienst nur als Altmigrationsschutz.
+    if systemctl is-active --quiet "$UNIT"; then systemctl stop "$UNIT"; fi
+    if systemctl is-enabled --quiet "$UNIT"; then systemctl disable "$UNIT"; fi
     # Idempotente Sperre, ohne irgendeine fremde UID anzufassen.
     if [[ $(getent shadow "$USER_NAME" | cut -d: -f2) != '!'* ]]; then usermod --lock "$USER_NAME"; fi
     if [[ $(getent passwd "$USER_NAME" | cut -d: -f7) != /usr/sbin/nologin ]]; then
