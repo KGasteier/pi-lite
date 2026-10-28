@@ -29,13 +29,16 @@ test('v1: Einladung, Challenge-Signatur, Widerruf und Fehler erhalten Hubtext', 
       assert.equal(req.headers.authorization, undefined); assert.equal(body.typ, 'einloesen'); assert.equal(body.art, 'e');
       assert.equal(body.code, 'K7QM-2XDA-9FHT-W3NB'); reply = { geraet_id: 'handy' };
     }
-    if (req.url === '/v1/anmelden/challenge') { assert.equal(body.geraet_id, 'handy'); reply = { challenge_id: 'c1', nonce: 'test-nonce' }; }
-    if (req.url === '/v1/anmelden') { assert.equal(body.signatur, 'signed:test-nonce'); reply = { geraet_id: 'handy', zugangstoken: 'demo' }; }
+    if (req.url === '/v1/anmelden/challenge') { assert.equal(body.geraet_id, 'handy'); reply = { challenge_id: 'c1', nonce: 'test-nonce', slot: 'account03', hub_origin: 'https://untrusted.example' }; }
+    if (req.url === '/v1/anmelden') {
+      assert.equal(body.signatur, `signed:cocopi-v1-anmelden\nhttp://${req.headers.host}\naccount03\nhandy\nc1\ntest-nonce`);
+      reply = { geraet_id: 'handy', zugangstoken: 'demo' };
+    }
     if (req.url === '/v1/geraete/handy/widerrufen') { assert.equal(req.headers.authorization, 'Bearer demo'); reply = { typ: 'widerruf' }; }
     res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(reply));
   });
-  await transport.einloesen('K7QM-2XDA-9FHT-W3NB');
-  const signed = await transport.hallo({ geraet_id: 'handy', sign: async nonce => `signed:${nonce}` });
+  const enrollment = await transport.einloesen('K7QM-2XDA-9FHT-W3NB');
+  const signed = await transport.hallo({ geraet_id: 'handy', slot: 'account03', hub_origin: enrollment.hub_origin, sign: async payload => `signed:${payload}` });
   assert.equal(signed.zugangstoken, 'demo');
   await transport.abmelden();
   assert.deepEqual(calls, ['/v1/einloesen', '/v1/hallo', '/v1/anmelden/challenge', '/v1/anmelden', '/v1/geraete/handy/widerrufen']);

@@ -36,12 +36,19 @@ export async function getDevice() {
   return device;
 }
 function base64url(bytes) { return btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, ''); }
-export async function saveRegistration(geraet_id) {
+export async function saveRegistration({ geraet_id, slot, hub_origin }) {
+  if (!geraet_id || !/^account(?:0[1-9]|10)$/.test(slot) || new URL(hub_origin).origin !== hub_origin) {
+    throw new Error('R2 hat die Anmeldung nicht vollständig bestätigt. Kopple dieses Handy erneut.');
+  }
   const device = await getDevice();
-  await access('readwrite', store => store.put({ ...device, geraet_id }, 'identity'));
+  await access('readwrite', store => store.put({ ...device, geraet_id, slot, hub_origin }, 'identity'));
 }
 export async function forgetDevice() { await access('readwrite', store => store.clear()); }
-export async function signNonce(device, nonce) {
-  const signature = new Uint8Array(await crypto.subtle.sign('Ed25519', device.privateKey, new TextEncoder().encode(nonce)));
+export async function signLogin(device, payload) {
+  const prefix = ['cocopi-v1-anmelden', device.hub_origin, device.slot, device.geraet_id, ''].join('\n');
+  if (!device.hub_origin || !device.slot || !device.geraet_id || typeof payload !== 'string' || !payload.startsWith(prefix) || payload.split('\n').length !== 6) {
+    throw new Error('Die Anmeldung passt nicht zum gespeicherten Konto. Kopple dieses Handy erneut.');
+  }
+  const signature = new Uint8Array(await crypto.subtle.sign('Ed25519', device.privateKey, new TextEncoder().encode(payload)));
   return base64url(signature);
 }

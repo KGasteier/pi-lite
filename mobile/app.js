@@ -1,5 +1,5 @@
 import { createTransport, parsePairingCode } from '../ui/transport.js';
-import { getDevice, saveRegistration, forgetDevice, signNonce } from './device.js';
+import { getDevice, saveRegistration, forgetDevice, signLogin } from './device.js';
 import { sessionLabel, connectionLabel, errorText, messageText } from './state.js';
 
 const $ = id => document.getElementById(id);
@@ -98,7 +98,7 @@ function receive(msg) {
 }
 async function login(device) {
   registered = true;
-  const response = await transport.hallo({ geraet_id: device.geraet_id, sign: nonce => signNonce(device, nonce) });
+  const response = await transport.hallo({ ...device, sign: payload => signLogin(device, payload) });
   token = response.zugangstoken;
   welcome = response;
   $('account').textContent = `${response.person || ''} · ${response.slot} @ R2`;
@@ -152,10 +152,11 @@ $('pair-form').onsubmit = async event => {
     const device = await getDevice();
     const body = { ...parsed, pubkey: device.pubkey, geraetename: device.name, geraeteart: 'handy' };
     $('pair-status').textContent = parsed.art === 'e' ? 'Einladung wird geprüft …' : 'Warte auf Bestätigung am Rechner …';
-    const result = parsed.art === 'e' ? await transport.einloesen(body) : await transport.koppeln(body, { signal });
+    const options = { signal, onPending: () => { $('pair-status').textContent = 'Warte auf Bestätigung am bestehenden Gerät …'; } };
+    const result = parsed.art === 'e' ? await transport.einloesen(body, options) : await transport.koppeln(body, options);
     if (signal.aborted) return;
     if (!result.geraet_id) throw new Error('Die Anmeldung wurde noch nicht bestätigt. Prüfe den Rechner.');
-    await saveRegistration(result.geraet_id);
+    await saveRegistration(result);
     await login(await getDevice());
     $('code').value = '';
     $('pair-status').textContent = '';
