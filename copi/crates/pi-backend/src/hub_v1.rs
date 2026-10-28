@@ -838,10 +838,11 @@ mod tests {
             .redeem(&mut key, &code, 'e', "Testrechner", "desktop")
             .unwrap();
         assert_eq!(registered["person"], "Mira");
-        assert!(client
+        let error = client
             .redeem(&mut key, &code, 'e', "Testrechner", "desktop")
-            .unwrap_err()
-            .contains("benutzt"));
+            .unwrap_err();
+        assert!(error.starts_with("[verbraucht] "));
+        assert!(error.contains("benutzt"));
         client.login(&key).unwrap();
         assert_eq!(
             client.sessions().unwrap()["sessions"]
@@ -896,7 +897,10 @@ mod tests {
         client
             .revoke(phone_key.geraet_id.as_ref().unwrap())
             .unwrap();
-        assert!(phone.sessions().is_err());
+        assert!(phone
+            .sessions()
+            .unwrap_err()
+            .starts_with("[nicht_angemeldet] "));
         assert_eq!(
             client.devices().unwrap()["geraete"]
                 .as_array()
