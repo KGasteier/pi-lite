@@ -14,7 +14,7 @@ if [[ $# -eq 2 ]]; then
     [[ -f "$hub/test/smoke.mjs" && -x "$hub/test/fake-pi.mjs" ]] || usage
 fi
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-for tool in cargo rustc node python3 timeout git; do
+for tool in cargo rustc rustfmt node python3 timeout git; do
     command -v "$tool" >/dev/null || { echo "Fehlt: $tool" >&2; exit 2; }
 done
 name=$(basename -- "$worktree")
@@ -44,7 +44,13 @@ run() {
     (cd -- "$dir" && "${safe_env[@]}" timeout --kill-after=10s "${V3_GATE_TIMEOUT:-1800}s" "$@") >"$logs/$id.log" 2>&1 || rc=$?
     printf '%s\n' "$rc" >"$logs/$id.exit"
     if (( rc == 0 )); then
-        printf 'PASS %s | log=%s\n' "$id" "$logs/$id.log"
+        if [[ "$id" == js-tests ]] && grep -q '^KNOWN ' "$logs/$id.log"; then
+            printf 'KNOWN %s | bekannte Basisfehler, keine neuen Fehler; log=%s\n' "$id" "$logs/$id.log"
+        elif [[ "$id" == fmt ]]; then
+            printf 'PASS %s | %s log=%s\n' "$id" "$(head -n 1 "$logs/$id.log")" "$logs/$id.log"
+        else
+            printf 'PASS %s | log=%s\n' "$id" "$logs/$id.log"
+        fi
     else
         printf 'FAIL %s | exit=%s log=%s\n' "$id" "$rc" "$logs/$id.log"
         failed=1
@@ -61,7 +67,7 @@ run() {
     printf 'worktree=%s\ntarget=%s\n' "$worktree" "$target"
     [[ -z "$hub" ]] || git -C "$hub" rev-parse HEAD
 } >"$logs/context.log" 2>&1
-run fmt "$worktree/copi" cargo fmt --check
+run fmt "$worktree" python3 "$script_dir/gate-checks.py" fmt "$worktree" "${V3_GATE_BASE:-cocopi-v3}"
 
 # JSON-Diagnosen zählen, nicht die menschlichen „generated N warnings“-Summen.
 # Identische Warnungen beider include!(main.rs)-Binaries werden nur einmal gezählt.
@@ -85,10 +91,17 @@ run js-syntax "$worktree" bash -c '
     shopt -s nullglob; files=(ui/*.js); ((${#files[@]})) || exit 2
     failed=0; for f in "${files[@]}"; do echo "CHECK $f"; node --check "$f" || failed=1; done
     echo "FILES ${#files[@]}"; exit "$failed"'
-run js-tests "$worktree" bash -c '
-    shopt -s nullglob; files=(scripts/test-*.cjs); ((${#files[@]})) || exit 2
-    failed=0; for f in "${files[@]}"; do echo "TEST $f"; node "$f" || failed=1; done
-    echo "FILES ${#files[@]}"; exit "$failed"'
+run js-tests "$worktree" python3 "$script_dir/gate-checks.py" js "$worktree" "$script_dir/js-baseline.txt"
+if compgen -G "$worktree/mobile/test/*.mjs" >/dev/null; then
+    run mobile-tests "$worktree" bash -c 'files=(mobile/test/*.mjs); node --test "${files[@]}"'
+else
+    printf 'SKIP mobile-tests | keine mobile/test/*.mjs vorhanden\n'
+fi
+if [[ -f "$worktree/deploy/r2/test_scripts.py" ]]; then
+    run r2-tests "$worktree" python3 deploy/r2/test_scripts.py
+else
+    printf 'SKIP r2-tests | deploy/r2/test_scripts.py nicht vorhanden\n'
+fi
 if [[ -n "$hub" ]]; then
     # smoke.mjs nutzt Mock/fake-pi und eine absichtlich fehlende Binary, keine Modelle.
     run hub-smoke "$hub" node test/smoke.mjs

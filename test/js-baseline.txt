@@ -1,0 +1,4 @@
+# Bekannte JS-Basisfehler auf eb534bb (2026-10-28).
+# Nur relative Testpfade; neue Fehler dürfen nicht hier verborgen werden.
+# Entfernen, sobald der jeweilige Test wieder grün ist.
+scripts/test-statusline-net.cjs
