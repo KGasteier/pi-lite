@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "unique_warning_count": 24,
+  "raw_warning_count": 41,
+  "application_commit": "eb534bb328c246726fb43c56c8f3955ee89d55bb",
+  "measured_at": "2026-10-28",
+  "rustc": "1.99.0 (b940084d7 2026-09-28)",
+  "cargo": "1.99.0 (5f94df478 2026-08-27)",
+  "command": "cargo clippy --offline --workspace --features copi/cocopi --message-format=json",
+  "comparison": "unique diagnostics by message, code and source spans; exclude target/package/rendered"
+}
