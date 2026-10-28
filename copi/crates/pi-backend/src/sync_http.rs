@@ -41,7 +41,18 @@ impl SyncHttp<'_> {
             .ok_or_else(|| "Bitte melde dich zuerst am Arbeitsplatz an.".into())
     }
     /// tar.gz direkt vom Reader, ohne vollständige RAM-Kopie. Kein stilles Retry.
-    pub fn hoch(&self, bereich: &str, name: &str, mut reader: impl Read) -> Result<Value, String> {
+    pub fn hoch(&self, bereich: &str, name: &str, reader: impl Read) -> Result<Value, String> {
+        self.hoch_explicit(bereich, name, reader, false)
+    }
+    /// Große Dateien nur nach ausdrücklicher Bestätigung durch die Person übertragen.
+    /// `false` ist zum bisherigen `hoch` identisch (kein Bestätigungsheader).
+    pub fn hoch_explicit(
+        &self,
+        bereich: &str,
+        name: &str,
+        mut reader: impl Read,
+        gross_bestaetigt: bool,
+    ) -> Result<Value, String> {
         if !["Projekte", "Ergebnisse", "Skills", "Verlaeufe"].contains(&bereich)
             || name.is_empty()
             || name.len() > 180
@@ -53,12 +64,17 @@ impl SyncHttp<'_> {
             return Err("Wähle einen gültigen Bereich und Dateinamen.".into());
         }
         let mut limited = (&mut reader).take(MAX_ARCHIVE + 1);
-        let response = self.agent.post(format!("{}/v1/sync/hoch", self.hub.url))
+        let mut request = self
+            .agent
+            .post(format!("{}/v1/sync/hoch", self.hub.url))
             .header("Authorization", self.token()?)
             .header("Content-Type", "application/gzip")
             .header("X-Cocopi-Bereich", bereich)
-            .header("X-Cocopi-Name", name)
-            .send(ureq::SendBody::from_reader(&mut limited))
+            .header("X-Cocopi-Name", name);
+        if gross_bestaetigt {
+            request = request.header("X-Cocopi-Gross", "bestaetigt");
+        }
+        let response = request.send(ureq::SendBody::from_reader(&mut limited))
             .map_err(|_| "Die Übertragung wurde unterbrochen. Prüfe am Arbeitsplatz, was angekommen ist.")?;
         let v = response_packet(response)?;
         if v["typ"] != "sync_hoch_ok" || v["bereich"] != bereich || v["name"] != name {
@@ -316,6 +332,56 @@ mod tests {
                 assert_eq!(&out[..2], &[0x1f, 0x8b]);
             }
         }
+    }
+    #[test]
+    fn explicit_upload_header_is_only_sent_after_confirmation() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut hub = HubV1::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        hub.token = Some("fixture-token".into());
+        let server = std::thread::spawn(move || {
+            for expected in [false, false, true] {
+                let (stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                    .unwrap();
+                let mut reader = BufReader::new(stream);
+                let mut headers = String::new();
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    headers.push_str(&line);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                assert!(headers.starts_with("POST /v1/sync/hoch "));
+                let headers = headers.to_ascii_lowercase();
+                assert!(headers.contains("authorization: bearer fixture-token"));
+                assert_eq!(headers.contains("x-cocopi-gross: bestaetigt"), expected);
+                // SendBody Reader nutzt Chunked-Encoding; leerer Reader endet mit 0.
+                let mut end = [0; 5];
+                reader.read_exact(&mut end).unwrap();
+                assert_eq!(&end, b"0\r\n\r\n");
+                let text =
+                    json!({"protokoll":1,"typ":"sync_hoch_ok","bereich":"Projekte","name":"Test"})
+                        .to_string();
+                write!(
+                    reader.get_mut(),
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                    text.len()
+                )
+                .unwrap();
+            }
+        });
+        let sync = hub.sync_http(|| Box::new(TestHash(Vec::new())));
+        sync.hoch("Projekte", "Test", std::io::empty()).unwrap();
+        sync.hoch_explicit("Projekte", "Test", std::io::empty(), false)
+            .unwrap();
+        sync.hoch_explicit("Projekte", "Test", std::io::empty(), true)
+            .unwrap();
+        server.join().unwrap();
     }
     #[test]
     fn sync_metadata_and_unauthenticated_calls_fail_before_network() {

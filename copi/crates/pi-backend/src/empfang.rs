@@ -236,7 +236,13 @@ impl Empfang {
         let text = response
             .body_mut()
             .with_config()
-            .limit(2 * 1024 * 1024)
+            .limit(if method == "GET" && path.starts_with("abholfach/") {
+                // Empfang liefert das Chiffrat base64url im JSON (bis 2 GiB Archiv).
+                // Nur die einzelne, ausdrücklich abgeholte Box darf so groß sein.
+                (2 * 1024 * 1024 * 1024u64).div_ceil(3) * 4 + 65536
+            } else {
+                2 * 1024 * 1024
+            })
             .read_to_string()
             .map_err(|e| {
                 request_error(
@@ -349,6 +355,44 @@ impl Empfang {
             json!({"checkin_id":identifier(checkin_id)?}),
         )
     }
+    /// Wie checkout, mit bewusster Auswahl für den Dienstarchiv-Auftrag.
+    /// Antwort: checkout_bereit oder direkt ausgecheckt bei nachgewiesen leerem Slot.
+    pub fn checkout_mit_auswahl(&self, checkin_id: &str, auswahl: Value) -> Result<Value, String> {
+        if !auswahl.is_object() {
+            return Err("Die Dateiauswahl ist ungültig.".into());
+        }
+        self.request(
+            "POST",
+            "checkout",
+            json!({"checkin_id":identifier(checkin_id)?,"auswahl":auswahl}),
+        )
+    }
+    /// GET abholfach → abholfaecher {archive:[{checkin_id,ablauf,sha256}]}.
+    /// Zugriff wie Checkout: aktuelle Geräte-Challenge, nur eigene Person.
+    pub fn abholfach(&self) -> Result<Value, String> {
+        self.request("GET", "abholfach", Value::Null)
+    }
+    /// GET abholfach/:checkin_id → abholfach {archiv: verschlüsselter Umschlag}.
+    /// Keine Bestätigung vor Entschlüsselung, Hashprüfung und lokalem Rückspielen.
+    pub fn abholfach_holen(&self, checkin_id: &str) -> Result<Value, String> {
+        self.request(
+            "GET",
+            &format!("abholfach/{}", box_id(checkin_id)?),
+            Value::Null,
+        )
+    }
+    /// POST abholfach/:checkin_id/erhalten {sha256} → abholfach_erhalten.
+    /// Löscht das Abholfach! Nicht automatisch wiederholt.
+    pub fn abholfach_erhalten(&self, checkin_id: &str, sha256: &str) -> Result<Value, String> {
+        if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Die Archiv-Prüfsumme ist ungültig.".into());
+        }
+        self.request(
+            "POST",
+            &format!("abholfach/{}/erhalten", box_id(checkin_id)?),
+            json!({"sha256":sha256}),
+        )
+    }
     pub fn erhalten(&self, checkout_id: &str, sha256: &str) -> Result<Value, String> {
         if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("Die Archiv-Prüfsumme ist ungültig.".into());
@@ -362,6 +406,18 @@ impl Empfang {
     pub fn status(&self) -> Result<Value, String> {
         self.request("GET", "status", Value::Null)
     }
+}
+
+// Genau die ID-Grammatik der Abholfach-Routen im Empfang (kein neuer Vertrag).
+fn box_id(id: &str) -> Result<&str, String> {
+    if id.len() != 36
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-')
+    {
+        return Err("Die Abholfach-ID ist ungültig.".into());
+    }
+    Ok(id)
 }
 
 #[cfg(test)]
@@ -635,6 +691,89 @@ mod tests {
         };
         assert_eq!(c.status().unwrap()["typ"], "empfang_status");
         thread.join().unwrap();
+    }
+    #[test]
+    fn selection_and_boxes_follow_routes_with_fresh_device_challenges() {
+        use std::io::{BufRead, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let expected_origin = origin.clone();
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let verifying = key.verifying_key();
+        let id = "12345678-1234-1234-1234-123456789abc";
+        let selection = json!({"zusaetzlich":["Projekte/Film/gross.mov"],"ausschliessen":["Ergebnisse/privat.md"],"gross_bestaetigt":true});
+        let expected_selection = selection.clone();
+        let server = std::thread::spawn(move || {
+            for (i, (method, route, expected, packet, status)) in [
+                ("POST", "checkout".to_owned(), json!({"checkin_id":"active","auswahl":expected_selection,"protokoll":1}), json!({"protokoll":1,"typ":"checkout_bereit"}), 200),
+                ("GET", "abholfach".to_owned(), Value::Null, json!({"protokoll":1,"typ":"abholfaecher","archive":[{"checkin_id":id,"ablauf":1900000000000u64,"sha256":"a".repeat(64)}]}), 200),
+                ("GET", format!("abholfach/{id}"), Value::Null, json!({"protokoll":1,"typ":"abholfach","archiv":{"checkin_id":id,"chiffrat":"fixture"}}), 200),
+                ("POST", format!("abholfach/{id}/erhalten"), json!({"protokoll":1,"sha256":"a".repeat(64)}), json!({"protokoll":1,"typ":"abholfach_erhalten"}), 200),
+                ("GET", format!("abholfach/{id}"), Value::Null, json!({"protokoll":1,"typ":"fehler","code":"unbekannt"}), 404),
+            ].into_iter().enumerate() {
+                for challenge in [true, false] {
+                    let (stream, _) = listener.accept().unwrap();
+                    stream.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+                    let mut r = std::io::BufReader::new(stream);
+                    let mut start = String::new();
+                    r.read_line(&mut start).unwrap();
+                    let mut headers = std::collections::HashMap::new();
+                    loop {
+                        let mut line = String::new();
+                        r.read_line(&mut line).unwrap();
+                        if line == "\r\n" { break; }
+                        let (k,v) = line.split_once(':').unwrap();
+                        headers.insert(k.to_ascii_lowercase(), v.trim().to_owned());
+                    }
+                    let mut bytes = vec![0; headers.get("content-length").map(|n| n.parse().unwrap()).unwrap_or(0)];
+                    r.read_exact(&mut bytes).unwrap();
+                    let body = if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap() };
+                    let cid = format!("cid-{i}");
+                    let (packet, status) = if challenge {
+                        assert!(start.starts_with("POST /v1/empfang/challenge "));
+                        assert_eq!(body, json!({"checkin_id":"active","protokoll":1}));
+                        (json!({"protokoll":1,"typ":"challenge","challenge_id":cid,"nonce":"fixture-nonce"}), 200)
+                    } else {
+                        assert!(start.starts_with(&format!("{method} /v1/empfang/{route} ")));
+                        assert_eq!(body, expected);
+                        assert_eq!(headers["x-cocopi-checkin"], "active");
+                        assert_eq!(headers["x-cocopi-challenge"], cid);
+                        let sig: [u8; 64] = B64.decode(&headers["x-cocopi-signatur"]).unwrap().try_into().unwrap();
+                        verifying.verify_strict(format!("cocopi-v1-empfang\n{expected_origin}\nactive\n{cid}\nfixture-nonce").as_bytes(), &Signature::from_bytes(&sig)).unwrap();
+                        (packet.clone(), status)
+                    };
+                    let text = packet.to_string();
+                    write!(r.get_mut(), "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",text.len()).unwrap();
+                }
+            }
+        });
+        let c = Empfang {
+            origin,
+            agent: agent(false),
+            auth: Some(("active".into(), key)),
+        };
+        assert_eq!(
+            c.checkout_mit_auswahl("active", selection).unwrap()["typ"],
+            "checkout_bereit"
+        );
+        assert_eq!(c.abholfach().unwrap()["archive"][0]["checkin_id"], id);
+        assert_eq!(
+            c.abholfach_holen(id).unwrap()["archiv"]["chiffrat"],
+            "fixture"
+        );
+        assert_eq!(
+            c.abholfach_erhalten(id, &"a".repeat(64)).unwrap()["typ"],
+            "abholfach_erhalten"
+        );
+        assert!(
+            c.abholfach_holen(id)
+                .unwrap_err()
+                .starts_with("[unbekannt]")
+        );
+        assert!(c.checkout_mit_auswahl("active", Value::Null).is_err());
+        assert!(c.abholfach_holen("../escape").is_err());
+        assert!(c.abholfach_erhalten(id, "falsch").is_err());
+        server.join().unwrap();
     }
     #[test]
     fn client_local_mock_201_202_checkout_and_limits() {
