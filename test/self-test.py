@@ -138,7 +138,7 @@ for arg in "$@"; do
     [[ $arg != --test ]] || [[ ! -f "$PWD/fail-mobile" ]] || exit 9
     [[ $arg != empfang/test/*.mjs && $arg != test/sync.mjs ]] || [[ ! -f "$PWD/fail-i2" ]] || exit 9
 done
-if [[ "$*" == *test/i2/* && -f "$PWD/skip-i2" ]]; then printf '# skip 1\\n# todo 1\\n'; fi
+if [[ "$*" == *test/i2/* && -f "$PWD/skip-i2" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
 exit 0
 ''')
         for repository in (worktree, hub):

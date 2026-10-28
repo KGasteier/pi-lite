@@ -53,7 +53,7 @@ run() {
     if (( rc == 0 )); then
         if [[ "$id" == js-tests ]] && grep -q '^KNOWN ' "$logs/$id.log"; then
             printf 'KNOWN %s | bekannte Basisfehler, keine neuen Fehler; log=%s\n' "$id" "$logs/$id.log"
-        elif [[ "$id" == i2-* ]] && grep -Eq '^# (skip|todo) [1-9][0-9]*$' "$logs/$id.log"; then
+        elif [[ "$id" == i2-* ]] && grep -Eq '^# (skipped|todo) [1-9][0-9]*$' "$logs/$id.log"; then
             printf 'SKIP %s | I2-Abnahme unvollständig; log=%s\n' "$id" "$logs/$id.log"
         elif [[ "$id" == fmt ]]; then
             printf 'PASS %s | %s log=%s\n' "$id" "$(head -n 1 "$logs/$id.log")" "$logs/$id.log"

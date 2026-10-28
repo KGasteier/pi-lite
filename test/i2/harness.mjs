@@ -24,15 +24,15 @@ export async function request(base, route, { body, token, headers = {}, method =
       ...(binary ? { 'content-type': 'application/gzip' } : { 'content-type': 'application/json' }), ...headers },
     ...(method === 'GET' ? {} : { body: binary ? body : JSON.stringify({ protokoll: 1, ...body }) }) });
 }
-export async function login(base, device, key) {
+export async function login(base, device, key, slot = 'account01') {
   const challenge = await (await request(base, '/v1/anmelden/challenge', { body: { geraet_id: device } })).json();
-  const payload = `cocopi-v1-anmelden\n${new URL(base).origin}\naccount01\n${device}\n${challenge.challenge_id}\n${challenge.nonce}`;
+  const payload = `cocopi-v1-anmelden\n${new URL(base).origin}\n${slot}\n${device}\n${challenge.challenge_id}\n${challenge.nonce}`;
   const r = await request(base, '/v1/anmelden', { body: { challenge_id: challenge.challenge_id,
     signatur: crypto.sign(null, Buffer.from(payload), key.privateKey).toString('base64url') } });
   if (r.status !== 200) throw new Error('Testgerät konnte sich nicht anmelden: HTTP ' + r.status);
   return (await r.json()).zugangstoken;
 }
-export async function syncFixture(t) {
+export async function syncFixture(t, { empty = false, slot = 'account01' } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cocopi-i2-sync-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const { createSync, handleSync } = await importHub('lib/sync-v1.mjs');
@@ -57,7 +57,8 @@ export async function syncFixture(t) {
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
   const base = `http://127.0.0.1:${server.address().port}`;
-  devices = new DeviceStore({ slot: 'account01', hubUrl: base });
+  devices = new DeviceStore({ slot, hubUrl: base });
+  if (empty) return { tmp, roots, base, sync, devices };
   const owner = identity();
   const invitation = devices.issue('e', { person: 'Testperson' });
   const registered = devices.redeem({ art: 'e', code: invitation.code, pubkey: owner.pubkey, geraeteart: 'desktop' }, 'test-local');
