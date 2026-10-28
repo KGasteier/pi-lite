@@ -274,17 +274,11 @@ impl Empfang {
             .map_err(|_| "Der Empfang hat keine gültige Antwort gesendet.")?;
         // N9 ist eine signierte Protokollhülle ohne typ; Integritätsprüfung
         // erfolgt in seminar_verzeichnis, bevor irgendetwas daraus verwendet wird.
-        if method == "GET"
+        if !(method == "GET"
             && path == "seminar"
             && (200..300).contains(&status)
-            && value["typ"] != "fehler"
+            && value["typ"] != "fehler")
         {
-            if value["protokoll"] != 1 {
-                return Err(
-                    "Das Seminarverzeichnis verwendet eine andere Protokollversion.".into(),
-                );
-            }
-        } else {
             check_packet(&value)?;
         }
         if !(200..300).contains(&status) || value["typ"] == "fehler" {
