@@ -13,14 +13,17 @@ if [[ $MODE == apply ]]; then
     [[ ${COCOPI_D_R1:-} == freigegeben ]] || fail 'D-R1 fehlt. Nach Freigabe COCOPI_D_R1=freigegeben setzen.'
     [[ ${COCOPI_POOL_ABNAHME:-} == bestaetigt ]] || fail 'S3/S7-Integration (sudo, Leerbeleg, Poolstatus, Archiv) nicht abgenommen; kein Deployment.'
     [[ $BASE == /usr/local/lib/cocopi-r2 ]] || fail 'Nur die geprüfte Kopie /usr/local/lib/cocopi-r2 ausführen.'
-    root_controlled "$BASE/einrichten.sh" && root_controlled "$BASE/cocopi-slotctl" || fail 'Skripte nicht rootverwaltet.'
+    root_controlled "$BASE/einrichten.sh" && root_controlled "$BASE/cocopi-slotctl" &&
+        root_controlled "$BASE/empfang-env-check.py" && root_controlled "$BASE/epoch-read.py" || fail 'Skripte nicht rootverwaltet.'
     require_commands visudo useradd getent systemctl python3 findmnt quotaon openssl
     check_mounts
     check_hub_contract
     [[ ${HUB_EMPFANG_PUBKEY:-} =~ ^[A-Za-z0-9_-]{43}$ ]] || fail 'Empfang-Pubkey fehlt (raw/base64url, 43 Zeichen).'
     root_controlled /etc/cocopi/empfang.env || fail 'Empfang-Konfiguration fehlt. AUTHENTIK.md abarbeiten.'
-    root_controlled "$HUB_DIR/empfang/empfang.mjs" || fail 'Geprüfter Empfangseinstieg fehlt; mit S7 abstimmen.'
+    root_controlled "$HUB_DIR/empfang/empfang.mjs" || fail 'Geprüfter Empfangseinstieg pi-hub/empfang/empfang.mjs fehlt.'
+    [[ $HUB_DIR == /opt/cocopi/pi-hub && $HUB_NODE == /usr/bin/node ]] || fail 'Empfang-Unit erwartet /opt/cocopi/pi-hub und /usr/bin/node; Abweichung gesondert abstimmen.'
     [[ $(stat -c '%a' /etc/cocopi/empfang.env) == 600 ]] || fail 'empfang.env muss root:root 0600 sein.'
+    python3 "$BASE/empfang-env-check.py" /etc/cocopi/empfang.env "$SLOT_LIST"
     visudo -cf "$BASE/sudoers/cocopi-slotctl" >/dev/null
     # Noch keine Änderung: alte aktive/aktivierte User-Units blockieren Migration.
     for slot in "${SELECTED[@]}"; do
@@ -34,7 +37,9 @@ if [[ $MODE == apply ]]; then
         fi
     done
 else
-    note 'PLAN: Quoten, Hubvertrag, OIDC-Werte, Schlüsselfingerabdruck und alte Units prüfen; bei Unklarheit stoppen.'
+    note 'PLAN: Quoten, Hubvertrag, OIDC-Werte, Schlüsselfingerabdruck, Epochen und alte Units prüfen; bei Unklarheit stoppen.'
+    note "PLAN: Empfangseinstieg $HUB_DIR/empfang/empfang.mjs; /etc/cocopi/empfang.env ohne Shell-Auswertung prüfen."
+    note 'PLAN: EMPFANG_STATE, EMPFANG_PORT, EMPFANG_SLOTS, EMPFANG_ORIGIN, EMPFANG_OIDC_ISSUER, EMPFANG_OIDC_CLIENT_ID, EMPFANG_SLOTCTL, EMPFANG_TAGESENDE, EMPFANG_EPOCHEN_DIR.'
 fi
 step 2 'Empfangskonto und private Ablage'
 if [[ $MODE == dry-run ]]; then
@@ -61,7 +66,7 @@ managed_dir /etc/sudoers.d 750 root root
 managed_file /usr/local/sbin/cocopi-slotctl 755 root root < "$BASE/cocopi-slotctl"
 managed_file /etc/sudoers.d/cocopi-slotctl 440 root root < "$BASE/sudoers/cocopi-slotctl"
 [[ $MODE != apply ]] || visudo -cf /etc/sudoers >/dev/null
-step 4 'Poolkonten, Teilquoten und System-Hubs'
+step 4 'Poolkonten, Teilquoten, Epochen und System-Hubs'
 if [[ $MODE == dry-run ]]; then
     bash "$BASE/provision.sh" --dry-run --slots "$SLOT_LIST"
 else
@@ -75,6 +80,7 @@ managed_file /etc/logrotate.d/cocopi 644 root root < "$BASE/logrotate/cocopi"
 note 'Nur inhaltsfreie Betriebsmetadaten; Empfang muss Abholfach-Löschung nach 72 h selbst erzwingen (S7).'
 step 6 'Proxy bewusst wählen (separate Netzfreigabe)'
 note 'Caddy-Vorlagen unter proxy/ prüfen. Alternative: tailscale-serve.sh zeigt nur den TLS-Proxyweg.'
+note 'N5: Belegung, Freigabe und sync/dienst sind direkt und unter allen zehn Slotpräfixen gesperrt.'
 note 'Kein Proxy wird hier installiert, gestartet, umkonfiguriert oder öffentlich geöffnet.'
 step 7 'Leeren und erstmaliger Start nur nach bestätigtem leerem Bestand'
 if [[ $MODE == apply ]]; then

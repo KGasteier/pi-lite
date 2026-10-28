@@ -7,6 +7,8 @@ Die Vorlagen sind kein nachgewiesener Produktivbetrieb. Zuerst
 [`DATENSCHUTZ.md`](DATENSCHUTZ.md) lesen. Ein alter I1-Dienst darf nicht ungefragt
 migriert oder gestoppt werden.
 
+[`SCHNELLSTART.md`](SCHNELLSTART.md) enthält die sechs Einstiegsbefehle.
+
 ## Diesen Prompt in eine eigene pi-Sitzung kopieren
 
 ```text
@@ -46,7 +48,11 @@ Prüfe danach gemeinsam die noch offenen S3/S7-Integrationsnachweise:
   sudo-Wrapper; es akzeptiert den Löschbeleg VOR Hubstart, nicht ein erneutes
   Live-pruefen nach Start; aktuelle inhaltsfreie Poolstatusprojektion vorhanden;
   authentik-PKCE und tatsächlicher Callback-Pfad stimmen; Caddy und visudo haben
-  die exakten Dateien validiert. Fehlt ein Nachweis: STOPP, keine Freigabeflags
+  die exakten Dateien validiert; N3-Replaytest nach Leeren ist grün. Empfang liest
+  EMPFANG_EPOCHEN_DIR=/var/lib/cocopi/slots, Hub verlangt
+  HUB_EPOCHE_DATEI=/var/lib/cocopi/slots/accountNN.epoche. Belegung und Freigabe
+  enthalten die aktuelle Epoche. Fehlende Datei ist im Betrieb ein Fehler, nicht 0.
+  Fehlt ein Nachweis: STOPP, keine Freigabeflags
   setzen. „bestaetigt“ ist kein Ersatz für einen Test.
 
 Erst nach menschlicher D-R1-Freigabe und dokumentiertem Teststand darf eine
@@ -56,6 +62,24 @@ nie sudo direkt auf Skripte im beschreibbaren Worktree anwenden. Lege keine
 Providerkonfiguration oder persönliche Sitzungen ins Skelett. Bei bestehenden
 Empfangsdateien niemals Vorlage darüberkopieren. AUTHENTIK.md Schritt für Schritt.
 Den Empfangsschlüssel-Initialstart gesondert mit S7 klären und freigeben.
+Der gemergte Empfangseinstieg ist /opt/cocopi/pi-hub/empfang/empfang.mjs
+(nicht empfang/server.mjs). In /etc/cocopi/empfang.env exakt setzen:
+  EMPFANG_PORT=8800
+  EMPFANG_STATE=/var/lib/cocopi-empfang
+  EMPFANG_SLOTS=account01,account02
+  EMPFANG_ORIGIN=https://NAME
+  EMPFANG_OIDC_ISSUER=<exakter HTTPS-Issuer inklusive Pfad>
+  EMPFANG_OIDC_CLIENT_ID=<öffentliche Client-ID>
+  EMPFANG_SLOTCTL=/usr/local/lib/cocopi-r2/slotctl-empfang
+  EMPFANG_TAGESENDE=23:30
+  EMPFANG_EPOCHEN_DIR=/var/lib/cocopi/slots
+Keine zusätzlichen erfundenen EMPFANG_*-Schlüssel, keine Shell-Ausdrücke. Die
+Prüfung in einrichten.sh liest nur Daten und zeigt keine Werte an. Die Namen
+stammen aus S7-Code, nicht aus älteren Entwürfen; Epochen-Einbindung im Hub und
+Empfang muss K vor Deployment gemeinsam integrieren und nachweisen.
+Neue Konten erhalten eine root:root-Datei 0644 mit Epoche 0. Vorhandene Zähler
+bleiben unverändert. Fehlende Bestandsdateien niemals einfach mit 0 ersetzen:
+Check-ins stoppen, Freigaben/Replayrisiko prüfen, Migration gesondert bestätigen.
 
 Zeige vor der Ausführung nochmals:
   bash /usr/local/lib/cocopi-r2/einrichten.sh --dry-run --slots account01,account02
@@ -66,7 +90,9 @@ geprüften öffentlichen 43-Zeichen-Schlüssel ersetzen, niemals privaten Schlü
 
 Proxy separat wählen: Caddy-TLS ODER Tailscale-TLS vor lokalem Caddy. Nie direkt
 Port 8800 oder Slotports an tailscale serve geben. Keine existierende
-Serve-Konfiguration überschreiben. Caddy/visudo erst validieren. Jede notwendige
+Serve-Konfiguration überschreiben. N5: /v1/belegung, /v1/freigabe und
+/v1/sync/dienst/* sind direkt UND mit /slot/accountNN-Präfix zu sperren.
+Caddy/visudo erst validieren. Jede notwendige
 Installation/Netzänderung erneut mit Einzel-„ja“ bestätigen, niemals Funnel.
 Keine realen Dateien oder KI-Aufrufe zur Abnahme.
 
@@ -77,7 +103,7 @@ inhaltsfreie hallo- sowie absichtlich ungültige POST-Anfragen an den expliziten
 HTTPS-Proxy. Frage ein neues ja vor genau diesem sudo (NAME ersetzen):
   sudo bash /usr/local/lib/cocopi-r2/admin-check.sh --ausfuehren --slots account01,account02 --proxy-url https://NAME
 
-Berichte Exitcode, echte Befunde, nicht geprüfte Teile und nächste Schritte.
+Berichte Exitcode, echte Befunde, sichtbare Epoche je Platz, nicht geprüfte Teile und nächste Schritte.
 „nicht geprüft“, fehlende Statusdatei, belegte/gesperrte Plätze, falsche Quoten
 oder nicht bestätigte 403-Sperren dürfen niemals als erfolgreiche Abnahme gelten.
 Die Zwei-Platz-Erprobung ersetzt keinen Test mit zehn Plätzen. Ende ohne Push,

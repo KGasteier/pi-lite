@@ -1,4 +1,6 @@
 # In eine einzige Site importieren; Reihenfolge bleibt durch route erhalten.
+# N5 gilt für beide TLS-Varianten einschließlich /slot/accountNN/.
+# Statischer Regressionsnachweis: test_proxy_templates_block_n5_before_routing.
 # Keine Access-Logs: URLs/Queries könnten Einmalcodes oder Kennungen enthalten.
 route {
     # Roh-URI: kein Encoding, Backslash, Pfadnormalisieren oder Doppelslash.

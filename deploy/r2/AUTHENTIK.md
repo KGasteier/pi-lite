@@ -113,6 +113,8 @@ UID-Wechsel gelesen; es ist kein Shellskript. Keine `export`-Anweisungen, kein
 `source`, keine Tokens am Terminal anzeigen. Setzen:
 
 - `EMPFANG_PORT=8800`, `EMPFANG_STATE=/var/lib/cocopi-empfang`.
+- `EMPFANG_EPOCHEN_DIR=/var/lib/cocopi/slots`: lesbare rootverwaltete Zähler,
+  nicht im Empfang-State oder in einem Slot-Home. Kein Schlüssel und kein Backup.
 - `EMPFANG_OIDC_ISSUER=<exakte HTTPS-Issuer-URL>`.
 - `EMPFANG_OIDC_CLIENT_ID=<öffentliche Client-ID>`.
 - `EMPFANG_ORIGIN=<öffentliche HTTPS-Origin ohne Pfad>`.
@@ -127,6 +129,13 @@ Ed25519-Schlüssel aus geprüftem inhaltsfreiem `/v1/empfang/hallo` entnehmen un
 Fingerprint unabhängig bestätigen; exakt diesen **raw/base64url, 43 Zeichen** als
 `HUB_EMPFANG_PUBKEY` in `/etc/cocopi/hub-accountNN.env` setzen. Jede Hubumgebung
 enthält `HUB_ROOTS=/home/accountNN/arbeit`, loopback Host und eindeutigen Port.
+Die System-Unit und Hubumgebung setzen zusätzlich
+`HUB_EPOCHE_DATEI=/var/lib/cocopi/slots/accountNN.epoche`. Nur ein neues Konto
+bekommt initial `0`; jeder Löschlauf erhöht atomar, Wiederholungen der Einrichtung
+setzen nie zurück. Fehlende Bestandszähler blockieren die Einrichtung.
+`empfang-env-check.py` prüft die oben genannten Variablennamen als Daten, ohne
+Shell-Auswertung oder Wertausgabe. Namen aus S7 `empfang/empfang.mjs` abgelesen:
+I2-Stand `689ea98`, Epochen-Ergänzung im I2b-S7-Arbeitsstand (noch separat zu integrieren).
 Private Empfangsschlüssel nie ins Slotkonto kopieren. Erster Schlüsselbootstrap
 vor allen Slotstarts ist ein gesonderter, freigegebener S7-Integrationsschritt.
 
