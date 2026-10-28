@@ -141,10 +141,28 @@ fn retry_idempotent<T>(
     }
 }
 
+/// Suchmetadaten, kein Beweis einer Peer-Rolle (dafür den Geräteausweis prüfen).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerzeichnisPerson {
+    pub person: String,
+    pub anzeige: String,
+    pub rolle: String,
+    pub net_pubkey: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Verzeichnis {
+    /// Unix-Sekunden, wie Ausweiszeiten (N4).
+    pub ausgestellt: u64,
+    pub personen: Vec<VerzeichnisPerson>,
+}
+
 pub struct Empfang {
     origin: String,
     agent: ureq::Agent,
     auth: Option<(String, ed25519_dalek::SigningKey)>,
+    empfang_pubkey: Option<String>,
 }
 impl Empfang {
     pub fn new(origin: &str) -> Result<Self, String> {
@@ -154,6 +172,7 @@ impl Empfang {
             origin: origin.to_string(),
             agent: agent(false),
             auth: None,
+            empfang_pubkey: None,
         })
     }
     fn request(&self, method: &str, path: &str, body: Value) -> Result<Value, String> {
@@ -185,29 +204,30 @@ impl Empfang {
         mut body: Value,
     ) -> Result<Value, RequestError> {
         let url = format!("{}/v1/empfang/{path}", self.origin);
-        let auth_headers =
-            if !matches!(path, "hallo" | "checkin" | "challenge") && !path.starts_with("warten/") {
-                if let Some((id, key)) = &self.auth {
-                    let c = self.request_once("POST", "challenge", json!({"checkin_id":id}))?;
-                    let cid = c["challenge_id"]
-                        .as_str()
-                        .ok_or("Die Anmeldeprüfung fehlt.")?;
-                    let nonce = c["nonce"].as_str().ok_or("Die Anmeldeprüfung fehlt.")?;
-                    let payload = super::login_payload(&self.origin, "empfang", id, cid, nonce)?
-                        .replacen("cocopi-v1-anmelden", "cocopi-v1-empfang", 1)
-                        .replacen("\nempfang\n", "\n", 1);
-                    use ed25519_dalek::Signer;
-                    Some((
-                        id.clone(),
-                        cid.to_string(),
-                        B64.encode(key.sign(payload.as_bytes()).to_bytes()),
-                    ))
-                } else {
-                    None
-                }
+        let auth_headers = if !matches!(path, "hallo" | "checkin" | "challenge" | "nonce")
+            && !path.starts_with("warten/")
+        {
+            if let Some((id, key)) = &self.auth {
+                let c = self.request_once("POST", "challenge", json!({"checkin_id":id}))?;
+                let cid = c["challenge_id"]
+                    .as_str()
+                    .ok_or("Die Anmeldeprüfung fehlt.")?;
+                let nonce = c["nonce"].as_str().ok_or("Die Anmeldeprüfung fehlt.")?;
+                let payload = super::login_payload(&self.origin, "empfang", id, cid, nonce)?
+                    .replacen("cocopi-v1-anmelden", "cocopi-v1-empfang", 1)
+                    .replacen("\nempfang\n", "\n", 1);
+                use ed25519_dalek::Signer;
+                Some((
+                    id.clone(),
+                    cid.to_string(),
+                    B64.encode(key.sign(payload.as_bytes()).to_bytes()),
+                ))
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
         let mut response = if method == "GET" {
             let mut req = self.agent.get(&url);
             if let Some((id, cid, sig)) = &auth_headers {
@@ -252,7 +272,21 @@ impl Empfang {
             })?;
         let value: Value = serde_json::from_str(&text)
             .map_err(|_| "Der Empfang hat keine gültige Antwort gesendet.")?;
-        check_packet(&value)?;
+        // N9 ist eine signierte Protokollhülle ohne typ; Integritätsprüfung
+        // erfolgt in seminar_verzeichnis, bevor irgendetwas daraus verwendet wird.
+        if method == "GET"
+            && path == "seminar"
+            && (200..300).contains(&status)
+            && value["typ"] != "fehler"
+        {
+            if value["protokoll"] != 1 {
+                return Err(
+                    "Das Seminarverzeichnis verwendet eine andere Protokollversion.".into(),
+                );
+            }
+        } else {
+            check_packet(&value)?;
+        }
         if !(200..300).contains(&status) || value["typ"] == "fehler" {
             return Err(RequestError::Dauerhaft(packet_error(&value)));
         }
@@ -279,6 +313,8 @@ impl Empfang {
     /// Gerätegebundene Empfangsanfragen nutzen je eine frische Challenge, keinen Bearer.
     /// Nach geprüftem Check-in automatisch durch `uebernehmen` eingerichtet.
     pub fn anmelden(&mut self, checkin_id: &str, key: &DeviceKey) -> Result<(), String> {
+        // Ein neuer Auth-Kontext übernimmt keinen Pin einer früheren Belegung.
+        self.empfang_pubkey = None;
         self.auth = Some((identifier(checkin_id)?.to_string(), key.signing.clone()));
         Ok(())
     }
@@ -346,7 +382,82 @@ impl Empfang {
                 .as_str()
                 .ok_or("Die Check-in-ID fehlt.")?,
             key,
-        )
+        )?;
+        self.empfang_pubkey = Some(pubkey.to_owned());
+        Ok(())
+    }
+    /// Server-nonce für genau diesen Ed25519-Geräteschlüssel; vor Browserstart
+    /// abrufen, danach an `oidc::Login::begin_with_nonce` weitergeben. Kein Retry.
+    pub fn nonce(&self, geraet_pubkey: &str) -> Result<String, String> {
+        let bytes: [u8; 32] = B64
+            .decode(geraet_pubkey)
+            .map_err(|_| "Der öffentliche Geräteschlüssel ist ungültig.")?
+            .try_into()
+            .map_err(|_| "Der öffentliche Geräteschlüssel ist ungültig.")?;
+        VerifyingKey::from_bytes(&bytes)
+            .map_err(|_| "Der öffentliche Geräteschlüssel ist ungültig.")?;
+        let v = self.request("POST", "nonce", json!({"geraet_pubkey":geraet_pubkey}))?;
+        let nonce = v["nonce"]
+            .as_str()
+            .ok_or("Der Empfang hat keine Anmeldeprüfung gesendet.")?;
+        super::oidc::validate_nonce(nonce)?;
+        Ok(nonce.to_owned())
+    }
+    /// Alle ≤ 60 s aus dem Worker aufrufen, solange Desktop ODER Handy am Hub
+    /// verbunden sind; beim sauberen Trennen false. Keine automatische Wiederholung.
+    pub fn aktiv(&self, verbunden: bool) -> Result<(), String> {
+        self.require_auth()?;
+        let v = self.request("POST", "aktiv", json!({"verbunden":verbunden}))?;
+        if v["typ"] != "aktiv_bestaetigt" {
+            return Err("Der Empfang hat die Verbindung nicht bestätigt.".into());
+        }
+        Ok(())
+    }
+    fn require_auth(&self) -> Result<(), String> {
+        if self.auth.is_none() {
+            return Err("Bitte checke zuerst am Empfang ein.".into());
+        }
+        Ok(())
+    }
+    /// Verzeichnis nur nach `uebernehmen` (bestätigter Pin). Signatur über das
+    /// gesamte flache N9-Paket ohne signatur, einschließlich protokoll.
+    /// Die Rollen sind Suchmetadaten: niemals Mitsteuerrechte daraus ableiten.
+    pub fn seminar_verzeichnis(&self) -> Result<Verzeichnis, String> {
+        self.require_auth()?;
+        let pin = self
+            .empfang_pubkey
+            .as_deref()
+            .ok_or("Bestätige zuerst den Empfangsschlüssel beim Check-in.")?;
+        let packet = self.request("GET", "seminar", Value::Null)?;
+        Self::pruefen_verzeichnis(&packet, pin)
+    }
+    fn pruefen_verzeichnis(packet: &Value, pin: &str) -> Result<Verzeichnis, String> {
+        let signed = verify_signed(packet, pin)?;
+        if signed["protokoll"] != 1 {
+            return Err("Das Seminarverzeichnis verwendet eine andere Protokollversion.".into());
+        }
+        let v: Verzeichnis = serde_json::from_value(signed["verzeichnis"].clone())
+            .map_err(|_| "Das Seminarverzeichnis ist unvollständig.")?;
+        if v.personen.len() > 1000
+            || v.ausgestellt == 0
+            || v.personen.iter().any(|p| {
+                p.person.is_empty()
+                    || p.person.len() > 256
+                    || p.person.chars().any(char::is_control)
+                    || p.anzeige.trim().is_empty()
+                    || p.anzeige.len() > 256
+                    || p.anzeige.chars().any(char::is_control)
+                    || !matches!(p.rolle.as_str(), "seminarleitung" | "teilnehmende" | "gast")
+                    || p.net_pubkey.len() != 64
+                    || !p
+                        .net_pubkey
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+        {
+            return Err("Das Seminarverzeichnis enthält ungültige Kontakte.".into());
+        }
+        Ok(v)
     }
     pub fn checkout(&self, checkin_id: &str) -> Result<Value, String> {
         self.request(
@@ -648,6 +759,9 @@ mod tests {
         client.uebernehmen(&packet, &mut key, &pk, now).unwrap();
         assert_eq!(key.geraet_id.as_deref(), Some("test-geraet"));
         assert!(client.auth.is_some());
+        assert_eq!(client.empfang_pubkey.as_deref(), Some(pk.as_str()));
+        client.anmelden("another", &key).unwrap();
+        assert!(client.empfang_pubkey.is_none());
         std::fs::remove_dir_all(dir).unwrap();
     }
     fn random_test_id() -> String {
@@ -706,6 +820,7 @@ mod tests {
             origin,
             agent: agent(false),
             auth: Some(("test-checkin".into(), key)),
+            empfang_pubkey: None,
         };
         assert_eq!(c.status().unwrap()["typ"], "empfang_status");
         thread.join().unwrap();
@@ -769,6 +884,7 @@ mod tests {
             origin,
             agent: agent(false),
             auth: Some(("active".into(), key)),
+            empfang_pubkey: None,
         };
         assert_eq!(
             c.checkout_mit_auswahl("active", selection).unwrap()["typ"],
@@ -792,6 +908,170 @@ mod tests {
         assert!(c.abholfach_holen("../escape").is_err());
         assert!(c.abholfach_erhalten(id, "falsch").is_err());
         server.join().unwrap();
+    }
+    #[test]
+    fn nonce_activity_and_signed_directory_use_fresh_challenges() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let signer = SigningKey::from_bytes(&[12; 32]);
+        let pin = B64.encode(signer.verifying_key().as_bytes());
+        let device = SigningKey::from_bytes(&[13; 32]);
+        let pubkey = B64.encode(device.verifying_key().as_bytes());
+        let expected_pubkey = pubkey.clone();
+        let expected_origin = origin.clone();
+        let verifying = device.verifying_key();
+        let server = std::thread::spawn(move || {
+            let mut directory = json!({"protokoll":1,"verzeichnis":{"ausgestellt":1793232000,"personen":[{"person":"pid-mira","anzeige":"Mira","rolle":"teilnehmende","net_pubkey":"a".repeat(64)}]}});
+            directory["signatur"] = json!(
+                B64.encode(
+                    signer
+                        .sign(canonical_json(&directory).unwrap().as_bytes())
+                        .to_bytes()
+                )
+            );
+            for (i, path) in ["nonce", "aktiv", "aktiv", "seminar", "seminar", "seminar"]
+                .into_iter()
+                .enumerate()
+            {
+                for challenge in if i == 0 {
+                    vec![false]
+                } else {
+                    vec![true, false]
+                } {
+                    let (stream, _) = listener.accept().unwrap();
+                    stream
+                        .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                        .unwrap();
+                    let mut r = std::io::BufReader::new(stream);
+                    let req = read_mock_request(&mut r);
+                    let (head, body) = req.split_once("\r\n\r\n").unwrap();
+                    let headers: std::collections::HashMap<_, _> = head
+                        .lines()
+                        .skip(1)
+                        .filter_map(|l| {
+                            l.split_once(':')
+                                .map(|(k, v)| (k.to_ascii_lowercase(), v.trim().to_owned()))
+                        })
+                        .collect();
+                    let body: Value = if body.is_empty() {
+                        Value::Null
+                    } else {
+                        serde_json::from_str(body).unwrap()
+                    };
+                    let cid = format!("cid-{i}");
+                    let response = if challenge {
+                        assert!(head.starts_with("POST /v1/empfang/challenge "));
+                        assert_eq!(body, json!({"protokoll":1,"checkin_id":"active"}));
+                        json!({"protokoll":1,"typ":"challenge","challenge_id":cid,"nonce":"device-challenge"})
+                    } else if i == 0 {
+                        assert!(head.starts_with("POST /v1/empfang/nonce "));
+                        assert_eq!(body, json!({"protokoll":1,"geraet_pubkey":expected_pubkey}));
+                        assert!(!headers.contains_key("x-cocopi-checkin"));
+                        json!({"protokoll":1,"typ":"nonce","nonce":"server-geraetegebundene-nonce-0123456789","gueltig_bis":1793232060000u64})
+                    } else {
+                        let method = if path == "seminar" { "GET" } else { "POST" };
+                        assert!(head.starts_with(&format!("{method} /v1/empfang/{path} ")));
+                        assert_eq!(headers["x-cocopi-checkin"], "active");
+                        assert_eq!(headers["x-cocopi-challenge"], cid);
+                        let sig: [u8; 64] = B64
+                            .decode(&headers["x-cocopi-signatur"])
+                            .unwrap()
+                            .try_into()
+                            .unwrap();
+                        verifying.verify_strict(format!("cocopi-v1-empfang\n{expected_origin}\nactive\n{cid}\ndevice-challenge").as_bytes(), &Signature::from_bytes(&sig)).unwrap();
+                        if path == "aktiv" {
+                            assert_eq!(body, json!({"protokoll":1,"verbunden":i == 1}));
+                            json!({"protokoll":1,"typ":"aktiv_bestaetigt"})
+                        } else {
+                            assert_eq!(body, Value::Null);
+                            let mut response = directory.clone();
+                            if i == 4 {
+                                response["verzeichnis"]["personen"][0]["rolle"] =
+                                    json!("seminarleitung");
+                            }
+                            if i == 5 {
+                                response.as_object_mut().unwrap().remove("signatur");
+                            }
+                            response
+                        }
+                    };
+                    let text = response.to_string();
+                    write!(
+                        r.get_mut(),
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                        text.len()
+                    )
+                    .unwrap();
+                }
+            }
+        });
+        let mut client = Empfang::new(&origin).unwrap();
+        assert!(client.aktiv(true).is_err());
+        assert!(client.seminar_verzeichnis().is_err());
+        // nonce selbst mit altem Auth-Kontext unauthentisiert abrufen.
+        client.auth = Some(("active".into(), device));
+        assert_eq!(
+            client.nonce(&pubkey).unwrap(),
+            "server-geraetegebundene-nonce-0123456789"
+        );
+        assert!(client.nonce("falsch").is_err());
+        assert!(client.seminar_verzeichnis().is_err()); // Pin fehlt, kein Netz.
+        client.empfang_pubkey = Some(pin);
+        client.aktiv(true).unwrap();
+        client.aktiv(false).unwrap();
+        let directory = client.seminar_verzeichnis().unwrap();
+        assert_eq!(directory.ausgestellt, 1793232000);
+        assert_eq!(directory.personen[0].person, "pid-mira");
+        assert_eq!(directory.personen[0].anzeige, "Mira");
+        assert_eq!(directory.personen[0].rolle, "teilnehmende");
+        assert_eq!(directory.personen[0].net_pubkey, "a".repeat(64));
+        assert!(client.seminar_verzeichnis().is_err());
+        assert!(client.seminar_verzeichnis().is_err());
+        server.join().unwrap();
+    }
+    #[test]
+    fn directory_rejects_wrong_pin_invalid_contact_and_legacy_unsigned_wrapper() {
+        let signer = SigningKey::from_bytes(&[11; 32]);
+        let pin = B64.encode(signer.verifying_key().as_bytes());
+        let sign = |mut v: Value| {
+            v["signatur"] = json!(
+                B64.encode(
+                    signer
+                        .sign(canonical_json(&v).unwrap().as_bytes())
+                        .to_bytes()
+                )
+            );
+            v
+        };
+        let packet = json!({"protokoll":1,"verzeichnis":{"ausgestellt":1793232000,"personen":[{"person":"mira","anzeige":"Mira","rolle":"teilnehmende","net_pubkey":"a".repeat(64)}]}});
+        let signed = sign(packet.clone());
+        assert!(Empfang::pruefen_verzeichnis(&signed, &pin).is_ok());
+        let other = B64.encode(SigningKey::from_bytes(&[10; 32]).verifying_key().as_bytes());
+        assert!(Empfang::pruefen_verzeichnis(&signed, &other).is_err());
+        for (field, value) in [
+            ("rolle", "root"),
+            ("person", ""),
+            ("anzeige", "\n"),
+            ("net_pubkey", "a"),
+            ("net_pubkey", &"A".repeat(64)),
+        ] {
+            let mut bad = packet.clone();
+            bad["verzeichnis"]["personen"][0][field] = json!(value);
+            assert!(
+                Empfang::pruefen_verzeichnis(&sign(bad), &pin).is_err(),
+                "{field}"
+            );
+        }
+        let mut bad = signed.clone();
+        bad["protokoll"] = json!(2);
+        assert!(Empfang::pruefen_verzeichnis(&bad, &pin).is_err());
+        // Alte N1-Hülle nur ohne unsignierte Extras lesbar.
+        let nested = json!({"inhalt":packet,"signatur":signed["signatur"]});
+        assert!(Empfang::pruefen_verzeichnis(&nested, &pin).is_ok());
+        let mut bad = nested;
+        bad["protokoll"] = json!(1);
+        assert!(Empfang::pruefen_verzeichnis(&bad, &pin).is_err());
     }
     #[test]
     fn client_local_mock_201_202_checkout_and_limits() {

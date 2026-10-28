@@ -239,6 +239,19 @@ fn redirect(
         .ok_or("Die Anmeldung enthält keine Bestätigung.".into())
 }
 
+pub(crate) fn validate_nonce(nonce: &str) -> Result<(), String> {
+    if !(16..=256).contains(&nonce.len())
+        || !nonce
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-._~".contains(&b))
+    {
+        return Err(
+            "Die Anmeldeprüfung des Empfangs ist ungültig. Starte die Anmeldung erneut.".into(),
+        );
+    }
+    Ok(())
+}
+
 pub struct Login {
     discovery: Discovery,
     client_id: String,
@@ -251,12 +264,26 @@ pub struct Login {
 }
 /// Nicht Debug/Clone: enthält Verifier und Nonce. Kein Öffnen eines Browsers im Backend.
 impl Login {
+    /// Kompatibilität für ältere Aufrufer. Für Empfang-Check-in ausschließlich
+    /// begin_with_nonce verwenden; eine lokale nonce ist nicht gerätegebunden.
     pub fn begin(
         discovery: Discovery,
         client_id: &str,
         scopes: &[&str],
         sha256: impl FnOnce(&[u8]) -> [u8; 32],
     ) -> Result<Self, String> {
+        Self::begin_with_nonce(discovery, client_id, scopes, &random()?, sha256)
+    }
+    /// Die frische, gerätegebundene nonce von `Empfang::nonce` unverändert in
+    /// Auth-URL und späteren Check-in-Nachweis übernehmen. Kein Browser-Autostart.
+    pub fn begin_with_nonce(
+        discovery: Discovery,
+        client_id: &str,
+        scopes: &[&str],
+        server_nonce: &str,
+        sha256: impl FnOnce(&[u8]) -> [u8; 32],
+    ) -> Result<Self, String> {
+        validate_nonce(server_nonce)?;
         if client_id.is_empty() || scopes.is_empty() || !scopes.contains(&"openid") {
             return Err("Für die Anmeldung fehlen Anbieterangaben.".into());
         }
@@ -273,7 +300,7 @@ impl Login {
         );
         let verifier = random()?;
         let state = random()?;
-        let nonce = random()?;
+        let nonce = server_nonce.to_owned();
         let challenge = pkce_challenge(&verifier, sha256)?;
         let query = [
             ("response_type", "code"),
@@ -418,6 +445,11 @@ mod tests {
         assert!(!valid_verifier(&"!".repeat(43)));
         assert_eq!(decode(&encode("a +ä&=")).unwrap(), "a +ä&=");
         assert!(parameters("state=a&state=b").is_err());
+        for bad in ["", "kurz", "angriff&nonce=ersatz", "mit\nsteuerzeichen"] {
+            assert!(validate_nonce(bad).is_err());
+        }
+        assert!(validate_nonce(&"a".repeat(257)).is_err());
+        assert!(validate_nonce("server-geraetegebundene-nonce-0123456789").is_ok());
     }
     #[test]
     fn local_discovery_browser_callback_token_exchange() {
@@ -466,8 +498,16 @@ mod tests {
             }
         });
         let d = Discovery::load(&issuer).unwrap();
-        let login = Login::begin(d, "cocopi", &["openid", "profile"], |_| [7; 32]).unwrap();
-        let expected_nonce = login.nonce.clone();
+        let login = Login::begin_with_nonce(
+            d,
+            "cocopi",
+            &["openid", "profile"],
+            "server-geraetegebundene-nonce-0123456789",
+            |_| [7; 32],
+        )
+        .unwrap();
+        let expected_nonce = "server-geraetegebundene-nonce-0123456789".to_owned();
+        assert_eq!(login.nonce, expected_nonce);
         let mut url = String::new();
         login
             .open_browser(|u| {
