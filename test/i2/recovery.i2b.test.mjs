@@ -48,6 +48,8 @@ test('Empfang-Neustart nach Hub-Vergabe vor Aktivierungsbestätigung verliert we
   } });
   const owner = identity(), first = await f.checkin({ sub: 'restart-person', owner });
   assert.ok(first.response.status >= 400);
+  assert.equal(signedRegistrations.length, 4, 'Erster Versuch plus höchstens drei Wiederholungen');
+  assert.deepEqual(f.delays, [1000, 3000, 9000], 'N2-Backoff exakt 1/3/9 Sekunden');
   const reserved = f.empfang.pool.status().belegungen;
   assert.equal(reserved.length, 1); assert.equal(reserved[0].zustand, 'reserviert');
   const id = reserved[0].checkin_id;
@@ -60,8 +62,7 @@ test('Empfang-Neustart nach Hub-Vergabe vor Aktivierungsbestätigung verliert we
   const recovered = f.empfang.pool.status().belegungen;
   assert.equal(recovered.length, 1); assert.equal(recovered[0].zustand, 'belegt');
   assert.equal(recovered[0].checkin_id, id);
-  assert.ok(signedRegistrations.length >= 2 && signedRegistrations.length <= 8, 'Je Aktivierung höchstens drei Wiederholungen nach verlorener Antwort');
-  assert.ok(f.delays.every(ms => [1000, 3000, 9000].includes(ms)), 'N2-Backoff nur 1/3/9 Sekunden');
+  assert.equal(signedRegistrations.length, 5, 'Nach Neustart genügt genau eine erneute Aktivierung');
   assert.ok(signedRegistrations.every(b => b === signedRegistrations[0]), 'Wiederholung muss byte-gleich signiert sein');
   const again = await f.checkin({ sub: 'restart-person', owner });
   assert.equal(again.response.status, 201); assert.equal(again.p.checkin_id, id);
