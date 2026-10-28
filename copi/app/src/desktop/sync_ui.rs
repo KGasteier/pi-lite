@@ -5,12 +5,51 @@ use checkin::Progress;
 impl Desktop {
     /// Vom geprüften Loopback-Callback des Empfang-Adapters aufgerufen.
     /// Niemals Token/Code im UI darstellen oder daraus eine Person ableiten.
+    /// Öffentliches Callback-API für die optionale Harness-Einbettung.
     pub fn auth_callback(&mut self, callback: AuthCallback) {
         if self.flow.stage == Stage::Browser && callback.attempt == self.flow.attempt {
             self.flow_call(Request::AuthCallback(callback));
         }
     }
     pub(super) fn flow_call(&mut self, request: Request) {
+        if matches!(request, Request::Checkin { .. }) && !self.demo && !self.api_configured {
+            // Einen existierenden Adapter niemals bei Wiederholung austauschen:
+            // ein verlorener Check-in könnte bereits einen Slot belegen.
+            if self
+                .flow_retry
+                .as_ref()
+                .is_some_and(|r| matches!(r, Request::Checkin { .. }))
+            {
+                self.error = Some("Der vorherige Check-in ist unklar. Erst abbrechen und Empfang prüfen; kein zweiter Platz wird angefordert.".into());
+                return;
+            }
+            if self.hub_url.trim().is_empty() || pi_backend::copi_config_dir().is_none() {
+                self.error = Some("Bestätige zuerst den Empfang unter Einstellungen › Verbindung. Es wurde nichts gestartet.".into());
+                self.flow.stage = Stage::Start;
+                return;
+            }
+            let config = flow_adapter::Config {
+                origin: self.hub_url.trim().into(),
+                issuer: self.oidc_issuer.trim().into(),
+                empfang_pubkey: self.empfang_pubkey.trim().into(),
+                archiv_pubkey: self.archiv_pubkey.trim().into(),
+                net_pubkey: String::new(),
+                device_name: self.device_name.clone(),
+                key_dir: pi_backend::copi_config_dir()
+                    .unwrap_or_default()
+                    .join("devices"),
+                sha256: None,
+            };
+            match flow_adapter::FlowAdapter::new(config) {
+                Ok(api) => self.set_api(Arc::new(api)),
+                Err(e) => {
+                    self.error = Some(e);
+                    self.flow_failed = true;
+                    self.flow.stage = Stage::Start;
+                    return;
+                }
+            }
+        }
         self.flow_generation += 1;
         let generation = self.flow_generation;
         self.flow_pending = true;
@@ -81,7 +120,7 @@ impl Desktop {
                                 if self.demo { ui.label("Vorschau · kein Browser wird geöffnet"); }
                                 else if ui.small_button("Anmeldung im Browser öffnen").clicked() {
                                     // Der Adapter liefert ausschließlich die geprüfte OIDC-URL.
-                                    if let Err(e) = pi_backend::cli::open_url(url) { self.error = Some(format!("Der Browser konnte nicht geöffnet werden. {e}")); }
+                                    if let Err(e) = self.api.open_browser(url) { self.error = Some(format!("Der Browser konnte nicht geöffnet werden. {e}")); }
                                 }
                             }
                             self.cancel_button(ui);
@@ -298,7 +337,16 @@ impl Desktop {
                 pinned: true,
             }];
             self.selected = Some("a".into());
-            self.messages = vec![ChatMessage::new("Mira", "Mach aus meiner Gliederung ein zweiseitiges Seminar-Handout. Noch nichts veröffentlichen."), ChatMessage::new("cocopi · R2", "Ich arbeite mit deiner freigegebenen Auswahl. Das Ergebnis bleibt auf R2, bis du es abholst.")];
+            self.messages = vec![
+                ChatMessage::new(
+                    "Mira",
+                    "Mach aus meiner Gliederung ein zweiseitiges Seminar-Handout. Noch nichts veröffentlichen.",
+                ),
+                ChatMessage::new(
+                    "cocopi · R2",
+                    "Ich arbeite mit deiner freigegebenen Auswahl. Das Ergebnis bleibt auf R2, bis du es abholst.",
+                ),
+            ];
         }
         true
     }

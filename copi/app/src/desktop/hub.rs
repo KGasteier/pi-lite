@@ -5,7 +5,7 @@ use super::{
 use pi_backend::hub_v1::{DeviceKey, HubV1};
 use serde_json::Value;
 use std::{
-    sync::{mpsc, Mutex},
+    sync::{Mutex, mpsc},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -26,6 +26,15 @@ impl HubAdapter {
                 name: name.into(),
             }),
         })
+    }
+    pub(super) fn authenticated(hub: HubV1, key: DeviceKey, name: String) -> Self {
+        Self {
+            connection: Mutex::new(Connection {
+                hub,
+                key: Some(key),
+                name,
+            }),
+        }
     }
     fn invoke(&self, request: Request) -> Result<Reply, String> {
         let mut c = self
@@ -108,6 +117,15 @@ impl HubAdapter {
             Request::Prompt(id, text) => {
                 c.hub.send(&id, &text)?;
                 Ok(Reply::Sent(id, text))
+            }
+            Request::PromptAs { session, text, von } => {
+                let role = match von.rolle {
+                    pi_net::ausweis::Rolle::Seminarleitung => "seminarleitung",
+                    pi_net::ausweis::Rolle::Teilnehmende => "teilnehmende",
+                    pi_net::ausweis::Rolle::Gast => "gast",
+                };
+                c.hub.send_with_sender(&session, &text, &von.person, role)?;
+                Ok(Reply::SentAs(session, text, von))
             }
             Request::Stop(id) => {
                 c.hub.stop(&id)?;
@@ -396,7 +414,10 @@ mod tests {
             dialog_visible,
             "HTTP-Limitdialog muss tatsächlich gerendert werden"
         );
-        assert_eq!(super::super::LIMIT_TEXT, "Du hast schon 2 offene Sessions. Lass eine ruhen, dann kannst du diese öffnen. Es geht nichts verloren.");
+        assert_eq!(
+            super::super::LIMIT_TEXT,
+            "Du hast schon 2 offene Sessions. Lass eine ruhen, dann kannst du diese öffnen. Es geht nichts verloren."
+        );
         assert!(
             matches!(adapter.call(Request::Rest(id)), Reply::Sessions(s) if s.iter().any(|s| s.state == SessionState::Resting))
         );
@@ -415,17 +436,35 @@ mod tests {
     fn actual_http_invitation_errors_show_exact_a3_text_without_server_copy() {
         use std::io::{Read, Write};
         for (code, status, expected) in [
-            ("abgelaufen", 410, "Diese Einladung ist abgelaufen. Bitte deine Seminarleitung um eine neue."),
-            ("verbraucht", 409, "Diese Einladung wurde schon benutzt. Jede Einladung gilt nur einmal. Wenn du das nicht warst, sag deiner Seminarleitung Bescheid."),
-            ("unbekannt", 404, "Dieser Code passt zu keiner Einladung. Prüfe die Zeichen oder öffne den Link direkt."),
-            ("zu_viele", 429, "Zu viele Versuche. Warte eine Minute und versuche es dann noch einmal."),
+            (
+                "abgelaufen",
+                410,
+                "Diese Einladung ist abgelaufen. Bitte deine Seminarleitung um eine neue.",
+            ),
+            (
+                "verbraucht",
+                409,
+                "Diese Einladung wurde schon benutzt. Jede Einladung gilt nur einmal. Wenn du das nicht warst, sag deiner Seminarleitung Bescheid.",
+            ),
+            (
+                "unbekannt",
+                404,
+                "Dieser Code passt zu keiner Einladung. Prüfe die Zeichen oder öffne den Link direkt.",
+            ),
+            (
+                "zu_viele",
+                429,
+                "Zu viele Versuche. Warte eine Minute und versuche es dann noch einmal.",
+            ),
         ] {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let address = listener.local_addr().unwrap();
             let server = std::thread::spawn(move || {
                 for step in 0..2 {
                     let (mut socket, _) = listener.accept().unwrap();
-                    socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
                     let mut header = Vec::new();
                     let mut byte = [0];
                     while !header.ends_with(b"\r\n\r\n") {
@@ -433,7 +472,14 @@ mod tests {
                         header.push(byte[0]);
                     }
                     let header = String::from_utf8(header).unwrap();
-                    let length = header.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|n| n.trim().parse::<usize>().unwrap())).unwrap_or(0);
+                    let length = header
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|n| n.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
                     socket.read_exact(&mut vec![0; length]).unwrap();
                     let body = if step == 0 {
                         json!({"protokoll":1,"typ":"hallo","slot":"account01"})
@@ -444,11 +490,14 @@ mod tests {
                     write!(socket, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
                 }
             });
-            let root = std::env::temp_dir().join(format!("s2-http-a3-{}-{code}", std::process::id()));
+            let root =
+                std::env::temp_dir().join(format!("s2-http-a3-{}-{code}", std::process::id()));
             let adapter = HubAdapter::new(&format!("http://{address}"), "Fixture").unwrap();
             adapter.connection.lock().unwrap().key = Some(DeviceKey::at(&root, "fixture").unwrap());
             let reply = adapter.call(Request::Redeem("K7QM-2XDA-9FHT-W3NB".into()));
-            let Reply::Error(error) = reply else { panic!("HTTP-Fehler erwartet: {reply:?}") };
+            let Reply::Error(error) = reply else {
+                panic!("HTTP-Fehler erwartet: {reply:?}")
+            };
             assert_eq!(error.text(), expected, "Code {code}");
             server.join().unwrap();
             std::fs::remove_dir_all(root).unwrap();
