@@ -63,7 +63,7 @@ export function loginSignaturePayload({ hub_origin, slot, geraet_id, challenge_i
   return ['cocopi-v1-anmelden', hub_origin, slot, geraet_id, challenge_id, nonce].join('\n');
 }
 
-export function createTransport({ baseUrl, getToken, pulseTimeoutMs = 45_000, reconnectMs = 1_000 }) {
+export function createTransport({ baseUrl, getToken, onLogout = () => {}, pulseTimeoutMs = 45_000, reconnectMs = 1_000 }) {
   const base = new URL(baseUrl, globalThis.location?.href);
   if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
     throw new Error('Die R2-Adresse ist ungültig.');
@@ -79,18 +79,38 @@ export function createTransport({ baseUrl, getToken, pulseTimeoutMs = 45_000, re
     return { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
   }
   function logout() {
+    if (signedOut) return;
     signedOut = true;
+    onLogout();
     for (const stream of streams) stream.close('abgemeldet');
   }
-  async function request(path, { method = 'GET', body, auth = true, signal } = {}) {
+  async function request(path, { method = 'GET', body, auth = true, signal, binary = false, allowSignedOut = false } = {}) {
     const response = await fetch(url(path), {
       method, headers: { ...await headers(auth), ...(body ? { 'Content-Type': 'application/json' } : {}) },
       body: body ? JSON.stringify({ protokoll: 1, ...body }) : undefined, signal, cache: 'no-store',
       credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
     });
     if (response.status === 401) logout();
+    if (response.ok && auth && signedOut && !allowSignedOut) throw new TransportError('nicht_angemeldet', 'Dieses Handy ist abgemeldet.', '', 401);
+    if (response.ok && binary) {
+      const max = 25 * 1024 * 1024;
+      if (Number(response.headers.get('content-length')) > max) { await response.body.cancel(); throw new Error('Dieses Ergebnis ist zu groß für die Handyvorschau. Öffne es am Rechner.'); }
+      const reader = response.body.getReader(), chunks = []; let size = 0;
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > max || signedOut) throw new Error('Die Vorschau wurde beendet. Öffne das Ergebnis erneut.');
+          chunks.push(value);
+        }
+      } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+      if (signedOut) throw new TransportError('nicht_angemeldet', 'Dieses Handy ist abgemeldet.', '', 401);
+      return new Blob(chunks, { type: response.headers.get('content-type') || 'application/octet-stream' });
+    }
     let payload;
     try { payload = await response.json(); } catch { payload = {}; }
+    if (response.ok && auth && signedOut && !allowSignedOut) throw new TransportError('nicht_angemeldet', 'Dieses Handy ist abgemeldet.', '', 401);
     if (!response.ok) {
       const error = payload.fehler || payload;
       throw new TransportError(error.code || `http_${response.status}`, error.was || 'R2 konnte die Anfrage nicht bearbeiten.', error.tun || 'Versuche es noch einmal.', response.status);
@@ -201,12 +221,20 @@ export function createTransport({ baseUrl, getToken, pulseTimeoutMs = 45_000, re
       return { ...welcome, ...signed };
     },
     sessions: () => request('/v1/sessions'), events,
+    senden: (id, text, client_id) => request(`/v1/sessions/${encodeURIComponent(id)}/senden`, { method: 'POST', body: { text, client_id } }),
+    antwort: (id, frage_id, wert) => request(`/v1/sessions/${encodeURIComponent(id)}/antwort`, { method: 'POST', body: { frage_id, wert } }),
+    stopp: id => request(`/v1/sessions/${encodeURIComponent(id)}/stopp`, { method: 'POST', body: {} }),
+    vorschau: () => request('/v1/sync/vorschau', { method: 'POST', body: {} }),
+    ergebnis: pfad => {
+      if (typeof pfad !== 'string' || !pfad.startsWith('Ergebnisse/') || pfad.split('/').some(part => !part || part === '.' || part === '..') || /[\\\u0000-\u001f?#]/.test(pfad)) throw new Error('Dieser Ergebnispfad ist nicht erlaubt.');
+      return request(`/v1/sync/datei?pfad=${encodeURIComponent(pfad)}`, { binary: true });
+    },
     einloesen: (code, options) => redeem(typeof code === 'object' ? code : parsePairingCode(code, 'e'), options),
     koppeln: (code, options) => redeem(typeof code === 'object' ? code : parsePairingCode(code), options),
     async abmelden() {
       try {
         if (!deviceId) throw new TransportError('nicht_angemeldet', 'Dieses Gerät ist nicht mehr angemeldet.');
-        const result = await request(`/v1/geraete/${encodeURIComponent(deviceId)}/widerrufen`, { method: 'POST', body: { typ: 'widerrufen' } });
+        const result = await request(`/v1/geraete/${encodeURIComponent(deviceId)}/widerrufen`, { method: 'POST', body: { typ: 'widerrufen' }, allowSignedOut: true });
         logout(); return result;
       } catch (error) {
         if (error.status === 401) logout();

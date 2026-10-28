@@ -27,7 +27,7 @@ test('Service Worker: statische Allowlist, keine API-/Laufzeit-Cachewrites', asy
   const callbacks = {}, cached = [], replies = [];
   const cache = { addAll: async paths => { cached.push(...paths); }, match: async path => ({ shell: path }) };
   vm.runInNewContext(source, {
-    self: { location: { origin: 'https://r2.invalid' }, addEventListener: (type, fn) => { callbacks[type] = fn; } },
+    self: { location: { origin: 'https://r2.invalid', href: 'https://r2.invalid/m/sw.js' }, addEventListener: (type, fn) => { callbacks[type] = fn; } },
     URL, caches: { open: async () => cache, keys: async () => [] },
     fetch: () => assert.fail('Inhalt sollte nicht im Service Worker abgefragt werden'),
   });
@@ -47,11 +47,12 @@ test('Service Worker: statische Allowlist, keine API-/Laufzeit-Cachewrites', asy
 
 test('App-Hülle ist lokal vollständig und Manifest enthält keine Einladung', async () => {
   const manifest = JSON.parse(await fs.readFile(new URL('../manifest.webmanifest', import.meta.url), 'utf8'));
-  assert.equal(manifest.start_url, '/m/'); assert.equal(manifest.scope, '/m/');
+  assert.equal(manifest.start_url, './'); assert.equal(manifest.scope, './');
   for (const icon of manifest.icons) await fs.access(new URL(`../${icon.src}`, import.meta.url));
   const html = await fs.readFile(new URL('../index.html', import.meta.url), 'utf8');
   for (const id of ['list', 'session', 'settings', 'pair']) assert.ok(html.includes(`id="${id}"`));
-  assert.ok(!html.includes('id="prompt"')); assert.ok(!html.includes('id="send"'));
+  assert.ok(html.includes('id="prompt"')); assert.ok(html.includes('id="send"'));
+  assert.ok(html.includes('id="results"')); assert.ok(html.includes('aria-live="polite"'));
   const app = await fs.readFile(new URL('../app.js', import.meta.url), 'utf8');
   assert.ok(!app.includes('.innerHTML')); assert.ok(!app.includes('localStorage'));
   assert.ok(!app.includes('EventSource'));

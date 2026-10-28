@@ -1,10 +1,11 @@
 // Ausschließlich öffentliche, explizit aufgelistete App-Dateien. Niemals Laufzeit-Caching.
-const CACHE = 'cocopi-mobil-shell-v2';
+const SCOPE = new URL('./', self.location.href);
+const CACHE = `cocopi-mobil-shell-v4-${SCOPE.pathname}`;
 const SHELL = [
-  '/m/', '/m/index.html', '/m/app.js', '/m/state.js', '/m/device.js', '/m/style.css',
-  '/m/manifest.webmanifest', '/m/icons/cocopi.svg', '/m/icons/cocopi-192.png',
-  '/m/icons/cocopi-512.png', '/m/fonts/Figtree-Regular.ttf', '/ui/transport.js',
-];
+  './', './index.html', './app.js', './state.js', './workflow.js', './device.js', './style.css',
+  './manifest.webmanifest', './icons/cocopi.svg', './icons/cocopi-192.png',
+  './icons/cocopi-512.png', './fonts/Figtree-Regular.ttf', '../ui/transport.js',
+].map(path => new URL(path, SCOPE).pathname);
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
 });

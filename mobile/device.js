@@ -21,7 +21,7 @@ async function access(mode, operation) {
 export async function getDevice() {
   if (!globalThis.crypto?.subtle || !globalThis.indexedDB) throw new Error('Dieses Handy kann den Geräteschlüssel nicht sicher speichern. Nutze ein aktuelles Gerät oder später die cocopi-App.');
   const saved = await access('readonly', store => store.get('identity'));
-  if (saved) return saved;
+  if (saved) return { name: 'Dieses Handy', ...saved };
   let keys;
   try { keys = await crypto.subtle.generateKey('Ed25519', false, ['sign', 'verify']); }
   catch { throw new Error('Dieses Handy unterstützt den Geräteschlüssel noch nicht. Nutze ein aktuelles Gerät oder später die cocopi-App.'); }
@@ -42,6 +42,17 @@ export async function saveRegistration({ geraet_id, slot, hub_origin }) {
   }
   const device = await getDevice();
   await access('readwrite', store => store.put({ ...device, geraet_id, slot, hub_origin }, 'identity'));
+}
+// Check-out entfernt Kontobindung und alle Metadaten; nur der Geräteschlüssel bleibt.
+export async function clearRegistration() {
+  await access('readwrite', store => {
+    const req = store.get('identity');
+    req.onsuccess = () => {
+      const device = req.result;
+      if (device) store.put({ privateKey: device.privateKey, publicKey: device.publicKey, pubkey: device.pubkey }, 'identity');
+    };
+    return req;
+  });
 }
 export async function forgetDevice() { await access('readwrite', store => store.clear()); }
 export async function signLogin(device, payload) {

@@ -1,10 +1,10 @@
 {
-  "id": "/m/",
+  "id": "./",
   "name": "cocopi mobil",
   "short_name": "cocopi",
   "lang": "de",
-  "start_url": "/m/",
-  "scope": "/m/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#1e2227",
   "theme_color": "#1e2227",
