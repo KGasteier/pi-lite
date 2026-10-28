@@ -1,0 +1,9 @@
+{
+  "protokoll": 1,
+  "typ": "session_zustand",
+  "session_id": "session-01",
+  "zustand": "fertig",
+  "seit": 1793200000000,
+  "titel": "Mein Entwurf",
+  "workspace": "/home/account01/Projekt"
+}

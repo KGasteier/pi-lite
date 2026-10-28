@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cocopi.invalid/protocol/v1/schema.json",
+  "title": "cocopi Protokoll v1",
+  "type": "object",
+  "required": ["protokoll", "typ"],
+  "properties": {"protokoll": {"const": 1}, "typ": {"type": "string"}},
+  "oneOf": [
+    {"properties": {"typ": {"const": "hallo"}, "app": {"type": "string"}}, "required": ["app"]},
+    {"properties": {"typ": {"const": "willkommen"}, "min_client": {"const": 1}, "slot": {"$ref": "#/$defs/slot"}, "person": {"type": "string"}, "hub_version": {"type": "string"}, "vertrag": {"const": "cocopi-slots-v1"}}, "required": ["min_client", "slot", "person", "hub_version", "vertrag"]},
+    {"properties": {"typ": {"const": "sessions_liste"}, "sessions": {"type": "array", "items": {"$ref": "#/$defs/session"}}}, "required": ["sessions"]},
+    {"$ref": "#/$defs/session"},
+    {"properties": {"typ": {"const": "fehler"}, "code": {"type": "string"}, "was": {"type": "string", "minLength": 1}, "tun": {"type": "string", "minLength": 1}}, "required": ["code", "was", "tun"]},
+    {"properties": {"typ": {"const": "puls"}, "t": {"type": "integer"}}, "required": ["t"]},
+    {"properties": {"typ": {"const": "einloesen"}, "art": {"enum": ["e", "k", "b"]}, "code": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}$"}, "slot": {"$ref": "#/$defs/slot"}, "pubkey": {"type": "string"}, "geraetename": {"type": "string"}, "geraeteart": {"enum": ["desktop", "handy"]}}, "required": ["art", "code"]},
+    {"properties": {"typ": {"const": "einladung_eingeloest"}, "slot": {"$ref": "#/$defs/slot"}, "person": {"type": "string"}, "geraet_id": {"type": "string"}}, "required": ["slot", "person", "geraet_id"]},
+    {"properties": {"typ": {"const": "challenge"}, "challenge_id": {"type": "string"}, "nonce": {"type": "string"}, "gueltig_bis": {"type": "integer"}}, "required": ["challenge_id", "nonce", "gueltig_bis"]},
+    {"properties": {"typ": {"const": "angemeldet"}, "zugangstoken": {"type": "string"}, "gueltig_bis": {"type": "integer"}, "geraet_id": {"type": "string"}, "slot": {"$ref": "#/$defs/slot"}, "person": {"type": "string"}}, "required": ["zugangstoken", "gueltig_bis", "geraet_id", "slot", "person"]},
+    {"properties": {"typ": {"const": "koppeln_start"}, "code": {"type": "string"}, "url": {"type": "string"}, "gueltig_bis": {"type": "integer"}}, "required": ["code", "url", "gueltig_bis"]},
+    {"properties": {"typ": {"const": "koppeln_wartet"}, "anfrage_id": {"type": "string"}, "geraetename": {"type": "string"}}, "required": ["anfrage_id"]},
+    {"properties": {"typ": {"const": "koppeln_bestaetigen"}, "anfrage_id": {"type": "string"}, "erlauben": {"type": "boolean"}}, "required": ["anfrage_id", "erlauben"]},
+    {"properties": {"typ": {"const": "koppeln_bestaetigt"}, "erlauben": {"type": "boolean"}, "geraet_id": {"type": "string"}}, "required": ["erlauben"]},
+    {"properties": {"typ": {"const": "geraete_liste"}, "geraete": {"type": "array", "items": {"type": "object", "required": ["geraet_id", "slot", "art", "geraetename", "widerrufen"], "properties": {"geraet_id": {"type": "string"}, "slot": {"$ref": "#/$defs/slot"}, "art": {"enum": ["desktop", "handy"]}, "geraetename": {"type": "string"}, "widerrufen": {"type": "boolean"}}}}}, "required": ["geraete"]},
+    {"properties": {"typ": {"const": "widerruf"}, "geraet_id": {"type": "string"}}, "required": ["geraet_id"]},
+    {"properties": {"typ": {"const": "session_ereignis"}, "session_id": {"type": "string"}, "pi_event": {"type": "object"}}, "required": ["session_id", "pi_event"]}
+  ],
+  "$defs": {
+    "slot": {"type": "string", "pattern": "^account(0[1-9]|10)$"},
+    "session": {"type": "object", "properties": {"protokoll": {"const": 1}, "typ": {"const": "session_zustand"}, "session_id": {"type": "string"}, "zustand": {"enum": ["ruht", "arbeitet", "wartet", "fertig", "bereit", "fehler"]}, "seit": {"type": "integer"}, "titel": {"type": "string"}, "workspace": {"type": "string"}}, "required": ["protokoll", "typ", "session_id", "zustand", "seit", "titel", "workspace"]}
+  }
+}

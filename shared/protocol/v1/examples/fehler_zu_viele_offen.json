@@ -1,0 +1,7 @@
+{
+  "protokoll": 1,
+  "typ": "fehler",
+  "code": "zu_viele_offen",
+  "was": "Du hast schon 2 offene Sessions.",
+  "tun": "Lass eine ruhen, dann kannst du diese öffnen. Es geht nichts verloren."
+}

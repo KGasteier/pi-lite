@@ -153,7 +153,7 @@ pub fn validate_url(raw: &str) -> Result<String, String> {
         return Err("Nur HTTP(S)-URLs ohne Zugangsdaten".into());
     }
     // Authority-Teil (zwischen "//" und dem nächsten "/") darf kein `user:pass@host` enthalten.
-    let after_scheme = trimmed.splitn(2, "//").nth(1).unwrap_or("");
+    let after_scheme = trimmed.split_once("//").map(|(_, rest)| rest).unwrap_or("");
     let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
     if authority.contains('@') {
         return Err("Nur HTTP(S)-URLs ohne Zugangsdaten".into());
