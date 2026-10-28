@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
-# Merge-Gate: bash test/v3-gate.sh <worktree> [hub-worktree]
+# Merge-Gate: bash test/v3-gate.sh <worktree> [hub-worktree ...]
+# Alternativ/zusätzlich: V3_GATE_HUBS="/pfad/hub-a /pfad/hub-b" (ohne Leerzeichen in Pfaden).
 # Logs bleiben unter /tmp; nur eine Ergebniszeile je Gate auf stdout.
 set -euo pipefail
-usage() { echo "Aufruf: $0 <worktree> [hub-worktree]" >&2; exit 2; }
-[[ $# -ge 1 && $# -le 2 ]] || usage
+usage() { echo "Aufruf: $0 <worktree> [hub-worktree ...]" >&2; exit 2; }
+[[ $# -ge 1 ]] || usage
 worktree=$(cd -- "$1" && pwd -P) || usage
 git -C "$worktree" rev-parse --verify HEAD >/dev/null 2>&1 || usage
 [[ -f "$worktree/copi/Cargo.toml" ]] || usage
-hub=""
-if [[ $# -eq 2 ]]; then
-    hub=$(cd -- "$2" && pwd -P) || usage
+shift
+hubs=()
+env_hubs=()
+read -r -a env_hubs <<< "${V3_GATE_HUBS:-}"
+for candidate in "$@" "${env_hubs[@]}"; do
+    hub=$(cd -- "$candidate" && pwd -P) || usage
     git -C "$hub" rev-parse --verify HEAD >/dev/null 2>&1 || usage
-    [[ -f "$hub/test/smoke.mjs" && -x "$hub/test/fake-pi.mjs" ]] || usage
-fi
+    # Auch reine Empfang-/Sync-Worktrees sind zulässig. Doppelte nur einmal prüfen.
+    duplicate=0
+    for previous in "${hubs[@]}"; do [[ "$hub" != "$previous" ]] || duplicate=1; done
+    (( duplicate )) || hubs+=("$hub")
+done
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 for tool in cargo rustc rustfmt node python3 timeout git; do
     command -v "$tool" >/dev/null || { echo "Fehlt: $tool" >&2; exit 2; }
@@ -46,6 +53,8 @@ run() {
     if (( rc == 0 )); then
         if [[ "$id" == js-tests ]] && grep -q '^KNOWN ' "$logs/$id.log"; then
             printf 'KNOWN %s | bekannte Basisfehler, keine neuen Fehler; log=%s\n' "$id" "$logs/$id.log"
+        elif [[ "$id" == i2-* ]] && grep -Eq '^# (skip|todo) [1-9][0-9]*$' "$logs/$id.log"; then
+            printf 'SKIP %s | I2-Abnahme unvollständig; log=%s\n' "$id" "$logs/$id.log"
         elif [[ "$id" == fmt ]]; then
             printf 'PASS %s | %s log=%s\n' "$id" "$(head -n 1 "$logs/$id.log")" "$logs/$id.log"
         else
@@ -65,7 +74,11 @@ run() {
     "${safe_env[@]}" rustc --version
     "${safe_env[@]}" node --version
     printf 'worktree=%s\ntarget=%s\n' "$worktree" "$target"
-    [[ -z "$hub" ]] || git -C "$hub" rev-parse HEAD
+    for hub in "${hubs[@]}"; do
+        printf 'hub=%s\n' "$hub"
+        git -C "$hub" rev-parse HEAD
+        git -C "$hub" status --short
+    done
 } >"$logs/context.log" 2>&1
 run fmt "$worktree" python3 "$script_dir/gate-checks.py" fmt "$worktree" "${V3_GATE_BASE:-cocopi-v3}"
 
@@ -85,6 +98,11 @@ else
     failed=1
 fi
 run rust-tests "$worktree/copi" cargo test --offline --locked --workspace --features copi/cocopi
+if [[ -f "$worktree/copi/crates/pi-sync/Cargo.toml" ]]; then
+    run sync-rust-tests "$worktree/copi" cargo test --offline --locked -p pi-sync
+else
+    printf 'SKIP sync-rust-tests | copi/crates/pi-sync/Cargo.toml nicht vorhanden\n'
+fi
 run copi-check "$worktree/copi" cargo check --offline --locked -p copi --bin copi
 # nullglob + explizite Leerprüfung verhindert ein stilles Grün ohne Prüflinge.
 run js-syntax "$worktree" bash -c '
@@ -102,10 +120,40 @@ if [[ -f "$worktree/deploy/r2/test_scripts.py" ]]; then
 else
     printf 'SKIP r2-tests | deploy/r2/test_scripts.py nicht vorhanden\n'
 fi
-if [[ -n "$hub" ]]; then
-    # smoke.mjs nutzt Mock/fake-pi und eine absichtlich fehlende Binary, keine Modelle.
-    run hub-smoke "$hub" node test/smoke.mjs
+if ((${#hubs[@]})); then
+    index=0
+    for hub in "${hubs[@]}"; do
+        index=$((index + 1))
+        suffix=""; (( index == 1 )) || suffix="-$index"
+        if [[ -f "$hub/test/smoke.mjs" && -x "$hub/test/fake-pi.mjs" ]]; then
+            # smoke.mjs nutzt Mock/fake-pi, keine Modelle.
+            run "hub-smoke$suffix" "$hub" node test/smoke.mjs
+        else
+            printf 'SKIP hub-smoke%s | smoke.mjs oder ausführbares fake-pi.mjs fehlt: %s\n' "$suffix" "$hub"
+        fi
+        if compgen -G "$hub/empfang/test/*.mjs" >/dev/null; then
+            run "hub-empfang$suffix" "$hub" bash -c '
+                failed=0
+                for file in empfang/test/*.mjs; do echo "CHECK $file"; node "$file" || failed=1; done
+                exit "$failed"'
+        else
+            printf 'SKIP hub-empfang%s | keine empfang/test/*.mjs: %s\n' "$suffix" "$hub"
+        fi
+        if [[ -f "$hub/test/sync.mjs" ]]; then
+            run "hub-sync$suffix" "$hub" node test/sync.mjs
+        else
+            printf 'SKIP hub-sync%s | test/sync.mjs fehlt: %s\n' "$suffix" "$hub"
+        fi
+        if compgen -G "$worktree/test/i2/*.test.mjs" >/dev/null; then
+            run "i2-szenarien$suffix" "$worktree" env "I2_HUB_DIR=$hub" bash -c 'node --test test/i2/*.test.mjs'
+        else
+            printf 'SKIP i2-szenarien%s | keine test/i2/*.test.mjs vorhanden\n' "$suffix"
+        fi
+    done
 else
     printf 'SKIP hub-smoke | kein Hub-Worktree angegeben; Rust-Hubtest ebenfalls isoliert übersprungen\n'
+    printf 'SKIP hub-empfang | kein Hub-Worktree angegeben\n'
+    printf 'SKIP hub-sync | kein Hub-Worktree angegeben\n'
+    printf 'SKIP i2-szenarien | kein Hub-Worktree angegeben\n'
 fi
 exit "$failed"
