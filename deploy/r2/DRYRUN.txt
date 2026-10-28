@@ -1,0 +1,94 @@
+I1-S4-provision: Dry-Run-Nachweis (keine Systemänderungen)
+2026-10-28T18:37:01+01:00
+uid=1000(medienhaus) gid=1000(medienhaus) groups=1000(medienhaus),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users),111(lpadmin),114(lxd)
+
+$ bash deploy/r2/provision.sh --dry-run --slots s01,s02
+Provisionierung: dry-run; Slots: s01,s02. Keine Pakete, Mountänderungen oder Modellaufrufe.
+PLAN: Vor Apply alle Voraussetzungen prüfen; beim aktuellen BEFUND abbrechen:
+  ext4-Userquoten aktiv auf / und /mnt/data; Quotenwerkzeuge vorhanden
+  SSD-Mountwurzel rootverwaltet; gemeinsame Werkzeuge in /opt/cocopi/bin:/usr/local/bin:/usr/bin:/bin; Hub-Vertrag cocopi-slots-v1 bestätigt
+  installierter Hub: /opt/cocopi/pi-hub; persönliche medienhaus-Shims werden NICHT verwendet
+  alle Bestandskonten und UID-Inventare prüfen; keine fremden Konten übernehmen
+PLAN: groupadd --system cocopi-slots
+PLAN: install -d -m 755 -o root -g root -- /mnt/data/cocopi
+PLAN: install -d -m 755 -o root -g root -- /etc/cocopi/slots
+PLAN: install -d -m 750 -o root -g root -- /etc/sudoers.d
+PLAN: verwaltete Datei /usr/local/libexec/cocopi-hub (755, root:root), nur bei Änderung schreiben
+PLAN: verwaltete Datei /etc/systemd/user/cocopi-hub@.service (644, root:root), nur bei Änderung schreiben
+--- s01 (cocopi-s01), Port 8801 ---
+PLAN: groupadd --gid 20001 cocopi-s01
+PLAN: useradd --create-home --uid 20001 --gid cocopi-s01 --groups cocopi-slots --shell /bin/bash --home-dir /home/cocopi-s01 --comment cocopi\ managed\ slot\ s01 --key UMASK=077 --key HOME_MODE=0700 cocopi-s01
+PLAN: install -d -m 700 -o cocopi-s01 -g cocopi-s01 -- /home/cocopi-s01
+PLAN: install -d -m 700 -o cocopi-s01 -g cocopi-s01 -- /mnt/data/cocopi/cocopi-s01
+PLAN: install -d -m 755 -o root -g root -- /etc/cocopi/slots/s01
+PLAN: verwaltete Datei /etc/profile.d/cocopi-slots.sh (644, root:root), nur bei Änderung schreiben
+PLAN: verwaltete Datei /etc/sudoers.d/cocopi-s01 (440, root:root), nur bei Änderung schreiben
+PLAN: install -d -m 755 -o root -g root -- /etc/systemd/system/user-\<UID\ nach\ Kontoanlage\>.slice.d
+PLAN: verwaltete Datei /etc/systemd/system/user-<UID nach Kontoanlage>.slice.d/50-cocopi.conf (644, root:root), nur bei Änderung schreiben
+Quote: 9765625 KiB NVMe + 68359375 KiB SATA = 80 GB dezimal; Soft=Hard.
+PLAN: setquota -u cocopi-s01 9765625 9765625 200000 200000 /
+PLAN: setquota -u cocopi-s01 68359375 68359375 800000 800000 /mnt/data
+PLAN: verwaltete Datei /etc/cocopi/slots/s01/hub.env (644, root:root), nur bei Änderung schreiben
+PLAN: /etc/cocopi/slots/s01/token nur falls fehlend kryptografisch erzeugen (0600, cocopi-s01); Inhalt niemals anzeigen
+PLAN: systemd daemon-reload, bestehende Slice <UID nach Kontoanlage> nur bei Limitabweichung aktualisieren
+PLAN: Linger für cocopi-s01 nur falls fehlend einschalten; eigenen Usermanager starten falls inaktiv
+PLAN: als cocopi-s01 cocopi-hub@s01.service nur falls nicht aktiviert/gestartet enable/start; KEIN automatischer Restart
+Geplant/gesetzt: s01; Abnahme separat mit check.sh. Kein Geräte-Enrollment und keine Pilotfreigabe.
+--- s02 (cocopi-s02), Port 8802 ---
+PLAN: groupadd --gid 20002 cocopi-s02
+PLAN: useradd --create-home --uid 20002 --gid cocopi-s02 --groups cocopi-slots --shell /bin/bash --home-dir /home/cocopi-s02 --comment cocopi\ managed\ slot\ s02 --key UMASK=077 --key HOME_MODE=0700 cocopi-s02
+PLAN: install -d -m 700 -o cocopi-s02 -g cocopi-s02 -- /home/cocopi-s02
+PLAN: install -d -m 700 -o cocopi-s02 -g cocopi-s02 -- /mnt/data/cocopi/cocopi-s02
+PLAN: install -d -m 755 -o root -g root -- /etc/cocopi/slots/s02
+PLAN: verwaltete Datei /etc/profile.d/cocopi-slots.sh (644, root:root), nur bei Änderung schreiben
+PLAN: verwaltete Datei /etc/sudoers.d/cocopi-s02 (440, root:root), nur bei Änderung schreiben
+PLAN: install -d -m 755 -o root -g root -- /etc/systemd/system/user-\<UID\ nach\ Kontoanlage\>.slice.d
+PLAN: verwaltete Datei /etc/systemd/system/user-<UID nach Kontoanlage>.slice.d/50-cocopi.conf (644, root:root), nur bei Änderung schreiben
+Quote: 9765625 KiB NVMe + 68359375 KiB SATA = 80 GB dezimal; Soft=Hard.
+PLAN: setquota -u cocopi-s02 9765625 9765625 200000 200000 /
+PLAN: setquota -u cocopi-s02 68359375 68359375 800000 800000 /mnt/data
+PLAN: verwaltete Datei /etc/cocopi/slots/s02/hub.env (644, root:root), nur bei Änderung schreiben
+PLAN: /etc/cocopi/slots/s02/token nur falls fehlend kryptografisch erzeugen (0600, cocopi-s02); Inhalt niemals anzeigen
+PLAN: systemd daemon-reload, bestehende Slice <UID nach Kontoanlage> nur bei Limitabweichung aktualisieren
+PLAN: Linger für cocopi-s02 nur falls fehlend einschalten; eigenen Usermanager starten falls inaktiv
+PLAN: als cocopi-s02 cocopi-hub@s02.service nur falls nicht aktiviert/gestartet enable/start; KEIN automatischer Restart
+Geplant/gesetzt: s02; Abnahme separat mit check.sh. Kein Geräte-Enrollment und keine Pilotfreigabe.
+
+$ bash deploy/r2/check.sh --dry-run --slots s01,s02
+Prüfung: dry-run; Slots: s01,s02. --apply prüft nur lesend / ohne Lasttest.
+--- s01 (cocopi-s01), Port 8801 ---
+PLAN: Konto/UID/Primärgruppe und Inventar prüfen; Home /home/cocopi-s01 und Daten /mnt/data/cocopi/cocopi-s01 0700
+PLAN: via runuser alle anderen vorhandenen Slot-Homes sowie medienhaus-HOME auf fehlendes Lese-/Suchrecht prüfen
+PLAN: effektives sudo-Listing + sudo -n true müssen verweigert werden; keine docker-/anderen Zusatzgruppen und kein Docker-Socketzugriff
+PLAN: aktive ext4-Userquote + Q_GETQUOTA lesend: NVMe 9765625 KiB, SATA 68359375 KiB; Soft=Hard und Inodes
+PLAN: effektive Account-Slice: CPUQuota=100%, MemoryHigh=2G, MemoryMax=2560M, TasksMax=256
+PLAN: Linger=yes, Token 0600 ohne Inhalt, Dienst/PID-Besitzer und ausschließlich 127.0.0.1:8801 via ss prüfen
+PLAN: Werkzeuge via runuser auffindbar; Hub-Vertrag prüfen (kein Session-/Lasttest, keine Modellaufrufe)
+--- s02 (cocopi-s02), Port 8802 ---
+PLAN: Konto/UID/Primärgruppe und Inventar prüfen; Home /home/cocopi-s02 und Daten /mnt/data/cocopi/cocopi-s02 0700
+PLAN: via runuser alle anderen vorhandenen Slot-Homes sowie medienhaus-HOME auf fehlendes Lese-/Suchrecht prüfen
+PLAN: effektives sudo-Listing + sudo -n true müssen verweigert werden; keine docker-/anderen Zusatzgruppen und kein Docker-Socketzugriff
+PLAN: aktive ext4-Userquote + Q_GETQUOTA lesend: NVMe 9765625 KiB, SATA 68359375 KiB; Soft=Hard und Inodes
+PLAN: effektive Account-Slice: CPUQuota=100%, MemoryHigh=2G, MemoryMax=2560M, TasksMax=256
+PLAN: Linger=yes, Token 0600 ohne Inhalt, Dienst/PID-Besitzer und ausschließlich 127.0.0.1:8802 via ss prüfen
+PLAN: Werkzeuge via runuser auffindbar; Hub-Vertrag prüfen (kein Session-/Lasttest, keine Modellaufrufe)
+DRY-RUN: nichts geprüft oder geändert; keine OK-Aussagen über die echte Maschine.
+
+$ bash deploy/r2/teardown.sh --dry-run --slots s01,s02
+Rückbau: dry-run; Slots: s01,s02; purge=false. Nur ausdrücklich verwaltete Konten.
+--- s01 (cocopi-s01) ---
+PLAN: Identität/UID-Inventar und Rückbaufortschritt prüfen; kein fremdes Konto übernehmen
+PLAN: nur cocopi-hub@s01.service stoppen/deaktivieren; Gerätetokens extern über S3 widerrufen lassen
+PLAN: nur cocopi-s01 sperren (Passwort + Ablauf + nologin); Linger aus; eigenen Usermanager stoppen
+PLAN: bei verbleibenden Prozessen abbrechen (keine Prozesssuche mit pkill, kein automatisches Töten)
+PLAN: Home + SATA-Daten + Slotkonfiguration + UID als root-only tar unter /var/backups/cocopi-slots/s01 sichern; SHA-256 + Lesbarkeit prüfen
+PLAN: Konto bleibt gesperrt, Home/Daten bleiben unverändert; keine Datenlöschung
+PLAN: Fortschritt rootverwaltet protokollieren; wiederholter Rückbau verwendet verifiziertes Archiv, keine Überschreibung
+--- s02 (cocopi-s02) ---
+PLAN: Identität/UID-Inventar und Rückbaufortschritt prüfen; kein fremdes Konto übernehmen
+PLAN: nur cocopi-hub@s02.service stoppen/deaktivieren; Gerätetokens extern über S3 widerrufen lassen
+PLAN: nur cocopi-s02 sperren (Passwort + Ablauf + nologin); Linger aus; eigenen Usermanager stoppen
+PLAN: bei verbleibenden Prozessen abbrechen (keine Prozesssuche mit pkill, kein automatisches Töten)
+PLAN: Home + SATA-Daten + Slotkonfiguration + UID als root-only tar unter /var/backups/cocopi-slots/s02 sichern; SHA-256 + Lesbarkeit prüfen
+PLAN: Konto bleibt gesperrt, Home/Daten bleiben unverändert; keine Datenlöschung
+PLAN: Fortschritt rootverwaltet protokollieren; wiederholter Rückbau verwendet verifiziertes Archiv, keine Überschreibung

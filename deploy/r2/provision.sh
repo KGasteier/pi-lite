@@ -7,7 +7,7 @@ note "Provisionierung: $MODE; Slots: $SLOT_LIST. Keine Pakete, Mountänderungen 
 
 preflight() {
     require_commands useradd groupadd id getent install stat findmnt quotaon setquota \
-        repquota runuser systemctl loginctl openssl sudo visudo flock pgrep
+        runuser systemctl loginctl openssl sudo visudo flock python3 numfmt
     check_mounts
     check_hub_contract
     root_controlled "$HOME_BASE" && root_controlled "$DATA_MOUNT" || fail 'Home-/SSD-Mountwurzel nicht rootkontrolliert (siehe BEFUND).'
@@ -28,6 +28,9 @@ preflight() {
         else
             [[ ! -e $SLOT_HOME && ! -L $SLOT_HOME && ! -e $SLOT_DATA && ! -L $SLOT_DATA ]] || fail "Verwaiste Slotpfade bei $SLOT; erst Recovery prüfen."
             [[ ! -e $STATE_BASE/$SLOT.uid ]] || fail "Inventar für gelöschten Slot $SLOT vorhanden. Erst Rückbau / Wiedervergabe abschließen."
+            if getent passwd "$EXPECTED_UID" >/dev/null || getent group "$EXPECTED_UID" >/dev/null; then
+                fail "Reservierte UID/GID $EXPECTED_UID für $SLOT bereits belegt; keine automatische Umnummerierung."
+            fi
             getent group "$USER_NAME" >/dev/null && fail "Private Gruppe $USER_NAME bereits vorhanden; erst zuordnen."
         fi
     done
@@ -36,6 +39,8 @@ preflight() {
 if [[ $MODE == apply ]]; then
     preflight
     acquire_lock
+    # Zweiter Blick unter Sperre verhindert konkurrierende Kontoanlagen.
+    preflight
 else
     note 'PLAN: Vor Apply alle Voraussetzungen prüfen; beim aktuellen BEFUND abbrechen:'
     note "  ext4-Userquoten aktiv auf $NVME_MOUNT und $DATA_MOUNT; Quotenwerkzeuge vorhanden"
@@ -53,51 +58,16 @@ managed_dir /usr/local/libexec 755 root root
 managed_dir /etc/systemd/user 755 root root
 managed_dir /etc/sudoers.d 750 root root
 
-managed_file /usr/local/libexec/cocopi-hub 755 root root <<'LAUNCHER'
-#!/usr/bin/env bash
-set -euo pipefail
-# Niemals xtrace: Token bleibt aus Argumenten, URLs und Journal heraus.
-set +x
-[[ ${1:-} =~ ^s(0[1-9]|10)$ && ${HUB_SLOT:-} == "$1" ]] || exit 1
-[[ $(id -un) == "cocopi-$1" && ${HUB_HOST:-} == 127.0.0.1 ]] || exit 1
-[[ -r /etc/cocopi/slots/$1/token ]] || exit 1
-HUB_TOKEN=$(< "/etc/cocopi/slots/$1/token")
-[[ ${#HUB_TOKEN} -ge 40 ]] || exit 1
-export HUB_TOKEN
-exec "$HUB_NODE" "$HUB_DIR/server.mjs"
-LAUNCHER
-
-managed_file /etc/systemd/user/cocopi-hub@.service 644 root root <<'UNIT'
-[Unit]
-Description=cocopi: persönlicher Hub für %i
-After=network.target
-
-[Service]
-Type=simple
-EnvironmentFile=/etc/cocopi/slots/%i/hub.env
-ExecStart=/usr/local/libexec/cocopi-hub %i
-WorkingDirectory=%h
-UMask=0077
-NoNewPrivileges=yes
-RestrictSUIDSGID=yes
-# Unixkonto mit vollem Tool-Use, keine Container-/Filesystem-Sandbox behaupten.
-Restart=on-failure
-RestartSec=5
-TimeoutStopSec=30
-# Konservativ: ungeprüfter Hub könnte Token/Prompt-Inhalte loggen.
-StandardOutput=null
-StandardError=null
-
-[Install]
-WantedBy=default.target
-UNIT
+managed_file /usr/local/libexec/cocopi-hub 755 root root < "$BASE/hub-launch.sh"
+managed_file /etc/systemd/user/cocopi-hub@.service 644 root root < "$BASE/cocopi-hub@.service"
 
 for slot in "${SELECTED[@]}"; do
     slot_vars "$slot"
     note "--- $SLOT ($USER_NAME), Port $PORT ---"
     if [[ -z $UID_NUM ]]; then
         # Home sofort 0700 erstellen lassen, niemals für einen Moment aus /etc/skel 0755.
-        run useradd --create-home --user-group --groups "$SLOT_GROUP" --shell /bin/bash \
+        run groupadd --gid "$EXPECTED_UID" "$USER_NAME"
+        run useradd --create-home --uid "$EXPECTED_UID" --gid "$USER_NAME" --groups "$SLOT_GROUP" --shell /bin/bash \
             --home-dir "$SLOT_HOME" --comment "cocopi managed slot $SLOT" \
             --key UMASK=077 --key HOME_MODE=0700 "$USER_NAME"
         if [[ $MODE == apply ]]; then
@@ -128,11 +98,9 @@ PROFILE
 $USER_NAME ALL=(ALL:ALL) !ALL
 SUDOERS
     if [[ $MODE == apply ]]; then
-        visudo -cf "/etc/sudoers.d/cocopi-$SLOT" >/dev/null
-        # Root-Listing prüft auch NOPASSWD-Zugänge, die ein Passworttest übersehen würde.
-        if sudo -l -U "$USER_NAME" /usr/bin/true >/dev/null 2>&1; then
-            fail "Effektive sudo-Rechte für $USER_NAME erkannt. Nicht freigeben."
-        fi
+        visudo -cf /etc/sudoers >/dev/null
+        # Das gesamte Listing muss verweigern; nicht nur ein ausgewählter Befehl.
+        sudo_denied "$USER_NAME" || fail "Effektive sudo-Rechte für $USER_NAME nicht sicher ausgeschlossen. Nicht freigeben."
     fi
     managed_dir "/etc/systemd/system/user-$UID_NUM.slice.d" 755 root root
     managed_file "/etc/systemd/system/user-$UID_NUM.slice.d/50-cocopi.conf" 644 root root <<SLICE
@@ -146,9 +114,17 @@ MemoryMax=$MEMORY_MAX
 TasksMax=$TASKS_MAX
 SLICE
     note "Quote: $NVME_QUOTA_KIB KiB NVMe + $DATA_QUOTA_KIB KiB SATA = 80 GB dezimal; Soft=Hard."
-    # setquota ist zustandssetzende, wiederholbare Operation; keine Änderung globaler Quota-Aktivierung.
-    run setquota -u "$USER_NAME" "$NVME_QUOTA_KIB" "$NVME_QUOTA_KIB" "$NVME_INODES" "$NVME_INODES" "$NVME_MOUNT"
-    run setquota -u "$USER_NAME" "$DATA_QUOTA_KIB" "$DATA_QUOTA_KIB" "$DATA_INODES" "$DATA_INODES" "$DATA_MOUNT"
+    # setquota nur bei Abweichung; aktive Quota selbst wird hier nie verändert.
+    if [[ $MODE == dry-run ]] || ! quota_matches "$NVME_MOUNT" "$NVME_QUOTA_KIB" "$NVME_INODES" 2>/dev/null; then
+        run setquota -u "$USER_NAME" "$NVME_QUOTA_KIB" "$NVME_QUOTA_KIB" "$NVME_INODES" "$NVME_INODES" "$NVME_MOUNT"
+    fi
+    if [[ $MODE == dry-run ]] || ! quota_matches "$DATA_MOUNT" "$DATA_QUOTA_KIB" "$DATA_INODES" 2>/dev/null; then
+        run setquota -u "$USER_NAME" "$DATA_QUOTA_KIB" "$DATA_QUOTA_KIB" "$DATA_INODES" "$DATA_INODES" "$DATA_MOUNT"
+    fi
+    if [[ $MODE == apply ]]; then
+        quota_matches "$NVME_MOUNT" "$NVME_QUOTA_KIB" "$NVME_INODES" || fail "NVMe-Quote für $SLOT nach Setzen nicht bestätigt. Kein Dienststart."
+        quota_matches "$DATA_MOUNT" "$DATA_QUOTA_KIB" "$DATA_INODES" || fail "SATA-Quote für $SLOT nach Setzen nicht bestätigt. Kein Dienststart."
+    fi
     managed_file "$SLOT_ETC/hub.env" 644 root root <<ENV
 HUB_SLOT=$SLOT
 HUB_HOST=$HUB_BIND
@@ -187,8 +163,14 @@ ENV
     else
         systemctl daemon-reload
         if systemctl is-active --quiet "user-$UID_NUM.slice"; then
-            systemctl set-property --runtime "user-$UID_NUM.slice" \
-                "CPUQuota=$CPU_QUOTA" "MemoryHigh=$MEMORY_HIGH" "MemoryMax=$MEMORY_MAX" "TasksMax=$TASKS_MAX"
+            # Keine Laufzeitänderung, wenn die effektiven Werte schon stimmen.
+            actual=$(systemctl show "user-$UID_NUM.slice" -p MemoryHigh -p MemoryMax -p TasksMax -p CPUQuotaPerSecUSec)
+            wanted_cpu=$(python3 -c 'import sys; print(int(float(sys.argv[1].rstrip("%"))*10000))' "$CPU_QUOTA")
+            if ! python3 "$BASE/slice-read.py" "$wanted_cpu" "$(numfmt --from=iec "$MEMORY_HIGH")" \
+                "$(numfmt --from=iec "$MEMORY_MAX")" "$TASKS_MAX" <<< "$actual"; then
+                systemctl set-property --runtime "user-$UID_NUM.slice" \
+                    "CPUQuota=$CPU_QUOTA" "MemoryHigh=$MEMORY_HIGH" "MemoryMax=$MEMORY_MAX" "TasksMax=$TASKS_MAX"
+            fi
         fi
         if [[ $(loginctl show-user "$USER_NAME" -p Linger --value 2>/dev/null || true) != yes ]]; then
             loginctl enable-linger "$USER_NAME"

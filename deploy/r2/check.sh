@@ -8,7 +8,7 @@ FAILURES=0
 point() {
     local title=$1
     shift
-    if "$@"; then
+    if ( "$@" ); then
         printf 'OK: %s\n' "$title"
     else
         printf 'FEHLER: %s\n' "$title"
@@ -33,7 +33,7 @@ no_privileged_groups() {
 no_sudo() {
     # -l fragt Berechtigung für true ab, führt es NICHT aus. Zusätzlich echter
     # unprivilegierter Negativversuch ohne Passwort und ohne Root-Nutzlast.
-    ! sudo -l -U "$USER_NAME" /usr/bin/true >/dev/null 2>&1 &&
+    sudo_denied "$USER_NAME" &&
         ! as_slot 'sudo -n -- /usr/bin/true </dev/null >/dev/null 2>&1'
 }
 no_docker() {
@@ -45,31 +45,16 @@ foreign_home_denied() {
     # test -r/-x prüft effektive Rechte inkl. ACLs, ohne fremde Dateinamen zu lesen.
     as_slot '[[ -d "$1" && ! -r "$1" && ! -x "$1" ]]' "$home"
 }
-quota_exact() {
-    local mount=$1 blocks=$2 inodes=$3 device
-    device=$(findmnt -n -o SOURCE --target "$mount") || return 1
-    python3 "$BASE/quota-read.py" "$device" "$UID_NUM" "$blocks" "$inodes"
-}
+quota_exact() { quota_matches "$@"; }
 
 slice_limits() {
-    local expected_cpu expected_high expected_max actual_cpu
+    local expected_cpu expected_high expected_max actual
     expected_cpu=$(python3 -c 'import sys; print(int(float(sys.argv[1].rstrip("%"))*10000))' "$CPU_QUOTA")
     expected_high=$(numfmt --from=iec "$MEMORY_HIGH")
     expected_max=$(numfmt --from=iec "$MEMORY_MAX")
     systemctl is-active --quiet "user-$UID_NUM.slice" || return 1
-    actual_cpu=$(systemctl show "user-$UID_NUM.slice" -p CPUQuotaPerSecUSec --value)
-    # systemd formatiert Zeitwerte z. B. als 1s / 500ms; Python normalisiert.
-    python3 - "$expected_cpu" "$actual_cpu" <<'TIME'
-import re
-import sys
-units = {"us": 1, "ms": 1000, "s": 1000000, "min": 60000000}
-text = sys.argv[2]
-parts = re.findall(r"([0-9.]+)(us|ms|s|min)", text)
-sys.exit(0 if parts and int(sum(float(n) * units[u] for n, u in parts)) == int(sys.argv[1]) else 1)
-TIME
-    [[ $(systemctl show "user-$UID_NUM.slice" -p MemoryHigh --value) == "$expected_high" &&
-       $(systemctl show "user-$UID_NUM.slice" -p MemoryMax --value) == "$expected_max" &&
-       $(systemctl show "user-$UID_NUM.slice" -p TasksMax --value) == "$TASKS_MAX" ]]
+    actual=$(systemctl show "user-$UID_NUM.slice" -p CPUQuotaPerSecUSec -p MemoryHigh -p MemoryMax -p TasksMax) || return 1
+    python3 "$BASE/slice-read.py" "$expected_cpu" "$expected_high" "$expected_max" "$TASKS_MAX" <<< "$actual"
 }
 linger_active() { [[ $(loginctl show-user "$USER_NAME" -p Linger --value) == yes ]]; }
 token_private() {

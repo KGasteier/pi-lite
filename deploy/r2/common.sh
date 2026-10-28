@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Gemeinsame Funktionen; keine Systemänderung beim Laden.
 set -euo pipefail
+# Geheimnisse niemals in xtrace übernehmen, auch nicht bei bash -x.
+set +x
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export LC_ALL=C
 BASE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -58,7 +60,7 @@ parse_args() {
     if [[ $operation == teardown && $EXPLICIT_SLOTS == false ]]; then
         fail 'Rückbau benötigt ausdrücklich --slots; es gibt dafür keine Standardauswahl.'
     fi
-    SLOT_LIST=${SLOT_LIST:-$DEFAULT_SLOTS}
+    if [[ $EXPLICIT_SLOTS == false ]]; then SLOT_LIST=$DEFAULT_SLOTS; fi
     [[ $SLOT_LIST =~ ^s(0[1-9]|10)(,s(0[1-9]|10))*$ ]] || fail 'Slots müssen s01 bis s10 sein, getrennt durch Komma, ohne Leerzeichen.'
     IFS=, read -r -a SELECTED <<< "$SLOT_LIST"
     local seen=' '
@@ -77,6 +79,7 @@ slot_vars() {
     SLOT_HOME=$HOME_BASE/$USER_NAME
     SLOT_DATA=$DATA_BASE/$USER_NAME
     PORT=$((HUB_PORT_BASE + 10#${SLOT#s}))
+    EXPECTED_UID=$((SLOT_UID_BASE + 10#${SLOT#s}))
     SLOT_ETC=/etc/cocopi/slots/$SLOT
     UNIT=cocopi-hub@$SLOT.service
     UID_NUM=
@@ -128,12 +131,14 @@ managed_file() {
     fi
     no_symlinks "$path" || fail "Symlink im verwalteten Dateipfad: $path."
     root_controlled "$(dirname -- "$path")" || fail "Dateieltern nicht rootverwaltet: $path."
-    tmp=$(mktemp)
+    tmp=$(mktemp "$(dirname -- "$path")/.cocopi-write.XXXXXXXX")
     chmod 600 "$tmp"
     # Inhalt enthält keine Geheimnisse; Token wird separat ohne Ausgabe erzeugt.
     if ! { cat > "$tmp"; }; then rm -f -- "$tmp"; fail "Dateierzeugung gescheitert: $path."; fi
     if [[ ! -f $path ]] || ! cmp -s -- "$tmp" "$path"; then
-        install -m "$mode" -o "$owner" -g "$group" -- "$tmp" "$path"
+        chmod "$mode" "$tmp"
+        chown "$owner:$group" "$tmp"
+        mv -fT -- "$tmp" "$path"
     elif [[ $(stat -c '%a:%U:%G' "$path") != "$mode:$owner:$group" ]]; then
         chmod "$mode" "$path"
         chown "$owner:$group" "$path"
@@ -145,9 +150,11 @@ assert_account() {
     local record name password uid gid comment home shell groups group
     record=$(getent passwd "$USER_NAME") || fail "Konto fehlt: $USER_NAME."
     IFS=: read -r name password uid gid comment home shell <<< "$record"
+    # Passwort/GID werden nur zum sicheren Zerlegen des passwd-Datensatzes gelesen.
+    [[ -n $password && $gid =~ ^[0-9]+$ ]] || fail "Unvollständiger Kontodatensatz für $USER_NAME."
     [[ $name == "$USER_NAME" && $home == "$SLOT_HOME" && $shell == /bin/bash && $comment == "cocopi managed slot $SLOT" ]] || fail "Bestehendes Konto $USER_NAME ist nicht eindeutig von diesem Skript verwaltet."
-    (( uid >= 1000 )) || fail "Unerwartete System-UID für $USER_NAME."
-    [[ $(id -gn "$USER_NAME") == "$USER_NAME" ]] || fail "Private Primärgruppe fehlt: $USER_NAME."
+    (( uid == EXPECTED_UID && uid >= 1000 )) || fail "Unerwartete UID für $USER_NAME (erwartet $EXPECTED_UID)."
+    [[ $(id -gn "$USER_NAME") == "$USER_NAME" && $gid == "$EXPECTED_UID" ]] || fail "Private Primärgruppe / GID fehlt: $USER_NAME."
     groups=$(id -nG "$USER_NAME")
     for group in $groups; do
         [[ $group == "$USER_NAME" || $group == "$SLOT_GROUP" ]] || fail "Unerlaubte Gruppe $group bei $USER_NAME. Nicht automatisch entfernen; prüfen."
@@ -155,6 +162,24 @@ assert_account() {
     [[ " $groups " == *" $SLOT_GROUP "* ]] || fail "Slotgruppe fehlt: $USER_NAME."
     no_symlinks "$SLOT_HOME" && no_symlinks "$SLOT_DATA" || fail "Symlink am Slotpfad von $USER_NAME."
     UID_NUM=$uid
+}
+
+sudo_denied() {
+    local output status=0 entries line
+    output=$(sudo -l -U "$1" 2>&1) || status=$?
+    if (( status != 0 )); then
+        [[ $output == *'is not allowed to run sudo'* || $output == *'may not run sudo'* ]]
+        return
+    fi
+    # Jede erlaubende Regel ist ein Fehler, nicht nur eine Freigabe von true.
+    entries=0
+    while IFS= read -r line; do
+        if [[ $line =~ ^[[:space:]]*\( ]]; then
+            [[ $line =~ \)[[:space:]]+!ALL[[:space:]]*$ ]] || return 1
+            entries=$((entries + 1))
+        fi
+    done <<< "$output"
+    (( entries > 0 ))
 }
 
 user_systemctl() {
@@ -174,6 +199,12 @@ check_mounts() {
         quotaon -p -u "$mount" | grep -Eq '(^|[[:space:]])is on$' || fail "Userquote an $mount nicht aktiv / nicht nachweisbar."
     done
     [[ $(findmnt -n -o SOURCE --target "$NVME_MOUNT") != "$(findmnt -n -o SOURCE --target "$DATA_MOUNT")" ]] || fail 'Teilbudgets dürfen nicht auf dasselbe Dateisystem zeigen.'
+}
+
+quota_matches() {
+    local mount=$1 blocks=$2 inodes=$3 device
+    device=$(findmnt -n -o SOURCE --target "$mount") || return 1
+    python3 "$BASE/quota-read.py" "$device" "$UID_NUM" "$blocks" "$inodes"
 }
 
 check_hub_contract() {

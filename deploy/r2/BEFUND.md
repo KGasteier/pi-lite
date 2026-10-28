@@ -1,6 +1,6 @@
 # R2-Befund · I1-S4-provision
 
-Lesend geprüft am 28.10.2026, etwa 18:08–18:20 +01:00, als
+Lesend geprüft am 28.10.2026, etwa 18:08–18:35 +01:00, als
 `uid=1000(medienhaus)`. Keine Konten, Dienste, Quoten oder Mounts verändert.
 Worktree `v3/s4`, Ausgangspunkt `eb534bb`; pi-hub read-only bei `3dae8ca`.
 
@@ -14,6 +14,7 @@ Worktree `v3/s4`, Ausgangspunkt `eb534bb`; pi-hub read-only bei `3dae8ca`.
 | `systemctl --version`, `stat -fc %T /sys/fs/cgroup` | systemd 259, cgroup2fs | Accountgrenzen als rootverwaltetes `user-UID.slice.d`-Drop-in |
 | `command -v …` und explizit `/usr/sbin/…` | Quota/Setquota/Quotaon/Repquota/XFS-Quota und Shellcheck fehlen; runuser/useradd/usermod/userdel/groupadd unter `/usr/sbin` vorhanden | Skripte ergänzen System-PATH; keine Installation. Shellcheck nicht ausführbar |
 | Werkzeugsuche mit vereinbartem PATH | node `/usr/bin/node`, python3/git/cc/make/tar/openssl/ss/flock vorhanden; pi nur persönlicher mise-Shim; Rust nur persönliches `~/.cargo/bin`; ffmpeg nicht gefunden | Rootverwaltete gemeinsame pi-/Rust-/ffmpeg-Installation separat nötig; keine Shims aus medienhaus-HOME verlinken |
+| `getent passwd 20001…20010`, `getent group 20001…20010` | Beim lesenden Check keine Einträge | Feste Slot-UID/GID 20001…20010 vorgeschlagen; vor Apply erneut prüfen und hostweit reservieren |
 | `getent passwd cocopi-s01…s10`, `getent group …` | Keine Slotkonten / keine cocopi-slots-Gruppe; docker-Gruppe vorhanden (GID 116), sudo-Gruppe vorhanden | Keine vorhandenen Slotdaten migriert; privilegierte Gruppen und effektive sudo-Rechte prüfen |
 | `server.mjs` bei Hub `3dae8ca` (Textprüfung) | HUB_HOST/PORT/PI_BIN/ROOTS/STATE vorhanden; Token über HUB_TOKEN oder private Datei; Registry kann Prozesse wieder starten | Neue getrennte Instanzen, beim Pilot HUB_STATE=off. Keine Modellaufrufe, kein Token aus Echtdaten gelesen |
 | gleiche Textprüfung | Kein belegter Vertrag für Gerätebindung, zwei offene / eine aktive Session oder globale CPU-Queue | Apply verlangt vom Hub-Besitzer bestätigten Vertrag; Marker allein ist keine Sicherheitsprüfung |

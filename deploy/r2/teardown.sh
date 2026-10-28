@@ -37,10 +37,33 @@ for slot in "${SELECTED[@]}"; do
     marker=$STATE_BASE/$SLOT.teardown
     archive_dir=$ARCHIVE_BASE/$SLOT
     archive=$archive_dir/snapshot.tar
+    [[ -f $STATE_BASE/$SLOT.uid ]] || fail "Kein UID-Inventar für $SLOT; keine Rückbauänderung."
     if [[ -f $marker && $(< "$marker") == purged ]]; then
-        [[ -z $UID_NUM ]] || fail "Nach purged existiert wieder $USER_NAME. Neue Zuordnung manuell prüfen."
+        [[ -z $UID_NUM && ! -e $SLOT_HOME && ! -e $SLOT_DATA && ! -e $SLOT_ETC ]] || fail "Nach purged existieren wieder Slotkonto/-pfade. Neue Zuordnung manuell prüfen."
         note "OK: $SLOT bereits mit Archiv rückgebaut; keine erneute Änderung."
         continue
+    fi
+    if [[ -f $marker ]]; then
+        case $(< "$marker") in
+            preparing|archived|purging) ;;
+            *) fail "Unbekannter Rückbaustatus für $SLOT; Recovery nötig." ;;
+        esac
+    fi
+    managed_dir "$ARCHIVE_BASE" 700 root root
+    managed_dir "$archive_dir" 700 root root
+    if [[ -f $marker && $(< "$marker") == purging ]]; then
+        [[ $PURGE == true ]] || fail 'Purge war bereits begonnen; Fortsetzen benötigt --purge.'
+        [[ -f $archive_dir/purge-receipt ]] || fail 'Purge-Sicherungsbeleg fehlt; Recovery nötig.'
+        purge_file=$(< "$archive_dir/purge-receipt")
+        [[ $purge_file =~ ^purge\.[a-zA-Z0-9]+\.tar$ ]] || fail 'Ungültiger Purge-Sicherungsbeleg.'
+        (cd -- "$archive_dir" && sha256sum --check --status "$purge_file.sha256") || fail 'Purge-Archiv beschädigt; Recovery nötig.'
+        tar --list --file "$archive_dir/$purge_file" >/dev/null || fail 'Purge-Archiv nicht lesbar.'
+        if [[ -z $UID_NUM ]]; then
+            [[ ! -e $SLOT_HOME && ! -e $SLOT_DATA && ! -e $SLOT_ETC ]] || fail 'Konto fehlt, aber Slotdaten existieren noch; Recovery nötig.'
+            managed_file "$marker" 600 root root <<< purged
+            note "OK: $SLOT nach bereits erfolgter Kontolöschung abgeschlossen; Archiv erhalten."
+            continue
+        fi
     fi
     if [[ -z $UID_NUM ]]; then
         fail "Konto $USER_NAME fehlt, aber kein abgeschlossener Rückbau belegt. Keine Daten löschen."
@@ -50,14 +73,21 @@ for slot in "${SELECTED[@]}"; do
         record=$(getent passwd "$USER_NAME")
         IFS=: read -r _ _ record_uid _ comment home shell <<< "$record"
         [[ $comment == "cocopi managed slot $SLOT" && $home == "$SLOT_HOME" &&
-           $record_uid == "$UID_NUM" && $UID_NUM -ge 1000 &&
+           $record_uid == "$UID_NUM" && $UID_NUM == "$EXPECTED_UID" && $UID_NUM -ge 1000 &&
+           $(id -gn "$USER_NAME") == "$USER_NAME" &&
+           $(id -g "$USER_NAME") == "$EXPECTED_UID" &&
            ( $shell == /usr/sbin/nologin || $shell == /bin/bash ) ]] || fail "Rückbaukonto $SLOT weicht vom Inventar ab."
     else
         assert_account
     fi
+    # Sicherheitsgrenze nach unten: bereits gefüllte Slotpfade dürfen keine
+    # fremd besitzenden Wurzeln haben, auch wenn ein Rückbaumarker existiert.
+    for root_path in "$SLOT_HOME" "$SLOT_DATA"; do
+        if [[ -e $root_path ]]; then
+            [[ -d $root_path && $(stat -c %u "$root_path") == "$UID_NUM" ]] || fail 'Slotwurzel gehört nicht dem bestätigten Konto.'
+        fi
+    done
     [[ -f $STATE_BASE/$SLOT.uid && $(< "$STATE_BASE/$SLOT.uid") == "$UID_NUM" ]] || fail "UID-Inventar für $SLOT fehlt / weicht ab."
-    managed_dir "$ARCHIVE_BASE" 700 root root
-    managed_dir "$archive_dir" 700 root root
     if [[ ! -f $marker ]]; then
         managed_file "$marker" 600 root root <<< preparing
     fi
@@ -81,7 +111,11 @@ for slot in "${SELECTED[@]}"; do
         fail "Noch Prozesse von $USER_NAME aktiv. Kein Archiv/kein Purge; Nutzer informieren und separat geordnet beenden."
     fi
     no_symlinks "$SLOT_HOME" && no_symlinks "$SLOT_DATA" && no_symlinks "$SLOT_ETC" || fail 'Symlink an Rückbaupfad.'
-    [[ -d $SLOT_HOME && -d $SLOT_DATA && -d $SLOT_ETC ]] || fail 'Archivquellen unvollständig; erst manuell prüfen.'
+    [[ ! -e $SLOT_ETC || $(stat -c '%a:%U' "$SLOT_ETC") == 755:root ]] || fail 'Slotkonfiguration nicht rootverwaltet.'
+    phase=$(< "$marker")
+    if [[ $phase != archived && $phase != purging ]]; then
+        [[ -d $SLOT_HOME && -d $SLOT_DATA && -d $SLOT_ETC ]] || fail 'Archivquellen unvollständig; erst manuell prüfen.'
+    fi
     # Untergeordnete Mounts würden mit --one-file-system nicht gesichert. Dann
     # abbrechen statt ein unvollständiges Archiv zur Löschfreigabe zu machen.
     python3 - "$SLOT_HOME" "$SLOT_DATA" "$SLOT_ETC" <<'MOUNTS'
@@ -106,16 +140,35 @@ MOUNTS
             "${SLOT_HOME#/}" "${SLOT_DATA#/}" "${SLOT_ETC#/}" "${STATE_BASE#/}/$SLOT.uid"
         tar --list --file "$archive.tmp" >/dev/null
         mv -- "$archive.tmp" "$archive"
+    else
+        [[ -f $archive.sha256 ]] || fail 'Archiv ohne abgeschlossenes Prüfsummenmanifest gefunden; Recovery nötig, nicht als gültig übernehmen.'
     fi
     if [[ ! -f $archive.sha256 ]]; then
         (cd -- "$archive_dir" && sha256sum snapshot.tar > snapshot.tar.sha256)
     fi
     (cd -- "$archive_dir" && sha256sum --check --status snapshot.tar.sha256) || fail 'Archiv-Prüfsumme stimmt nicht; nichts löschen.'
     tar --list --file "$archive" >/dev/null || fail 'Archiv nicht lesbar; nichts löschen.'
-    managed_file "$marker" 600 root root <<< archived
-    if [[ $PURGE == false ]]; then
+    if [[ $phase != purging ]]; then managed_file "$marker" 600 root root <<< archived; fi
+    if [[ $PURGE == false && $phase != purging ]]; then
         note "OK: $SLOT gesperrt und archiviert; Home/Daten unverändert. Archiv enthält Geheimnisse: nur root, extern verschlüsselt sichern."
         continue
+    fi
+    if [[ $PURGE == false ]]; then
+        fail 'Purge war bereits begonnen; Fortsetzen benötigt ausdrücklich --purge.'
+    fi
+    # Direkt vor dem ersten Purge ein zusätzliches, neues Archiv anlegen: auch
+    # seit der ersten Sicherung hinzugekommene Dateien sind damit enthalten.
+    if [[ $phase != purging ]]; then
+        purge_archive=$(mktemp "$archive_dir/purge.XXXXXXXX.tar")
+        tar --create --file "$purge_archive" --numeric-owner --acls --xattrs \
+            --one-file-system --directory / -- \
+            "${SLOT_HOME#/}" "${SLOT_DATA#/}" "${SLOT_ETC#/}" "${STATE_BASE#/}/$SLOT.uid"
+        tar --list --file "$purge_archive" >/dev/null
+        purge_file=$(basename -- "$purge_archive")
+        (cd -- "$archive_dir" && sha256sum "$purge_file" > "$purge_file.sha256")
+        (cd -- "$archive_dir" && sha256sum --check --status "$purge_file.sha256")
+        managed_file "$archive_dir/purge-receipt" 600 root root <<< "$purge_file"
+        managed_file "$marker" 600 root root <<< purging
     fi
     # Kein rm -rf und kein userdel -r: offene/veränderte Pfade oder neue Mounts
     # sollen fehlschlagen. Python löscht nur exakt die beiden bestätigten Wurzeln.
@@ -128,6 +181,8 @@ import stat
 import sys
 uid = int(sys.argv[3])
 for path in sys.argv[1:3]:
+    if not os.path.lexists(path):
+        continue  # Wiederaufnahme eines bereits begonnenen Purge.
     data = os.lstat(path)
     if not stat.S_ISDIR(data.st_mode) or data.st_uid != uid or os.path.ismount(path):
         sys.exit('FEHLER: Purge-Pfad nicht mehr eindeutig. Nichts weiter löschen.')
@@ -135,11 +190,16 @@ for path in sys.argv[1:3]:
 if not shutil.rmtree.avoids_symlink_attacks:
     sys.exit('FEHLER: Sichere Löschfunktion nicht verfügbar.')
 for path in sys.argv[1:3]:
-    shutil.rmtree(path)
+    if os.path.lexists(path):
+        shutil.rmtree(path)
 PURGE
     # Nur rootverwaltete Metadaten entfernen; globale Vorlage/Gruppe bleiben für andere Slots.
-    rm -- "$SLOT_ETC/token" "$SLOT_ETC/hub.env"
-    rmdir -- "$SLOT_ETC"
+    if [[ -d $SLOT_ETC ]]; then
+        rm -f -- "$SLOT_ETC/token" "$SLOT_ETC/hub.env"
+        rmdir -- "$SLOT_ETC"
+    fi
+    # Neues Konto könnte sonst diese UID erben: feste Slot-IDs werden verwendet;
+    # private Gruppe, Inventar und Limits bleiben als zusätzliche Reservierung.
     userdel "$USER_NAME"
     # UID-Tombstone und Slice-/Quota-Grenzen bleiben absichtlich erhalten:
     # unbekannte Restdateien dieser UID könnten sonst durch UID-Recycling zugänglich werden.
