@@ -63,7 +63,7 @@ impl HubAdapter {
             Request::Pair => { let v = c.hub.start_pairing()?; let until = v["gueltig_bis"].as_u64().ok_or("R2 hat keine Gültigkeitsdauer bestätigt.")?; Ok(Reply::Pair(PairCode { code: string(&v,"code"), url: string(&v,"url"), valid_for: Duration::from_millis(until.saturating_sub(now_ms())) })) }
             Request::PairDecision(id, allow) => { c.hub.approve_pairing(&id, allow)?; Ok(Reply::PairDone) }
             Request::Revoke(id) => { c.hub.revoke(&id)?; Ok(Reply::Revoked(id)) }
-            Request::Rename(_) => Err("Der Gerätename kann auf R2 in I1 noch nicht geändert werden. Es wurde nichts umbenannt.".into()),
+            Request::Rename => Err("Der Gerätename kann auf R2 in I1 noch nicht geändert werden. Es wurde nichts umbenannt.".into()),
             Request::Sessions => Ok(sessions(&c.hub.sessions()?)),
             Request::Open(id) => {
                 let opened = c.hub.open_session(if id.is_empty() { None } else { Some(id.as_str()) }, None, None)?;

@@ -7,6 +7,27 @@
 use std::sync::{mpsc, Arc};
 
 use md_egui::DocCache;
+#[cfg(test)]
+mod config_tests {
+    #[test]
+    fn corrupt_backend_json_uses_the_same_mode_filter_as_an_empty_list() {
+        let root = std::env::temp_dir().join(format!("s2-corrupt-backends-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("backends.json");
+        std::fs::write(&path, "{kaputt").unwrap();
+        let config = pi_backend::backends::parse(&std::fs::read_to_string(&path).unwrap());
+        assert!(config.is_err());
+        let mut net = super::NetState::new(std::sync::Arc::new(|| {}), true);
+        net.start_from(config);
+        let expected = pi_backend::backends::parse("[]").unwrap();
+        assert_eq!(net.backends.len(), expected.len());
+        assert_eq!(net.backends.iter().any(|b| b.cfg.id == "local"),
+            expected.iter().any(|b| b.id == "local"));
+        assert!(net.notices.iter().any(|n| n.0.contains("Verbindungsliste unlesbar")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
 use pi_backend::backends::{self, BackendCfg};
 use pi_backend::instances::{EvSink, Ev, InstanceInfo, Instances, Spec, State, Subscription, Tagged};
 use serde_json::{json, Value};
@@ -580,12 +601,17 @@ impl NetState {
     /// Backends aus `backends.json` laden und die eingeschalteten verbinden (einmalig, beim
     /// ersten Öffnen der Leiste – der Einzel-Chat bleibt davon unberührt).
     pub fn start(&mut self) {
+        self.start_from(backends::load());
+    }
+
+    fn start_from(&mut self, config: Result<Vec<BackendCfg>, String>) {
         self.started = true;
-        let list = match backends::load() {
+        let list = match config {
             Ok(l) => l,
             Err(e) => {
                 self.notice(format!("Verbindungsliste unlesbar: {e}"), true);
-                Vec::new()
+                // Auch der Fehlerpfad durchläuft den zentralen Modusfilter.
+                backends::parse("[]").unwrap_or_default()
             }
         };
         self.backends = list.into_iter().map(Backend::new).collect();

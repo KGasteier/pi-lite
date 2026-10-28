@@ -20,7 +20,6 @@ pub enum InviteError {
     Expired,
     Used,
     Unknown,
-    Offline(String),
     RateLimited,
     Revoked,
     Other(String),
@@ -31,7 +30,6 @@ impl InviteError {
             Self::Expired => "Diese Einladung ist abgelaufen. Bitte deine Seminarleitung um eine neue.".into(),
             Self::Used => "Diese Einladung wurde schon benutzt. Jede Einladung gilt nur einmal. Wenn du das nicht warst, sag deiner Seminarleitung Bescheid.".into(),
             Self::Unknown => "Dieser Code passt zu keiner Einladung. Prüfe die Zeichen oder öffne den Link direkt.".into(),
-            Self::Offline(until) => format!("R2 ist gerade nicht erreichbar. Prüfe deine Internetverbindung. Die Einladung bleibt gültig bis {until}."),
             Self::RateLimited => "Zu viele Versuche. Warte eine Minute und versuche es dann noch einmal.".into(),
             Self::Revoked => REVOKED_TEXT.into(),
             Self::Other(s) => s.clone(),
@@ -102,7 +100,7 @@ pub enum Request {
     PairStatus(String),
     PairDecision(String, bool),
     Revoke(String),
-    Rename(String),
+    Rename,
     Sessions,
     Open(String),
     Rest(String),
@@ -133,7 +131,6 @@ pub enum Reply {
     Revoked(String),
     Sessions(Vec<Session>),
     Opened(String, Vec<Session>),
-    Messages(Vec<String>),
     Ok,
     Limit,
     Error(InviteError),
@@ -171,6 +168,20 @@ struct Pairing {
     expires: Instant,
     texture: Option<egui::TextureHandle>,
 }
+#[derive(Clone, Debug)]
+struct ChatMessage {
+    speaker: String,
+    text: String,
+}
+impl ChatMessage {
+    fn new(speaker: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            speaker: speaker.into(),
+            text: text.into(),
+        }
+    }
+}
+
 pub struct Desktop {
     pub enabled: bool,
     demo: bool,
@@ -196,7 +207,7 @@ pub struct Desktop {
     limit: bool,
     sessions: Vec<Session>,
     selected: Option<String>,
-    messages: Vec<String>,
+    messages: Vec<ChatMessage>,
     prompt: String,
     files: bool,
     rename: bool,
@@ -205,7 +216,7 @@ pub struct Desktop {
     confirm_host: Option<String>,
     last_event: Option<Instant>,
     watch_started: bool,
-    chat_by_session: std::collections::HashMap<String, Vec<String>>,
+    chat_by_session: std::collections::HashMap<String, Vec<ChatMessage>>,
     streaming: std::collections::HashMap<String, String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -338,7 +349,7 @@ impl Desktop {
                 self.chat_by_session
                     .entry(id)
                     .or_default()
-                    .push(format!("Du\n\n{text}"));
+                    .push(ChatMessage::new("Du", text));
             }
             Reply::SessionUpdated(session) => {
                 if let Some(s) = self.sessions.iter_mut().find(|s| s.id == session.id) {
@@ -368,6 +379,8 @@ impl Desktop {
                 self.apply(Reply::Pair(pair));
             }
             Reply::Pair(code) => {
+                // Der QR-Schritt ist eine eigene Ansicht, kein Dialog im Einstellungsfenster.
+                self.settings = None;
                 self.pairing = Some(Pairing {
                     expires: Instant::now() + code.valid_for,
                     code,
@@ -403,13 +416,9 @@ impl Desktop {
                 self.sessions = sessions;
                 self.connected = true;
             }
-            Reply::Messages(messages) => {
-                self.messages = messages;
-                self.connected = true;
-            }
             Reply::Limit => self.limit = true,
             Reply::Error(e) => {
-                if matches!(e, InviteError::Offline(_) | InviteError::Revoked) {
+                if e == InviteError::Revoked {
                     self.connected = false;
                 }
                 if e == InviteError::Revoked {
@@ -525,7 +534,10 @@ impl Desktop {
                         .collect::<Vec<_>>()
                         .join("\n");
                     if !text.is_empty() {
-                        self.chat_by_session.entry(id).or_default().push(text);
+                        self.chat_by_session
+                            .entry(id)
+                            .or_default()
+                            .push(ChatMessage::new("cocopi · R2", text));
                     }
                 }
             }
@@ -653,8 +665,21 @@ impl Desktop {
                 if let Some(a) = &self.account {
                     ui.label(format!("Angemeldet als {} · {} @ R2. Dieser Rechner heißt jetzt ‚{}‘.", a.person, a.slot, a.device_name));
                     ui.add_space(16.0);
-                    ui.horizontal(|ui| { if ui.button("Name ändern").clicked() { self.rename = true; } if ui.button("Los geht’s").clicked() { self.welcome_done = true; } });
-                    if self.rename { ui.text_edit_singleline(&mut self.device_name); if ui.button("Namen speichern").clicked() { self.call(Request::Rename(self.device_name.clone())); self.rename = false; } }
+                    ui.horizontal(|ui| {
+                        if ui.button("Name ändern").clicked() {
+                            self.rename = true;
+                        }
+                        if ui.button("Los geht’s").clicked() {
+                            self.welcome_done = true;
+                        }
+                    });
+                    if self.rename {
+                        ui.text_edit_singleline(&mut self.device_name);
+                        if ui.button("Namen speichern").clicked() {
+                            self.call(Request::Rename);
+                            self.rename = false;
+                        }
+                    }
                 } else {
                     ui.label("Du hast eine Einladung bekommen – als Link oder als QR-Code. Öffne den Link, oder füge ihn hier ein."); ui.add_space(18.0);
                     ui.add(egui::TextEdit::singleline(&mut self.invitation).hint_text("Einladungslink oder Code").desired_width(470.0)); ui.add_space(12.0);
@@ -671,9 +696,9 @@ impl Desktop {
     }
     fn main(&mut self, ui: &mut Ui) {
         egui::Panel::left("v3-sessions")
-            .exact_size(270.0)
+            .exact_size(360.0)
             .show(ui, |ui| {
-                ui.heading("Sessions");
+                ui.heading("Sessions · R2");
                 ui.add_space(12.0);
                 if ui.button("Neue Session").clicked() {
                     self.call(Request::Open(String::new()));
@@ -684,46 +709,66 @@ impl Desktop {
                 let mut sessions = self.sessions.iter().collect::<Vec<_>>();
                 sessions.sort_by_key(|s| !s.pinned);
                 for s in sessions {
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .selectable_label(self.selected.as_ref() == Some(&s.id), &s.title)
-                            .clicked()
-                        {
-                            self.selected = Some(s.id.clone());
-                            action = Some(Request::Open(s.id.clone()));
-                        }
-                        ui.menu_button("…", |ui| {
-                            if ui
-                                .button(if s.pinned {
-                                    "Nicht mehr anheften"
-                                } else {
-                                    "Anheften"
-                                })
-                                .clicked()
-                            {
-                                pin = Some(s.id.clone());
-                                ui.close();
-                            }
-                            if ui.button("Ruhen lassen").clicked() {
-                                action = Some(Request::Rest(s.id.clone()));
-                                ui.close();
-                            }
+                    ui.add_space(8.0);
+                    let selected = self.selected.as_ref() == Some(&s.id);
+                    let fill = if selected {
+                        Color32::from_rgb(0x32, 0x3e, 0x4d)
+                    } else {
+                        Color32::TRANSPARENT
+                    };
+                    egui::Frame::new()
+                        .fill(fill)
+                        .corner_radius(6.0)
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.menu_button("…", |ui| {
+                                            if ui
+                                                .button(if s.pinned {
+                                                    "Nicht mehr anheften"
+                                                } else {
+                                                    "Anheften"
+                                                })
+                                                .clicked()
+                                            {
+                                                pin = Some(s.id.clone());
+                                                ui.close();
+                                            }
+                                            if ui.button("Ruhen lassen").clicked() {
+                                                action = Some(Request::Rest(s.id.clone()));
+                                                ui.close();
+                                            }
+                                        });
+                                        if s.state != SessionState::Ready {
+                                            ui.label(
+                                                RichText::new(s.state.text())
+                                                    .small()
+                                                    .color(s.state.color()),
+                                            );
+                                        }
+                                        let title = if s.local {
+                                            format!("{} · Dieser Rechner", s.title)
+                                        } else {
+                                            s.title.clone()
+                                        };
+                                        if ui
+                                            .add_sized(
+                                                [ui.available_width(), 28.0],
+                                                egui::Button::new(title).frame(false).truncate(),
+                                            )
+                                            .on_hover_text(&s.title)
+                                            .clicked()
+                                        {
+                                            self.selected = Some(s.id.clone());
+                                            action = Some(Request::Open(s.id.clone()));
+                                        }
+                                    },
+                                );
+                            });
                         });
-                    });
-                    ui.label(
-                        RichText::new(format!(
-                            "{}{}{}",
-                            s.state.text(),
-                            if s.state == SessionState::Ready {
-                                ""
-                            } else {
-                                " · "
-                            },
-                            if s.local { "Dieser Rechner" } else { "R2" }
-                        ))
-                        .color(s.state.color()),
-                    );
                 }
                 if let Some(id) = pin {
                     if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
@@ -758,7 +803,7 @@ impl Desktop {
                     .hint_text("Nachricht an die gewählte Session auf R2 …"),
             );
             ui.horizontal(|ui| {
-                ui.label("Modell: udk2/…");
+                ui.label("Modell: Standard");
                 if ui
                     .add_enabled(
                         self.connected && self.selected.is_some() && self.pending == 0,
@@ -793,11 +838,18 @@ impl Desktop {
             }
         } else {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let theme = md_egui::Theme::default();
-                for (i, text) in self.messages.iter().enumerate() { ui.add_space(18.0); md_egui::show_doc(ui, &theme, &md_core::parse(text), ("v3-demo", i)); }
+                for (i, message) in self.messages.iter().enumerate() {
+                    chat_message(ui, message, ("v3-demo", i));
+                }
                 let messages = self.selected.as_ref().and_then(|id| self.chat_by_session.get(id));
-                if let Some(messages) = messages { for (i, message) in messages.iter().enumerate() { ui.add_space(18.0); md_egui::show_doc(ui, &theme, &md_core::parse(message), ("v3-message", &self.selected, i)); } }
-                if let Some(text) = self.selected.as_ref().and_then(|id| self.streaming.get(id)) { ui.add_space(18.0); md_egui::show_doc(ui, &theme, &md_core::parse(text), "v3-streaming"); }
+                if let Some(messages) = messages {
+                    for (i, message) in messages.iter().enumerate() {
+                        chat_message(ui, message, ("v3-message", &self.selected, i));
+                    }
+                }
+                if let Some(text) = self.selected.as_ref().and_then(|id| self.streaming.get(id)) {
+                    chat_message(ui, &ChatMessage::new("cocopi · R2", text), "v3-streaming");
+                }
                 if self.messages.is_empty() && messages.is_none_or(|m| m.is_empty()) { ui.label("Wähle eine Session. Ohne Verbindung wird kein lokaler Ersatzagent gestartet."); }
             });
         }
@@ -806,7 +858,18 @@ impl Desktop {
         let Some(section) = self.settings else { return };
         let mut open = true;
         egui::Window::new("Einstellungen").id(egui::Id::new("v3-settings")).open(&mut open).default_width(740.0).anchor(egui::Align2::CENTER_CENTER, [0.0, -20.0]).show(ctx, |ui| {
-            ui.horizontal(|ui| { for (s, label) in SECTIONS { if ui.selectable_label(s == section, label).clicked() { self.settings = Some(s); if s == Section::Devices && self.account.is_some() { self.call(Request::Devices); } } } }); ui.separator(); ui.add_space(18.0);
+            ui.horizontal(|ui| {
+                for (s, label) in SECTIONS {
+                    if ui.selectable_label(s == section, label).clicked() {
+                        self.settings = Some(s);
+                        if s == Section::Devices && self.account.is_some() {
+                            self.call(Request::Devices);
+                        }
+                    }
+                }
+            });
+            ui.separator();
+            ui.add_space(18.0);
             match section {
                 Section::Mode => { ui.heading("Wo arbeitet der Agent?"); ui.add_space(18.0);
                     if ui.radio(self.mode == Mode::RemoteOnly, "Nur auf R2 (empfohlen)").clicked() { self.switch(Mode::RemoteOnly); }
@@ -817,12 +880,36 @@ impl Desktop {
                     ui.label("I1: Lokale Hybrid-Sessions sind in dieser Oberfläche noch nicht angebunden.");
                 }
                 Section::Devices => { ui.heading("Deine Geräte"); let mut revoke = None;
-                    for d in &self.devices { ui.add_space(14.0); ui.horizontal(|ui| { let own = self.account.as_ref().is_some_and(|a| a.device_id == d.id); ui.label(format!("{}{} · {} · zuletzt aktiv {}", d.name, if own { " (dieser Rechner)" } else { "" }, d.kind, d.last_seen)); if ui.button("Abmelden …").clicked() { revoke = Some(d.clone()); } }); }
+                    for d in &self.devices {
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            let own = self.account.as_ref().is_some_and(|a| a.device_id == d.id);
+                            ui.label(format!("{}{} · {} · zuletzt aktiv {}", d.name, if own { " (dieser Rechner)" } else { "" }, d.kind, d.last_seen));
+                            if ui.button("Abmelden …").clicked() {
+                                revoke = Some(d.clone());
+                            }
+                        });
+                    }
                     if let Some(d) = revoke { self.revoke = Some(d); }
                     ui.add_space(20.0); if ui.add_enabled(self.account.is_some(), egui::Button::new("Handy koppeln")).clicked() { self.call(Request::Pair); }
                     ui.label(RichText::new("I1: Geräteschlüssel lokal als Datei (0600); Systemschlüsselbund folgt.").small().color(QUIET));
                 }
-                Section::Account => { ui.heading("Konto"); if let Some(a) = &self.account { ui.label(format!("{} · {} @ R2", a.person, a.slot)); if ui.button("Abmelden …").clicked() { self.revoke = Some(Device { id: a.device_id.clone(), name: a.device_name.clone(), kind: "Rechner".into(), last_seen: "jetzt".into() }); } } else { ui.label("Nicht angemeldet. Löse deine persönliche Einladung auf der Startkarte ein."); } }
+                Section::Account => {
+                    ui.heading("Konto");
+                    if let Some(a) = &self.account {
+                        ui.label(format!("{} · {} @ R2", a.person, a.slot));
+                        if ui.button("Abmelden …").clicked() {
+                            self.revoke = Some(Device {
+                                id: a.device_id.clone(),
+                                name: a.device_name.clone(),
+                                kind: "Rechner".into(),
+                                last_seen: "jetzt".into(),
+                            });
+                        }
+                    } else {
+                        ui.label("Nicht angemeldet. Löse deine persönliche Einladung auf der Startkarte ein.");
+                    }
+                }
                 Section::Appearance => { ui.heading("Darstellung"); ui.label("Die Oberfläche verwendet die mitgelieferten Schriften. Farben werden immer durch Zustandstext ergänzt."); }
                 Section::Speech => { ui.heading("Vorlesen"); ui.label("Vorlesen ist in dieser I1-Oberfläche noch nicht angebunden. Es wird kein Hilfsmodell gestartet."); }
                 Section::Advanced => { ui.heading("Verbindung"); ui.label("Bestätige die Hub-Adresse deiner Seminarleitung. Die Adresse wird nie still aus einem Link übernommen. Kein SSH-Bootstrap, Deployment oder automatischer Hub-Neustart."); ui.add(egui::TextEdit::singleline(&mut self.hub_url).hint_text("https://freigegebener-host"));
@@ -868,7 +955,21 @@ impl Desktop {
                 });
             });
         } else if let Some(d) = self.revoke.clone() {
-            egui::Modal::new(egui::Id::new("v3-revoke")).show(ctx, |ui| { ui.set_max_width(500.0); let slot = self.account.as_ref().map(|a| a.slot.as_str()).unwrap_or("dein Konto"); ui.label(format!("‚{}‘ abmelden? Das Gerät verliert sofort den Zugang zu {slot}. Um es wieder zu nutzen, musst du es neu koppeln.", d.name)); ui.add_space(18.0); ui.horizontal(|ui| { if ui.button("Abbrechen").clicked() { self.revoke = None; } if ui.button(RichText::new("Abmelden").color(Color32::from_rgb(240,130,110))).clicked() { self.call(Request::Revoke(d.id)); self.revoke = None; } }); });
+            egui::Modal::new(egui::Id::new("v3-revoke")).show(ctx, |ui| {
+                ui.set_max_width(500.0);
+                let slot = self.account.as_ref().map(|a| a.slot.as_str()).unwrap_or("dein Konto");
+                ui.label(format!("‚{}‘ abmelden? Das Gerät verliert sofort den Zugang zu {slot}. Um es wieder zu nutzen, musst du es neu koppeln.", d.name));
+                ui.add_space(18.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Abbrechen").clicked() {
+                        self.revoke = None;
+                    }
+                    if ui.button(RichText::new("Abmelden").color(Color32::from_rgb(240, 130, 110))).clicked() {
+                        self.call(Request::Revoke(d.id));
+                        self.revoke = None;
+                    }
+                });
+            });
         } else if let Some((id, name, words)) = self.pair_request.clone() {
             egui::Modal::new(egui::Id::new("v3-pair-confirm")).show(ctx, |ui| {
                 ui.set_max_width(500.0);
@@ -893,23 +994,61 @@ impl Desktop {
                 .as_secs();
             let mut cancel = false;
             let confirming = self.pairing_login.is_some();
-            egui::Modal::new(egui::Id::new("v3-pair")).show(ctx, |ui| { ui.set_max_width(500.0); ui.heading(if confirming { "Bitte am Handy bestätigen" } else { "Handy koppeln" });
-                if left == 0 { ui.label("Der Code ist abgelaufen. Tippe am Rechner noch einmal auf ‚Handy koppeln‘."); } else {
-                    if pair.texture.is_none() { if let Ok(image) = qr_image(&pair.code.url) { pair.texture = Some(ctx.load_texture("v3-pair-qr", image, egui::TextureOptions::NEAREST)); } }
-                    if let Some(texture) = &pair.texture { ui.image((texture.id(), egui::vec2(280.0,280.0))); }
-                    ui.label(RichText::new(&pair.code.code).monospace().size(22.0)); ui.add_space(12.0);
-                    ui.label(if confirming { "Öffne cocopi auf deinem gekoppelten Handy. Scanne diesen Code und prüfe die angezeigte Aktion. Dieser Code gilt 2 Minuten. Der Rechner wartet auf deine Bestätigung." } else { "Öffne cocopi auf deinem Handy und tippe auf ‚Mit Rechner koppeln‘. Scanne dann diesen Code. Er gilt 5 Minuten." }); ui.label(format!("noch {}:{:02}", left / 60, left % 60)); ctx.request_repaint_after(Duration::from_secs(1));
-                } if ui.button("Abbrechen").clicked() { cancel = true; }
+            egui::Modal::new(egui::Id::new("v3-pair")).show(ctx, |ui| {
+                ui.set_max_width(500.0);
+                ui.heading(if confirming { "Bitte am Handy bestätigen" } else { "Handy koppeln" });
+                if left == 0 {
+                    ui.label("Der Code ist abgelaufen. Tippe am Rechner noch einmal auf ‚Handy koppeln‘.");
+                } else {
+                    if pair.texture.is_none() {
+                        if let Ok(image) = qr_image(&pair.code.url) {
+                            pair.texture = Some(ctx.load_texture("v3-pair-qr", image, egui::TextureOptions::NEAREST));
+                        }
+                    }
+                    if let Some(texture) = &pair.texture {
+                        ui.image((texture.id(), egui::vec2(280.0, 280.0)));
+                    }
+                    ui.label(RichText::new(&pair.code.code).monospace().size(22.0));
+                    ui.add_space(12.0);
+                    ui.label(if confirming {
+                        "Öffne cocopi auf deinem gekoppelten Handy. Scanne diesen Code und prüfe die angezeigte Aktion. Dieser Code gilt 2 Minuten. Der Rechner wartet auf deine Bestätigung."
+                    } else {
+                        "Öffne cocopi auf deinem Handy und tippe auf ‚Mit Rechner koppeln‘. Scanne dann diesen Code. Er gilt 5 Minuten."
+                    });
+                    ui.label(format!("noch {}:{:02}", left / 60, left % 60));
+                    ctx.request_repaint_after(Duration::from_secs(1));
+                }
+                // Immer erreichbar: auch bei Ablauf oder fehlender QR-Textur.
+                let cancel_button = ui.button("Abbrechen");
+                #[cfg(test)]
+                ctx.data_mut(|data| data.insert_temp(egui::Id::new("v3-pair-cancel-rect"), cancel_button.rect));
+                if cancel_button.clicked() {
+                    cancel = true;
+                }
             });
             if cancel {
                 self.pairing = None;
                 self.pairing_login = None;
             }
         } else if self.limit {
-            egui::Modal::new(egui::Id::new("v3-limit")).show(ctx, |ui| { ui.set_max_width(520.0); ui.heading("Zwei Sessions sind offen"); ui.add_space(16.0); ui.label(LIMIT_TEXT); ui.add_space(20.0);
+            egui::Modal::new(egui::Id::new("v3-limit")).show(ctx, |ui| {
+                ui.set_max_width(520.0);
+                ui.heading("Zwei Sessions sind offen");
+                ui.add_space(16.0);
+                ui.label(LIMIT_TEXT);
+                ui.add_space(20.0);
                 let candidate = self.sessions.iter().rev().find(|s| matches!(s.state, SessionState::Done | SessionState::Ready)).cloned();
-                if let Some(s) = candidate { if ui.button(format!("‚{}‘ ruhen lassen", s.title)).clicked() { self.call(Request::Rest(s.id)); self.limit = false; } } else { ui.label("Warte, bis eine Session fertig ist. Arbeitende Sessions und offene Rückfragen werden nicht automatisch unterbrochen."); }
-                if ui.button("Abbrechen").clicked() { self.limit = false; }
+                if let Some(s) = candidate {
+                    if ui.button(format!("‚{}‘ ruhen lassen", s.title)).clicked() {
+                        self.call(Request::Rest(s.id));
+                        self.limit = false;
+                    }
+                } else {
+                    ui.label("Warte, bis eine Session fertig ist. Arbeitende Sessions und offene Rückfragen werden nicht automatisch unterbrochen.");
+                }
+                if ui.button("Abbrechen").clicked() {
+                    self.limit = false;
+                }
             });
         }
     }
@@ -972,7 +1111,10 @@ impl Desktop {
             },
         ];
         self.selected = Some("a".into());
-        self.messages = vec!["Mira\nErstelle einen Entwurf für ein zweiseitiges Seminar-Handout. Zeige zuerst die Gliederung. Nichts veröffentlichen.".into(), "cocopi · R2\nIch bereite die Gliederung vor und prüfe das freigegebene Material. Dateien und Ergebnisse bleiben zunächst auf R2.".into()];
+        self.messages = vec![
+            ChatMessage::new("Mira", "Erstelle einen Entwurf für ein zweiseitiges Seminar-Handout. Zeige zuerst die Gliederung. Nichts veröffentlichen."),
+            ChatMessage::new("cocopi · R2", "Ich bereite die Gliederung vor und prüfe das freigegebene Material. Dateien und Ergebnisse bleiben zunächst auf R2."),
+        ];
         match scene {
             "v3-modus" => self.settings = Some(Section::Mode),
             "v3-hybrid-dialog" => {
@@ -982,7 +1124,7 @@ impl Desktop {
             }
             "v3-geraete" => self.settings = Some(Section::Devices),
             "v3-koppeln-qr" => {
-                self.settings = Some(Section::Devices);
+                self.settings = None;
                 self.pairing = Some(Pairing {
                     code: PairCode {
                         url: "https://r2.example.invalid/c#1.k.K7QM-2XDA-9FHT-W3NB".into(),
@@ -998,6 +1140,20 @@ impl Desktop {
         }
     }
 }
+fn chat_message(ui: &mut Ui, message: &ChatMessage, id: impl std::hash::Hash + std::fmt::Debug) {
+    ui.add_space(12.0);
+    egui::Frame::new().inner_margin(14.0).show(ui, |ui| {
+        ui.label(RichText::new(&message.speaker).small().color(QUIET));
+        ui.add_space(8.0);
+        md_egui::show_doc(
+            ui,
+            &md_egui::Theme::default(),
+            &md_core::parse(&message.text),
+            id,
+        );
+    });
+}
+
 /// Vier weiße Randmodule sind Teil der Textur, nicht nur UI-Abstand.
 pub fn qr_image(text: &str) -> Result<egui::ColorImage, String> {
     let qr = QrCode::encode_text(text, QrCodeEcc::Medium).map_err(|e| e.to_string())?;
@@ -1057,9 +1213,6 @@ mod tests {
             InviteError::RateLimited.text(),
             "Zu viele Versuche. Warte eine Minute und versuche es dann noch einmal."
         );
-        assert!(InviteError::Offline("morgen 12:00".into())
-            .text()
-            .ends_with("bis morgen 12:00."));
     }
     fn frame(d: &mut Desktop, ctx: &egui::Context, events: Vec<egui::Event>) -> egui::FullOutput {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 880.0));
@@ -1207,7 +1360,9 @@ mod tests {
         assert_eq!(d.streaming["a"], "Hallo");
         d.apply(Reply::PiEvent("a".into(), serde_json::json!({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Hallo Welt"}]}})));
         assert!(!d.streaming.contains_key("a"));
-        assert_eq!(d.chat_by_session["a"], vec!["Hallo Welt"]);
+        assert_eq!(d.chat_by_session["a"].len(), 1);
+        assert_eq!(d.chat_by_session["a"][0].speaker, "cocopi · R2");
+        assert_eq!(d.chat_by_session["a"][0].text, "Hallo Welt");
         assert!(!d.chat_by_session.contains_key("b"));
     }
     #[test]
@@ -1234,6 +1389,50 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn pairing_closes_settings_and_cancel_is_clickable_before_and_after_expiry() {
+        for expired in [false, true] {
+            let ctx = egui::Context::default();
+            crate::setup_ctx(&ctx);
+            let mut d = Desktop::new(true);
+            d.scene("v3-geraete");
+            d.apply(Reply::Pair(PairCode {
+                url: "https://r2.example.invalid/c#1.k.K7QM-2XDA-9FHT-W3NB".into(),
+                code: "K7QM-2XDA-9FHT-W3NB".into(),
+                valid_for: if expired {
+                    Duration::ZERO
+                } else {
+                    Duration::from_secs(300)
+                },
+            }));
+            assert_eq!(d.settings, None);
+            for _ in 0..5 {
+                frame(&mut d, &ctx, vec![]);
+            }
+            frame(&mut d, &ctx, vec![]);
+            let cancel = ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new("v3-pair-cancel-rect")))
+                .expect("Abbrechen wurde angelegt")
+                .center();
+            click(&mut d, &ctx, cancel);
+            assert!(d.pairing.is_none(), "Code abgelaufen: {expired}");
+            assert_eq!(d.settings, None);
+            assert_eq!(d.pending, 0);
+        }
+    }
+
+    #[test]
+    fn chat_speakers_are_not_part_of_markdown_body() {
+        let mut d = Desktop::new(true);
+        d.scene("v3-main-remote");
+        assert_eq!(d.messages[0].speaker, "Mira");
+        assert!(!d.messages[0].text.starts_with("Mira"));
+        assert_eq!(d.messages[1].speaker, "cocopi · R2");
+        d.apply(Reply::Sent("a".into(), "Ein Entwurf".into()));
+        assert_eq!(d.chat_by_session["a"][0].speaker, "Du");
+        assert_eq!(d.chat_by_session["a"][0].text, "Ein Entwurf");
+    }
+
     #[test]
     fn only_working_uses_accent() {
         for s in [

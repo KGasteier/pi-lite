@@ -9,7 +9,9 @@ die alte Oberfläche nicht erreichbar; ihre Modelle bleiben für copi und dessen
 Regressionstests erhalten. Keine zweite Backendliste, kein Raster, kein lokales
 CLI-/Hilfsmodell, keine Bookmark-Farbpalette und kein Herkunftsfilter im Seminar-UI.
 
-`mode::init()` läuft nur beim normalen Start, nicht bei Screenshot-Erstellung.
+`mode::init()` läuft vor jedem Backend-Aufbau beim normalen Start und bei
+`--sync-states`, nicht in Demo-/Screenshot-Läufen. Die Startreihenfolge ist über
+einen injizierten Initialisierer ohne echte Konfigurationszugriffe getestet.
 Der Desktop startet beim Öffnen der App **keine** Session – auch nicht in Hybrid.
 Die zentrale Startsperre liegt bei S3. `net.rs` verwendet bei unlesbarer Liste
 keinen lokalen Ersatz mehr.
@@ -39,6 +41,13 @@ ein Zugangstoken. Countdown und Codeablauf sind getrennt von Gerätezustimmung.
 Fehlt das Prüfwort im Hub-Ereignis, wird dies ausdrücklich erklärt. Laut Freeze
 ist es in I1 optional; die Person kann nach Prüfung des Gerätenamens zustimmen.
 In I2 ist das übereinstimmende Prüfwort Pflicht.
+
+Der QR-Schritt schließt das Einstellungsfenster. Abbrechen ist unabhängig von
+Codeablauf und QR-Texturerzeugung erreichbar; beide Ablaufzweige sind per
+simuliertem Klick getestet. Sprecher und Nachrichtentext sind getrennte Daten:
+eine dezente Sprecherzeile und Innenabstand vermeiden verklebte Chattexte.
+Sessiontitel, Zustand und Aktionsmenü stehen in einer Zeile; die ausgewählte
+Session erhält einen durchgehenden neutralen Hintergrund.
 
 ## Tests und Szenen
 
@@ -73,8 +82,8 @@ Fixture-/Unit-geprüft, aber für echte HTTP-Fehler nicht durchgängig erreichba
 
 Dateitransfer, Vorlesen, Ressourcenmessungen und Modellwahl sind in dieser neuen
 Oberfläche nicht angebunden. Die drei Dateiaktionen sind als noch nicht verfügbar
-markiert. Die Modellzeile `udk2/…` kennzeichnet keinen vom Server gemeldeten konkreten
-Modellnamen. Verbrauch bleibt unbekannt. Keine erfundenen Messwerte.
+markiert. Die Modellzeile zeigt bis zur Anbindung der Freigabeliste „Modell: Standard“;
+es wird kein konkreter Modellname behauptet. Verbrauch bleibt unbekannt. Keine erfundenen Messwerte.
 
 Die neue Oberfläche erhält Sitzungstatus vom Hub; lokale Hybrid-Sessions aus der
 vorherigen Oberfläche werden in I1 noch nicht aufgelistet. Umschalten beendet sie
