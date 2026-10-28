@@ -1,0 +1,78 @@
+# In eine einzige Site importieren; Reihenfolge bleibt durch route erhalten.
+# Keine Access-Logs: URLs/Queries könnten Einmalcodes oder Kennungen enthalten.
+route {
+    # Roh-URI: kein Encoding, Backslash, Pfadnormalisieren oder Doppelslash.
+    # Query-Parameter bleiben möglich (SSE); Prozentzeichen im Pfad nie.
+    @unsicher expression `{http.request.uri}.matches('^[^?]*(%|\\\\|//|/\\.\\.?(/|$))')`
+    respond @unsicher "Pfad nicht erlaubt" 403
+    @intern path_regexp intern ^/(slot/account(0[1-9]|10)/)?v1/(belegung|freigabe)(/.*)?$
+    respond @intern "Nur intern" 403
+    @dienst path_regexp dienst ^/(slot/account(0[1-9]|10)/)?v1/sync/dienst(/.*)?$
+    respond @dienst "Nur intern" 403
+    handle /v1/empfang/* {
+        reverse_proxy 127.0.0.1:8800 {
+            flush_interval -1
+        }
+    }
+    handle /slot/account01/v1/* {
+        uri strip_prefix /slot/account01
+        reverse_proxy 127.0.0.1:8801 {
+            flush_interval -1
+        }
+    }
+    handle /slot/account02/v1/* {
+        uri strip_prefix /slot/account02
+        reverse_proxy 127.0.0.1:8802 {
+            flush_interval -1
+        }
+    }
+    handle /slot/account03/v1/* {
+        uri strip_prefix /slot/account03
+        reverse_proxy 127.0.0.1:8803 {
+            flush_interval -1
+        }
+    }
+    handle /slot/account04/v1/* {
+        uri strip_prefix /slot/account04
+        reverse_proxy 127.0.0.1:8804 {
+            flush_interval -1
+        }
+    }
+    handle /slot/account05/v1/* {
+        uri strip_prefix /slot/account05
+        reverse_proxy 127.0.0.1:8805 {
+            flush_interval -1
+        }
+    }
+    handle /slot/account06/v1/* {
+        uri strip_prefix /slot/account06
+        reverse_proxy 127.0.0.1:8806 {
+            flush_interval -1
+        }
+    }
+    handle /slot/account07/v1/* {
+        uri strip_prefix /slot/account07
+        reverse_proxy 127.0.0.1:8807 {
+            flush_interval -1
+        }
+    }
+    handle /slot/account08/v1/* {
+        uri strip_prefix /slot/account08
+        reverse_proxy 127.0.0.1:8808 {
+            flush_interval -1
+        }
+    }
+    handle /slot/account09/v1/* {
+        uri strip_prefix /slot/account09
+        reverse_proxy 127.0.0.1:8809 {
+            flush_interval -1
+        }
+    }
+    handle /slot/account10/v1/* {
+        uri strip_prefix /slot/account10
+        reverse_proxy 127.0.0.1:8810 {
+            flush_interval -1
+        }
+    }
+    respond "Nicht gefunden" 404
+}

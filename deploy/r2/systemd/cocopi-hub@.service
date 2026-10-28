@@ -1,0 +1,35 @@
+[Unit]
+Description=cocopi-Verbindung für Pool-Arbeitsplatz %i
+After=network.target
+RequiresMountsFor=/home/%i /mnt/data/%i
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+Slice=cocopi-%i.slice
+EnvironmentFile=/etc/cocopi/hub-%i.env
+Environment=HOME=/home/%i
+Environment=DO_NOT_TRACK=1
+WorkingDirectory=/home/%i
+ExecStartPre=/usr/bin/install -d -m 700 /home/%i/.cocopi-hub
+ExecStart=/usr/local/libexec/cocopi-hub %i
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=20
+SendSIGKILL=yes
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+# Kein Inhalt im Journal. Fehler werden als Exitcode sichtbar.
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target

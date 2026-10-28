@@ -1,0 +1,17 @@
+#!/usr/bin/python3 -I
+"""S7-Argumentreihenfolge auf exakt erlaubten sudoers-Aufruf abbilden.
+
+Noch gesperrte Integration: S7 muss den Nachweis aus leeren übernehmen und darf
+nach erneutem Hubstart kein zweites Live-pruefen als Leer-Nachweis verlangen.
+"""
+import os
+import re
+import sys
+
+if (len(sys.argv) != 4 or sys.argv[1] not in ('leeren', 'pruefen')
+        or not re.fullmatch(r'account(0[1-9]|10)', sys.argv[2])
+        or sys.argv[3] != '--ausfuehren'):
+    sys.exit(2)
+args = (['--ausfuehren', 'leeren'] if sys.argv[1] == 'leeren' else ['pruefen'])
+os.execve('/usr/bin/sudo', ['sudo', '-n', '/usr/local/sbin/cocopi-slotctl', *args, sys.argv[2]],
+          {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'})

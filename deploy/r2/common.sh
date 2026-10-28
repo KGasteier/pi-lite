@@ -10,6 +10,7 @@ MODE=dry-run
 SLOT_LIST=
 PURGE=false
 EXPLICIT_SLOTS=false
+PROXY_URL=
 
 fail() { printf 'FEHLER: %s\n' "$*" >&2; exit 1; }
 note() { printf '%s\n' "$*"; }
@@ -39,13 +40,18 @@ parse_args() {
     while (($#)); do
         arg=$1
         case $arg in
-            --dry-run|--apply)
+            --dry-run|--apply|--ausfuehren)
                 [[ $seen_mode == false ]] || fail 'Bitte genau einen Ausführungsmodus wählen.'
-                MODE=${arg#--}; seen_mode=true; shift ;;
+                MODE=${arg#--}; [[ $MODE != ausfuehren ]] || MODE=apply
+                seen_mode=true; shift ;;
             --slots)
                 (($# >= 2)) || fail 'Nach --slots fehlt die Liste (z. B. account01,account02).'
                 [[ $EXPLICIT_SLOTS == false ]] || fail '--slots nur einmal verwenden.'
                 SLOT_LIST=$2; EXPLICIT_SLOTS=true; shift 2 ;;
+            --proxy-url)
+                [[ $operation == admin-check && $# -ge 2 && -z $PROXY_URL ]] || fail '--proxy-url nur einmal bei admin-check mit HTTPS-Adresse.'
+                [[ $2 =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?$ ]] || fail 'Proxy-Adresse muss HTTPS ohne Pfad, Token oder Query sein.'
+                PROXY_URL=$2; shift 2 ;;
             --purge)
                 [[ $operation == teardown ]] || fail '--purge gehört nur zum Rückbau.'
                 PURGE=true; shift ;;
@@ -78,7 +84,7 @@ slot_vars() {
     USER_NAME=$SLOT
     SLOT_HOME=$HOME_BASE/$USER_NAME
     SLOT_DATA=$DATA_BASE/$USER_NAME
-    HUB_STATE=$SLOT_DATA/hub-state
+    HUB_STATE=$SLOT_HOME/.cocopi-hub
     PORT=$((HUB_PORT_BASE + 10#${SLOT#account}))
     EXPECTED_UID=$((SLOT_UID_BASE + 10#${SLOT#account}))
     SLOT_ETC=/etc/cocopi/slots/$SLOT
@@ -189,10 +195,12 @@ user_systemctl() {
         DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$UID_NUM/bus" systemctl --user "$@"
 }
 
+hub_systemctl() { systemctl "$@"; }
+
 hub_loopback() {
     local pid listeners line address count=0 expected
-    user_systemctl is-active --quiet "$UNIT" || return 1
-    pid=$(user_systemctl show "$UNIT" -p MainPID --value) || return 1
+    hub_systemctl is-active --quiet "$UNIT" || return 1
+    pid=$(hub_systemctl show "$UNIT" -p MainPID --value) || return 1
     [[ $pid =~ ^[1-9][0-9]*$ && $(stat -c %u "/proc/$pid") == "$UID_NUM" ]] || return 1
     listeners=$(ss -H -ltnp) || return 1
     expected="127.0.0.1:$PORT"
@@ -231,7 +239,9 @@ quota_matches() {
 }
 
 check_hub_contract() {
-    [[ $HUB_CONTRACT == "$REQUIRED_HUB_CONTRACT" ]] || fail 'Hub-Vertrag unbestätigt: A4 mit S3/S1 abschließen; kein Dienststart.'
+    if [[ $HUB_CONTRACT != "$REQUIRED_HUB_CONTRACT" ]]; then
+        fail 'Hub-Vertrag unbestätigt: Poolvertrag mit S3/S7/K abschließen; kein Dienststart.'
+    fi
     root_controlled "$HUB_CONTRACT_FILE" && [[ $(< "$HUB_CONTRACT_FILE") == "$REQUIRED_HUB_CONTRACT" ]] || fail 'Bestätigter Vertrag der bereitgestellten Hub-Version fehlt.'
     root_controlled "$HUB_DIR/server.mjs" || fail 'Hub-Code nicht rootverwaltet bereitgestellt.'
 }

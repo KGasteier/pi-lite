@@ -1,0 +1,12 @@
+# Als cocopi-account01.slice … cocopi-account10.slice installieren.
+[Unit]
+Description=Grenzen für einen cocopi-Arbeitsplatz
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+TasksAccounting=yes
+CPUQuota=100%
+MemoryHigh=2G
+MemoryMax=2560M
+TasksMax=256

@@ -1,0 +1,12 @@
+# Nur explizit bereinigte Metadaten. Keine Pfade/Personennamen/Inhalte/Token.
+/var/log/cocopi/*.jsonl {
+    daily
+    rotate 6
+    maxage 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su cocopi-empfang cocopi-empfang
+}

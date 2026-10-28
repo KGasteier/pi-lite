@@ -1,0 +1,38 @@
+# Kein Platzhalter-Wildcard in Befehlsargumenten: genau zehn Slotnamen.
+# root:root 0440; ausschließlich visudo -cf und danach installieren.
+# env_reset verhindert COCOPI_ROOT/PYTHONPATH unter sudo. Kein SETENV.
+Defaults:cocopi-empfang env_reset
+Defaults:cocopi-empfang secure_path=/usr/sbin:/usr/bin:/sbin:/bin
+Defaults:cocopi-empfang env_delete += "COCOPI_ROOT PYTHONPATH PYTHONHOME"
+Cmnd_Alias COCOPI_SLOTCTL = /usr/local/sbin/cocopi-slotctl status, \
+    /usr/local/sbin/cocopi-slotctl status account01, \
+    /usr/local/sbin/cocopi-slotctl pruefen account01, \
+    /usr/local/sbin/cocopi-slotctl --ausfuehren leeren account01, \
+    /usr/local/sbin/cocopi-slotctl status account02, \
+    /usr/local/sbin/cocopi-slotctl pruefen account02, \
+    /usr/local/sbin/cocopi-slotctl --ausfuehren leeren account02, \
+    /usr/local/sbin/cocopi-slotctl status account03, \
+    /usr/local/sbin/cocopi-slotctl pruefen account03, \
+    /usr/local/sbin/cocopi-slotctl --ausfuehren leeren account03, \
+    /usr/local/sbin/cocopi-slotctl status account04, \
+    /usr/local/sbin/cocopi-slotctl pruefen account04, \
+    /usr/local/sbin/cocopi-slotctl --ausfuehren leeren account04, \
+    /usr/local/sbin/cocopi-slotctl status account05, \
+    /usr/local/sbin/cocopi-slotctl pruefen account05, \
+    /usr/local/sbin/cocopi-slotctl --ausfuehren leeren account05, \
+    /usr/local/sbin/cocopi-slotctl status account06, \
+    /usr/local/sbin/cocopi-slotctl pruefen account06, \
+    /usr/local/sbin/cocopi-slotctl --ausfuehren leeren account06, \
+    /usr/local/sbin/cocopi-slotctl status account07, \
+    /usr/local/sbin/cocopi-slotctl pruefen account07, \
+    /usr/local/sbin/cocopi-slotctl --ausfuehren leeren account07, \
+    /usr/local/sbin/cocopi-slotctl status account08, \
+    /usr/local/sbin/cocopi-slotctl pruefen account08, \
+    /usr/local/sbin/cocopi-slotctl --ausfuehren leeren account08, \
+    /usr/local/sbin/cocopi-slotctl status account09, \
+    /usr/local/sbin/cocopi-slotctl pruefen account09, \
+    /usr/local/sbin/cocopi-slotctl --ausfuehren leeren account09, \
+    /usr/local/sbin/cocopi-slotctl status account10, \
+    /usr/local/sbin/cocopi-slotctl pruefen account10, \
+    /usr/local/sbin/cocopi-slotctl --ausfuehren leeren account10
+cocopi-empfang ALL=(root) NOPASSWD: NOSETENV: COCOPI_SLOTCTL

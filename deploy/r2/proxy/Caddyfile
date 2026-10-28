@@ -1,0 +1,4 @@
+# Vorlage, nicht automatisch installieren. Hostname vor Freigabe ersetzen.
+https://cocopi.example.invalid {
+    import /etc/cocopi/proxy/routes.caddy
+}

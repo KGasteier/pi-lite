@@ -1,0 +1,11 @@
+[Unit]
+Description=Gemeinsame Obergrenze für cocopi-Pool und Empfang
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+TasksAccounting=yes
+CPUQuota=800%
+MemoryHigh=24G
+MemoryMax=26G
+TasksMax=3000
