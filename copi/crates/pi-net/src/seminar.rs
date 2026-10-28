@@ -153,6 +153,13 @@ impl SeminarState {
         if self.group.is_some() {
             return Err("Seminarchat bereits vorhanden".into());
         }
+        if !self.checked_in
+            || !self
+                .verified(&self.chats.me, now)
+                .is_some_and(|c| c.rolle() == Rolle::Seminarleitung)
+        {
+            return Err("Nur die bestätigte Seminarleitung öffnet den Seminarchat".into());
+        }
         // v2-Raumrollen sind NICHT Ausweisrollen; für Chat/DM unprivilegierte
         // Gruppen verwenden, v3-Badges/Control ausschließlich aus verified.
         let members = self
@@ -462,6 +469,18 @@ impl SeminarState {
                 }
             }
             p => {
+                if self.group.is_some()
+                    && matches!(&p,Payload::Invite{chat,..} if chat.kind==ChatKind::Group)
+                {
+                    return Err("Seminarchat besteht bereits".into());
+                }
+                if matches!(&p,Payload::Invite{chat,..} if chat.kind==ChatKind::Group)
+                    && !self
+                        .verified(from, now)
+                        .is_some_and(|c| c.rolle() == Rolle::Seminarleitung)
+                {
+                    return Err("Seminarchat braucht bestätigte Seminarleitung".into());
+                }
                 let (_, out) = self.chats.apply(from, p)?;
                 e.out = out;
             }
@@ -821,11 +840,11 @@ mod tests {
     #[test]
     fn chats_and_dms_reuse_v2_and_mark_unverified() {
         let (mut a, mut b, _, _) = pair();
-        b.verified.remove(&a.chats.me);
         let out = a.create_group(NOW).unwrap();
         b.receive(&a.chats.me, out[0].1.clone(), NOW).unwrap();
         let id = b.chats.invites[0].chat.id.clone();
         b.chats.accept_invite(&id).unwrap();
+        b.verified.remove(&a.chats.me);
         a.post("Hallo Seminar")
             .unwrap()
             .into_iter()

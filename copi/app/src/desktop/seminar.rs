@@ -107,6 +107,8 @@ impl Seminar {
     }
     pub fn remote_bar(&mut self, ui: &mut egui::Ui) {
         self.tick();
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(1));
         self.paint_border(ui);
         let now = self.now();
         let grants: Vec<_> = self
@@ -207,7 +209,7 @@ impl Seminar {
                 );
             });
         });
-        self.consent(ui, now);
+        self.consent_ui(ui);
     }
     fn people_ui(&mut self, ui: &mut egui::Ui, now: u64) {
         ui.label(RichText::new("Teilnehmende").strong());
@@ -492,7 +494,9 @@ impl Seminar {
             }
         }
     }
-    fn consent(&mut self, ui: &mut egui::Ui, now: u64) {
+    /// Auf äußerstem Desktop-UI aufrufen, auch bei geschlossenem Seminar-Tab.
+    pub fn consent_ui(&mut self, ui: &mut egui::Ui) {
+        let now = self.now();
         let request = self
             .state
             .remote
