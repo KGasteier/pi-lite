@@ -1,13 +1,16 @@
 //! Einbettung: `#[cfg(feature="cocopi")] pub mod seminar;` in desktop.rs.
 //! Genau ein Tab ruft `Seminar::ui` auf. Runtime über SeminarNet austauschbar.
 use egui::{Color32, RichText, Stroke};
+#[path = "seminar_net.rs"]
+mod seminar_net;
 pub use pi_net::seminar::{HubPrompt, MemoryNet, SeminarNet, SeminarState};
 use pi_net::{
-    model::{now_ms, ChatKind, PeerId},
+    model::{ChatKind, PeerId, now_ms},
     remote::{GrantState, RemoteScope, Side},
     seminar::Effects,
     store::Outbox,
 };
+pub use seminar_net::production;
 const CYAN: Color32 = Color32::from_rgb(0x4f, 0xb8, 0xd8);
 
 pub struct Seminar {
@@ -72,9 +75,22 @@ impl Seminar {
             Err(e) => self.error = Some(e),
         }
     }
+    pub fn address(&self) -> Option<&str> {
+        self.net.address()
+    }
+    pub fn set_contacts(&mut self, peers: Vec<(PeerId, String)>) -> Result<(), String> {
+        if peers
+            .iter()
+            .any(|(peer, _)| !self.state.people.iter().any(|p| &p.peer == peer))
+        {
+            return Err("Kontakt fehlt im bestätigten Seminarverzeichnis".into());
+        }
+        self.net.set_contacts(peers)
+    }
     pub fn checkout(&mut self) {
         let out = self.state.checkout();
         self.dispatch(Ok(out));
+        self.net.checkout();
         self.marked_prompts.clear();
         self.input.clear();
         self.control_input.clear();
@@ -96,7 +112,14 @@ impl Seminar {
     /// Immer aufrufen, auch wenn der Seminar-Tab geschlossen ist.
     pub fn tick(&mut self) {
         let now = self.now();
-        for (from, p) in self.net.poll() {
+        let incoming = self.net.poll();
+        for (peer, online, since) in self.net.presence() {
+            self.state.status(&peer, online, since);
+        }
+        for error in self.net.errors() {
+            self.error = Some(error);
+        }
+        for (from, p) in incoming {
             match self.state.receive(&from, p, now) {
                 Ok(e) => self.effects(e),
                 Err(e) => self.error = Some(e),
@@ -163,15 +186,8 @@ impl Seminar {
         }
     }
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        self.tick();
         let now = self.now();
-        for (from, p) in self.net.poll() {
-            match self.state.receive(&from, p, now) {
-                Ok(e) => self.effects(e),
-                Err(e) => self.error = Some(e),
-            }
-        }
-        let out = self.state.tick(now);
-        self.dispatch(Ok(out));
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_secs(1));
         let active = self
