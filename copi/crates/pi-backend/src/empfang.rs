@@ -512,11 +512,17 @@ mod tests {
             t.join().unwrap();
         }
     }
-    fn read_mock_request(stream: &mut impl std::io::BufRead) {
+    fn read_mock_request(stream: &mut impl std::io::BufRead) -> String {
+        let mut request = String::new();
         let mut length = 0;
         loop {
             let mut line = String::new();
-            stream.read_line(&mut line).unwrap();
+            assert_ne!(
+                stream.read_line(&mut line).unwrap(),
+                0,
+                "HTTP-Header unvollständig"
+            );
+            request.push_str(&line);
             if line == "\r\n" {
                 break;
             }
@@ -528,6 +534,19 @@ mod tests {
         }
         let mut b = vec![0; length];
         stream.read_exact(&mut b).unwrap();
+        request.push_str(std::str::from_utf8(&b).unwrap());
+        request
+    }
+    #[test]
+    fn mock_request_reads_fragmented_headers_and_complete_body() {
+        use std::io::{BufReader, Cursor};
+        let wire =
+            b"POST /v1/empfang/checkin HTTP/1.1\r\nContent-Length: 15\r\n\r\n{\"protokoll\":1}";
+        // Ein Byte pro Pufferfüllung erzwingt Fragmentierung auch im Body.
+        let mut reader = BufReader::with_capacity(1, Cursor::new(wire));
+        assert_eq!(read_mock_request(&mut reader).as_bytes(), wire);
+        let mut eof = BufReader::new(Cursor::new(b"GET / HTTP/1.1\r\n"));
+        assert!(std::panic::catch_unwind(move || read_mock_request(&mut eof)).is_err());
     }
     #[test]
     fn canonical_signature_tamper_and_unsafe_numbers() {
@@ -638,7 +657,7 @@ mod tests {
     }
     #[test]
     fn authenticated_request_uses_empfang_challenge_headers() {
-        use std::io::{Read, Write};
+        use std::io::Write;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let expected_origin = origin.clone();
@@ -646,13 +665,12 @@ mod tests {
         let verifying = key.verifying_key();
         let thread = std::thread::spawn(move || {
             for i in 0..2 {
-                let (mut stream, _) = listener.accept().unwrap();
+                let (stream, _) = listener.accept().unwrap();
                 stream
                     .set_read_timeout(Some(std::time::Duration::from_secs(2)))
                     .unwrap();
-                let mut buf = [0; 8192];
-                let n = stream.read(&mut buf).unwrap();
-                let req = String::from_utf8_lossy(&buf[..n]);
+                let mut stream = std::io::BufReader::new(stream);
+                let req = read_mock_request(&mut stream);
                 let text = if i == 0 {
                     assert!(req.starts_with("POST /v1/empfang/challenge "));
                     json!({"protokoll":1,"typ":"challenge","challenge_id":"test-cid","nonce":"test-nonce","gueltig_bis":1900000000000u64}).to_string()
@@ -677,7 +695,7 @@ mod tests {
                     json!({"protokoll":1,"typ":"empfang_status","belegung":[]}).to_string()
                 };
                 write!(
-                    stream,
+                    stream.get_mut(),
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
                     text.len()
                 )
@@ -777,7 +795,7 @@ mod tests {
     }
     #[test]
     fn client_local_mock_201_202_checkout_and_limits() {
-        use std::io::{Read, Write};
+        use std::io::Write;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let thread = std::thread::spawn(move || {
@@ -814,17 +832,15 @@ mod tests {
                     json!({"protokoll":1,"typ":"fehler","code":"keine_berechtigung"}),
                 ),
             ] {
-                let (mut stream, _) = listener.accept().unwrap();
+                let (stream, _) = listener.accept().unwrap();
                 stream
                     .set_read_timeout(Some(std::time::Duration::from_secs(2)))
                     .unwrap();
-                let mut buf = [0; 8192];
-                let n = stream.read(&mut buf).unwrap();
-                assert!(
-                    String::from_utf8_lossy(&buf[..n]).contains(&format!("/v1/empfang/{route} "))
-                );
+                let mut stream = std::io::BufReader::new(stream);
+                let req = read_mock_request(&mut stream);
+                assert!(req.contains(&format!("/v1/empfang/{route} ")));
                 let text = packet.to_string();
-                write!(stream, "HTTP/1.1 {status} Mock\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}", text.len()).unwrap();
+                write!(stream.get_mut(), "HTTP/1.1 {status} Mock\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}", text.len()).unwrap();
             }
         });
         let c = Empfang::new(&origin).unwrap();
