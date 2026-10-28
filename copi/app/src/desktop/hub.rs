@@ -33,6 +33,11 @@ impl HubAdapter {
             .lock()
             .map_err(|_| "Die Verbindung wurde unterbrochen. Melde dich erneut an.")?;
         match request {
+            Request::Checkin { .. } | Request::AuthCallback(_) | Request::Wait(_)
+            | Request::SyncPlan(_) | Request::Upload { .. } | Request::CheckoutPreview(_)
+            | Request::Checkout { .. } | Request::Collect { .. } | Request::CancelFlow(_) => {
+                Err("Empfang und Datei-Sync sind noch nicht angebunden. Es wurde nichts übertragen, gelöscht oder als ausgecheckt bestätigt.".into())
+            }
             Request::Redeem(input) => {
                 let mut key = c.key.take().map(Ok).unwrap_or_else(|| DeviceKey::load_or_create("seminar-desktop"))?;
                 c.hub.hello("cocopi")?;

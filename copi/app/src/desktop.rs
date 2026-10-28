@@ -1,6 +1,10 @@
 //! Seminar-Desktop: eine Oberfläche, ein Modus-Ort, keine lokalen Agentenstarts.
 //! Alle Hub-Aktionen laufen über DesktopApi; Fixtures sind ausschließlich Demo/Tests.
+mod checkin;
 mod hub;
+mod sync_ui;
+pub use checkin::{AuthCallback, CancelTarget, CheckinMethod, FlowReply, MemoryApi, WaitTarget};
+use checkin::{Flow, Stage, TransferKind};
 use egui::{Color32, RichText, Ui};
 use pi_backend::mode::{self, Mode};
 use qrcodegen::{QrCode, QrCodeEcc};
@@ -94,6 +98,27 @@ pub struct PairCode {
 }
 #[derive(Clone, Debug)]
 pub enum Request {
+    Checkin {
+        attempt: u64,
+        method: CheckinMethod,
+    },
+    AuthCallback(AuthCallback),
+    Wait(WaitTarget),
+    SyncPlan(String),
+    Upload {
+        checkin_id: String,
+        selection: Vec<String>,
+    },
+    CheckoutPreview(String),
+    Checkout {
+        checkin_id: String,
+        preview_id: String,
+    },
+    Collect {
+        checkin_id: String,
+        pickup_id: String,
+    },
+    CancelFlow(CancelTarget),
     Redeem(String),
     Devices,
     Pair,
@@ -109,6 +134,11 @@ pub enum Request {
 }
 #[derive(Clone, Debug)]
 pub enum Reply {
+    Flow(FlowReply),
+    FlowCompleted {
+        generation: u64,
+        reply: Box<Reply>,
+    },
     Completed(Box<Reply>),
     Heartbeat,
     Disconnected(String),
@@ -210,6 +240,14 @@ pub struct Desktop {
     messages: Vec<ChatMessage>,
     prompt: String,
     files: bool,
+    seminar_selected: bool,
+    flow: Flow,
+    flow_generation: u64,
+    flow_pending: bool,
+    flow_poll: Option<Instant>,
+    flow_retry: Option<Request>,
+    flow_failed: bool,
+    guest: bool,
     rename: bool,
     device_name: String,
     hub_url: String,
@@ -300,6 +338,14 @@ impl Desktop {
             messages: vec![],
             prompt: String::new(),
             files: false,
+            seminar_selected: false,
+            flow: Flow::default(),
+            flow_generation: 0,
+            flow_pending: false,
+            flow_poll: None,
+            flow_retry: None,
+            flow_failed: false,
+            guest: false,
             rename: false,
             device_name: profile.device_name,
             hub_url: profile.hub_url,
@@ -328,6 +374,52 @@ impl Desktop {
     }
     fn apply(&mut self, reply: Reply) {
         match reply {
+            Reply::FlowCompleted { generation, reply } => {
+                if generation == self.flow_generation {
+                    self.flow_pending = false;
+                    self.apply(*reply);
+                }
+            }
+            Reply::Flow(reply) => {
+                if let FlowReply::Browser { attempt, url } = &reply {
+                    if !self.demo
+                        && *attempt == self.flow.attempt
+                        && self.flow.stage == Stage::Starting
+                    {
+                        if let Err(e) = pi_backend::cli::open_url(url) {
+                            self.error = Some(format!("Der Browser konnte nicht geöffnet werden. Öffne die Anmeldung mit dem Knopf unten. {e}"));
+                        }
+                    }
+                }
+                let next = self.flow.apply(reply);
+                if let Some(receipt) = &self.flow.receipt {
+                    self.account = Some(receipt.account.clone());
+                }
+                if self.flow.stage == Stage::Working {
+                    self.welcome_done = true;
+                    if !self.demo && !self.watch_started {
+                        self.start_watch();
+                        self.call(Request::Sessions);
+                    }
+                }
+                if self.flow.stage == Stage::Done {
+                    self.account = None;
+                    self.connected = false;
+                    self.welcome_done = false;
+                    self.sessions.clear();
+                    self.messages.clear();
+                    self.chat_by_session.clear();
+                    self.streaming.clear();
+                    self.selected = None;
+                    self.pairing = None;
+                    self.pairing_login = None;
+                    self.pair_request = None;
+                    self.settings = None;
+                }
+                if let Some(request) = next {
+                    self.flow_call(request);
+                }
+            }
             Reply::Completed(reply) => {
                 self.pending = self.pending.saturating_sub(1);
                 self.apply(*reply);
@@ -418,11 +510,17 @@ impl Desktop {
             }
             Reply::Limit => self.limit = true,
             Reply::Error(e) => {
+                if self.flow_retry.is_some() && self.flow.stage != Stage::Working {
+                    self.flow_failed = true;
+                }
                 if e == InviteError::Revoked {
                     self.connected = false;
                 }
                 if e == InviteError::Revoked {
                     self.account = None;
+                    self.flow = Flow::default();
+                    self.flow_generation += 1;
+                    self.flow_pending = false;
                     self.welcome_done = false;
                     self.sessions.clear();
                     self.messages.clear();
@@ -451,6 +549,12 @@ impl Desktop {
                 a.person,
                 a.slot,
                 if self.connected {
+                    if let Some(receipt) = &self.flow.receipt {
+                        return format!(
+                            "{prefix} · {} · {} @ R2 · eingecheckt seit {}",
+                            a.person, a.slot, receipt.since
+                        );
+                    }
                     "verbunden"
                 } else {
                     "offline"
@@ -561,6 +665,7 @@ impl Desktop {
         while let Ok(reply) = self.rx.try_recv() {
             self.apply(reply);
         }
+        self.flow_tick(ui.ctx());
         if let Some(id) = self.pairing_login.clone() {
             if self.pending == 0
                 && self
@@ -609,6 +714,11 @@ impl Desktop {
             } else if self.pairing.is_some() {
                 self.pairing = None;
                 self.pairing_login = None;
+            } else if self.flow.stage != Stage::Start
+                && self.flow.stage != Stage::Working
+                && self.flow.stage != Stage::Done
+            {
+                self.cancel_flow();
             } else {
                 self.settings = None;
             }
@@ -629,6 +739,15 @@ impl Desktop {
                         ui.close();
                     }
                 });
+                if self.flow.stage == Stage::Working && self.flow.receipt.is_some() {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Auschecken …").clicked() {
+                            if let Some(request) = self.flow.preview() {
+                                self.flow_call(request);
+                            }
+                        }
+                    });
+                }
                 if self.demo {
                     ui.label(
                         RichText::new("VORSCHAU · erfundene Daten · keine Verbindung")
@@ -649,7 +768,9 @@ impl Desktop {
                     self.settings = Some(Section::Mode);
                 }
             });
-        if self.welcome_done && self.account.is_some() {
+        if self.flow.stage != Stage::Start && self.flow.stage != Stage::Working {
+            self.flow_card(ui);
+        } else if self.welcome_done && self.account.is_some() {
             self.main(ui);
         } else {
             self.welcome(ui);
@@ -681,14 +802,22 @@ impl Desktop {
                         }
                     }
                 } else {
-                    ui.label("Du hast eine Einladung bekommen – als Link oder als QR-Code. Öffne den Link, oder füge ihn hier ein."); ui.add_space(18.0);
-                    ui.add(egui::TextEdit::singleline(&mut self.invitation).hint_text("Einladungslink oder Code").desired_width(470.0)); ui.add_space(12.0);
-                    if ui.add_enabled(self.pending == 0 && !self.invitation.trim().is_empty(), egui::Button::new("Anmelden")).clicked() { self.redeem(); }
-                    if !self.demo && !self.hub_url.is_empty() && ui.add_enabled(self.pending == 0, egui::Button::new("Mit diesem Gerät wieder anmelden")).clicked() {
-                        self.invitation.clear(); self.redeem();
+                    ui.label("Dein Arbeitsplatz auf R2. Melde dich im Browser mit deinem UdK-Konto an.");
+                    ui.add_space(18.0);
+                    if ui.add_sized([330.0, 42.0], egui::Button::new("Einchecken mit UdK-Konto")).clicked() {
+                        if let Some(request) = self.flow.begin(CheckinMethod::Udk) { self.flow_call(request); }
                     }
-                    if self.pending > 0 { ui.horizontal(|ui| { ui.spinner(); ui.label("Einladung wird geprüft …"); }); }
-                    ui.add_space(14.0); ui.label(RichText::new("Keine Einladung? Frag deine Seminarleitung.").color(QUIET));
+                    ui.add_space(12.0);
+                    if ui.small_button("Ich habe einen Einladungscode").clicked() { self.guest = !self.guest; }
+                    if self.guest {
+                        ui.add_space(12.0);
+                        ui.add(egui::TextEdit::singleline(&mut self.invitation).hint_text("Einladungscode der Seminarleitung").desired_width(470.0));
+                        if ui.add_enabled(!self.invitation.trim().is_empty(), egui::Button::new("Als Gast einchecken")).clicked() {
+                            if let Some(request) = self.flow.begin(CheckinMethod::Guest(self.invitation.trim().into())) { self.flow_call(request); }
+                        }
+                    }
+                    ui.add_space(14.0);
+                    ui.label(RichText::new("Kein lokaler Agent. Dateien gehen nur mit deiner Bestätigung nach R2.").color(QUIET));
                 }
                 if let Some(e) = &self.error { ui.add_space(20.0); ui.label(e); }
             });
@@ -823,11 +952,31 @@ impl Desktop {
         });
         ui.horizontal(|ui| {
             ui.heading("Seminarprojekt");
-            ui.selectable_value(&mut self.files, false, "Chat");
-            ui.selectable_value(&mut self.files, true, "Dateien");
+            if ui
+                .selectable_label(!self.files && !self.seminar_selected, "Chat")
+                .clicked()
+            {
+                self.files = false;
+                self.seminar_selected = false;
+            }
+            if ui
+                .selectable_label(self.files && !self.seminar_selected, "Dateien")
+                .clicked()
+            {
+                self.files = true;
+                self.seminar_selected = false;
+            }
+            if ui
+                .selectable_label(self.seminar_selected, "Seminar")
+                .clicked()
+            {
+                self.seminar_selected = true;
+            }
         });
         ui.separator();
-        if self.files {
+        if self.seminar_selected {
+            self.seminar_tab(ui);
+        } else if self.files {
             ui.label("Dateiübertragung wird in I2 freigeschaltet. Es werden keine lokalen Dateien automatisch gelesen oder übertragen.");
             for text in [
                 "Nach R2 übertragen",
@@ -885,9 +1034,10 @@ impl Desktop {
                         ui.horizontal(|ui| {
                             let own = self.account.as_ref().is_some_and(|a| a.device_id == d.id);
                             ui.label(format!("{}{} · {} · zuletzt aktiv {}", d.name, if own { " (dieser Rechner)" } else { "" }, d.kind, d.last_seen));
-                            if ui.button("Abmelden …").clicked() {
+                            if !own && ui.button("Abmelden …").clicked() {
                                 revoke = Some(d.clone());
                             }
+                            if own { ui.label("bis zum Check-out"); }
                         });
                     }
                     if let Some(d) = revoke { self.revoke = Some(d); }
@@ -898,16 +1048,9 @@ impl Desktop {
                     ui.heading("Konto");
                     if let Some(a) = &self.account {
                         ui.label(format!("{} · {} @ R2", a.person, a.slot));
-                        if ui.button("Abmelden …").clicked() {
-                            self.revoke = Some(Device {
-                                id: a.device_id.clone(),
-                                name: a.device_name.clone(),
-                                kind: "Rechner".into(),
-                                last_seen: "jetzt".into(),
-                            });
-                        }
+                        ui.label("Zum Beenden dieses Arbeitsplatzes nutze ‚Auschecken …‘ oben rechts. Dateien werden vorher zur Prüfung angezeigt.");
                     } else {
-                        ui.label("Nicht angemeldet. Löse deine persönliche Einladung auf der Startkarte ein.");
+                        ui.label("Nicht eingecheckt. Melde dich auf der Startkarte mit deinem UdK-Konto an.");
                     }
                 }
                 Section::Appearance => { ui.heading("Darstellung"); ui.label("Die Oberfläche verwendet die mitgelieferten Schriften. Farben werden immer durch Zustandstext ergänzt."); }
@@ -1052,11 +1195,22 @@ impl Desktop {
             });
         }
     }
+    fn seminar_tab(&mut self, ui: &mut Ui) {
+        ui.heading("Seminar");
+        ui.label("Hier kommen Seminar-Chat, Direktnachrichten und begleitetes Mitsteuern hin. Noch nicht verbunden; es werden keine Nachrichten geteilt.");
+    }
     pub fn scene(&mut self, scene: &str) {
         if !self.demo {
             return;
         }
         self.enabled = true;
+        self.flow = Flow::default();
+        self.flow_generation += 1;
+        self.flow_pending = false;
+        self.flow_failed = false;
+        self.flow_retry = None;
+        self.seminar_selected = false;
+        self.guest = false;
         self.account = None;
         self.welcome_done = false;
         self.settings = None;
@@ -1064,6 +1218,9 @@ impl Desktop {
         self.hybrid_dialog = false;
         self.limit = false;
         self.pairing = None;
+        if self.flow_scene(scene) {
+            return;
+        }
         if scene == "v3-start" {
             return;
         }
