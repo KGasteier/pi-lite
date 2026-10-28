@@ -1312,6 +1312,25 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         );
         drop(state);
         assert_eq!(std::fs::read_dir(&boxes).unwrap().count(), 1);
+        #[cfg(unix)]
+        {
+            std::fs::remove_file(local.join("text.md")).unwrap();
+            std::os::unix::fs::symlink(&f.root, local.join("text.md")).unwrap();
+            assert!(matches!(
+                adapter.call(Request::Collect {
+                    checkin_id: r.checkin_id.clone(),
+                    pickup_id: pickup.id.clone()
+                }),
+                Reply::Error(_)
+            ));
+            assert_eq!(
+                std::fs::read_dir(&boxes).unwrap().count(),
+                1,
+                "Fehlgeschlagener Import quittiert nichts"
+            );
+            std::fs::remove_file(local.join("text.md")).unwrap();
+            std::fs::write(local.join("text.md"), "Lokale Änderung").unwrap();
+        }
         let reply = adapter.call(Request::Collect {
             checkin_id: r.checkin_id,
             pickup_id: pickup.id,
@@ -1336,6 +1355,71 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
             adapter.state.lock().unwrap().receipt.is_some(),
             "Neue Belegung bleibt bestehen"
         );
+        assert!(adapter.transfer.progress().is_none());
+    }
+
+    #[test]
+    fn locker_ambiguous_ack_is_never_repeated_or_reimported() {
+        let f = Fixture::start_mode(true).unwrap();
+        std::fs::write(
+            f.root.join("empty-checkout"),
+            b"fixture skips normal checkout assertion",
+        )
+        .unwrap();
+        let first = f.adapter("locker-ack");
+        first.state.lock().unwrap().attempt = 1;
+        let FlowReply::CheckedIn(r) = first
+            .checkin(&mut first.state.lock().unwrap(), f.info["proof"].clone())
+            .unwrap()
+        else {
+            panic!("Check-in fehlt")
+        };
+        let remote = f.root.join("home/arbeit/Projekte/Buch");
+        std::fs::create_dir_all(&remote).unwrap();
+        std::fs::write(remote.join("text.md"), "Nur einmal importieren").unwrap();
+        f.force(&r.checkin_id);
+        drop(first);
+        let adapter = f.adapter("locker-ack");
+        adapter.state.lock().unwrap().attempt = 2;
+        let FlowReply::CheckedIn(r) = adapter
+            .checkin(&mut adapter.state.lock().unwrap(), f.info["proof2"].clone())
+            .unwrap()
+        else {
+            panic!("Check-in fehlt")
+        };
+        let pickup_id = r.pickup.unwrap().id;
+        std::fs::write(f.root.join("lose-erhalten"), b"yes").unwrap();
+        for _ in 0..2 {
+            assert!(matches!(
+                adapter.call(Request::Collect {
+                    checkin_id: r.checkin_id.clone(),
+                    pickup_id: pickup_id.clone()
+                }),
+                Reply::Error(_)
+            ));
+        }
+        assert_eq!(
+            std::fs::read_to_string(f.root.join("ack-attempts")).unwrap(),
+            "1\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(adapter.config.local_root.join("Projekte/Buch/text.md"))
+                .unwrap(),
+            "Nur einmal importieren"
+        );
+        assert_eq!(
+            std::fs::read_dir(adapter.config.local_root.join(".sync/archiv"))
+                .unwrap()
+                .count(),
+            1
+        );
+        assert_eq!(
+            std::fs::read_dir(f.root.join("empfang/abholfach"))
+                .unwrap()
+                .count(),
+            1
+        );
+        assert!(adapter.state.lock().unwrap().pickup_unconfirmed);
         assert!(adapter.transfer.progress().is_none());
     }
 
@@ -1379,7 +1463,15 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         assert!(!large.selected);
         let reply = adapter.call(Request::Upload {
             checkin_id: r.checkin_id.clone(),
-            selection: vec![large.id.clone()],
+            selection: vec![
+                plan.items
+                    .iter()
+                    .find(|i| i.name == "Projekte / Film")
+                    .unwrap()
+                    .id
+                    .clone(),
+                large.id.clone(),
+            ],
         });
         assert!(
             matches!(reply, Reply::Flow(FlowReply::Uploaded)),

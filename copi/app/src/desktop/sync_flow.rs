@@ -71,9 +71,9 @@ impl Drop for TransferScope<'_> {
         self.0.end();
     }
 }
-struct Meter<'a, T> {
-    io: T,
-    transfer: &'a Transfer,
+pub(super) struct Meter<'a, T> {
+    pub io: T,
+    pub transfer: &'a Transfer,
 }
 impl<T: Read> Read for Meter<'_, T> {
     fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
@@ -181,6 +181,16 @@ impl Plan {
             return Err(
                 "Diese Auswahl ist nicht mehr aktuell. Prüfe den Arbeitsordner erneut.".into(),
             );
+        }
+        for (i, entry) in self.entries.iter().enumerate() {
+            let has_large = entry
+                .gross
+                .iter()
+                .enumerate()
+                .any(|(j, _)| selection.contains(&format!("gross-{i}-{j}")));
+            if has_large && !selection.contains(&format!("eintrag-{i}")) {
+                return Err("Wähle auch den zugehörigen Eintrag aus. Große Dateien werden nur mit einzelnem Häkchen übertragen.".into());
+            }
         }
         let mut state = self.folder.load_state().map_err(|e| e.to_string())?;
         state.letzter_checkin = Some(id.into());

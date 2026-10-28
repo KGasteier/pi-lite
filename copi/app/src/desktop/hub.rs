@@ -130,6 +130,7 @@ impl HubAdapter {
                 c.hub.send(&id, &text)?;
                 Ok(Reply::Sent(id, text))
             }
+            #[cfg(test)]
             Request::PromptAs { session, text, von } => {
                 let role = match von.rolle {
                     pi_net::ausweis::Rolle::Seminarleitung => "seminarleitung",

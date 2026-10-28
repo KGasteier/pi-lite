@@ -165,7 +165,7 @@ impl Desktop {
                                 ui.add_space(8.0);
                             }
                             ui.add_space(12.0);
-                            ui.label("Große Dateien (> 200 MiB) stehen einzeln und ohne Vorauswahl in der Liste.");
+                            ui.label("Große Dateien (> 200 MiB) stehen einzeln und ohne Vorauswahl in der Liste. Wähle auch den zugehörigen Eintrag aus.");
                             ui.label(format!("Builds/Cache werden nicht übertragen ({})", bytes(self.flow.plan.excluded_bytes)));
                             let total: u64 = self.flow.plan.items.iter().filter(|i| i.selected).map(|i| i.bytes).sum();
                             ui.add_space(22.0);
@@ -244,7 +244,9 @@ impl Desktop {
                             ui.heading("Ausgecheckt");
                             ui.add_space(18.0);
                             if let Some(summary) = &self.flow.summary {
-                                ui.label(format!("Ausgecheckt. {} Dateien in ~/cocopi · {} Konflikte erhalten. {} ist leer.", summary.files, summary.conflicts, self.flow.receipt.as_ref().map(|r| r.account.slot.as_str()).unwrap_or("Der Arbeitsplatz")));
+                                if self.flow.notice.is_none() { ui.label(format!("Ausgecheckt. {} Dateien in ~/cocopi · {} Konflikte erhalten. account03 ist leer.", summary.files, summary.conflicts)); }
+                                ui.label(format!("{} zurückgeholt", bytes(summary.bytes)));
+                                if self.demo && summary.conflicts > 0 { ui.label("Projekte/Seminar-Handout/gliederung (R2 28.10. 16-40).md"); }
                                 if summary.conflicts > 0 { ui.add_space(12.0); ui.label(format!("{} Dateien hattest du lokal geändert – die R2-Fassung liegt daneben.", summary.conflicts)); }
                             }
                             ui.add_space(22.0);

@@ -138,6 +138,7 @@ pub enum Request {
     Open(String),
     Rest(String),
     Prompt(String, String),
+    #[cfg(test)]
     PromptAs {
         session: String,
         text: String,
@@ -160,6 +161,7 @@ pub enum Reply {
     Heartbeat,
     Disconnected(String),
     Sent(String, String),
+    #[cfg(test)]
     SentAs(String, String, pi_net::seminar::Von),
     #[cfg(test)]
     SeminarPrompt {
@@ -516,6 +518,7 @@ impl Desktop {
             Reply::SeminarPrompt { session_id, prompt } => {
                 self.send_as(&session_id, prompt.von, prompt.text);
             }
+            #[cfg(test)]
             Reply::SentAs(id, text, von) => {
                 self.chat_by_session
                     .entry(id)
@@ -1379,6 +1382,7 @@ impl Desktop {
         }
     }
     /// Ausschließlich das explizit freigegebene Hub-Ziel, nie die aktuelle Auswahl.
+    #[cfg(test)]
     pub fn send_as(&mut self, session: &str, von: pi_net::seminar::Von, text: String) {
         if !self.connected || !self.sessions.iter().any(|s| s.id == session && !s.local) {
             self.error = Some("Auftrag nicht gesendet: Die freigegebene R2-Session ist nicht mehr verbunden. Es wurde kein anderes Ziel verwendet.".into());
@@ -2002,6 +2006,30 @@ mod tests {
         assert!(d.flow.receipt.is_some());
         assert!(d.flow_retry.is_none());
     }
+    #[test]
+    fn i3_large_checkbox_is_required_and_later_pickup_only_plans() {
+        let ctx = egui::Context::default();
+        crate::setup_ctx(&ctx);
+        let mut d = Desktop::new(true);
+        d.scene("v3-checkout-vorschau");
+        assert!(d.flow.checkout().is_none());
+        click_text(&mut d, &ctx, "Ergebnisse/Film.mov");
+        let Some(Request::Checkout { large_files, .. }) = d.flow.checkout() else {
+            panic!("Einzelbestätigung fehlt")
+        };
+        assert_eq!(large_files, vec!["Ergebnisse/Film.mov"]);
+        d.scene("v3-abholfach");
+        click_text(&mut d, &ctx, "Später abholen · weiter zur Auswahl");
+        assert!(matches!(d.flow_retry, Some(Request::SyncPlan(_))));
+        assert!(d.flow.receipt.as_ref().unwrap().pickup.is_some());
+        d.scene("v3-checkout-konflikt");
+        for _ in 0..3 {
+            frame(&mut d, &ctx, vec![]);
+        }
+        let output = frame(&mut d, &ctx, vec![]);
+        assert!(output.shapes.iter().any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t) if t.galley.job.text.contains("(R2 28.10. 16-40).md"))));
+    }
+
     #[test]
     fn i2_escape_cancels_browser_queue_upload_checkout_and_preview() {
         for scene in [

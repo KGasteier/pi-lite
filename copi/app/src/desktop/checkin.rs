@@ -373,6 +373,12 @@ impl Flow {
                     || (self.stage == Stage::Cancelling
                         && self.resume_after_cancel == Stage::Working) =>
             {
+                if let Some(receipt) = &self.receipt {
+                    self.notice = Some(format!(
+                        "Ausgecheckt. {} Dateien in ~/cocopi · {} Konflikte erhalten. {} ist leer.",
+                        summary.files, summary.conflicts, receipt.account.slot
+                    ));
+                }
                 self.summary = Some(summary);
                 self.stage = Stage::Done;
                 self.receipt = None;

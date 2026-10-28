@@ -19,7 +19,8 @@ pub(super) fn angebot(empfang: &Empfang) -> Result<Option<Pickup>, String> {
     let id = first["checkin_id"]
         .as_str()
         .ok_or("Die Abholfach-ID fehlt.")?;
-    // Die Liste enthält keine Größe; der authentifizierte Umschlag schon.
+    // Die Liste enthält keine Größe; die Länge des AEAD-Chiffrats entspricht
+    // der Klartextarchivgröße (GCM-Tag liegt separat). Abruf ist nicht quittierend.
     let response = empfang.abholfach_holen(id)?;
     let meta = &response["archiv"];
     if meta["checkin_id"] != id {
@@ -65,11 +66,16 @@ pub(super) fn holen(
     let sha = meta["sha256"]
         .as_str()
         .ok_or("Die Archiv-Prüfsumme fehlt.")?;
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let suffix = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let result = folder
         .import(
-            std::io::Cursor::new(&plaintext),
+            sync_flow::Meter {
+                io: std::io::Cursor::new(&plaintext),
+                transfer,
+            },
             sha,
-            &format!("abholfach-{sha}.tar.gz"),
+            &format!("abholfach-{sha}-{}-{suffix}.tar.gz", std::process::id()),
             &sync_flow::stamp(),
         )
         .map_err(|e| e.to_string())?;
