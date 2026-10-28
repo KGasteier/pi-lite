@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import assert from 'node:assert/strict';
 import { hubDir, importHub, identity, login, request, syncFixture, hash } from './harness.mjs';
 
-export async function empfangFixture(t, count = 10, { registerAfter, archiveBefore, detectEmpty = false } = {}) {
+export async function empfangFixture(t, count = 10, { registerAfter, archiveBefore, detectEmpty = false, now = Date.now } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cocopi-i2-empfang-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const { createFakeOidc } = await importHub('empfang/test/fake-oidc.mjs');
@@ -63,7 +63,8 @@ export async function empfangFixture(t, count = 10, { registerAfter, archiveBefo
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
   const base = `http://127.0.0.1:${server.address().port}`;
-  const configuration = { dir: path.join(tmp, 'empfang'), slots, oidc, origin: base, adapter, epochenDir,
+  const boxesDir = path.join(tmp, 'empfang/abholfach');
+  const configuration = { dir: path.join(tmp, 'empfang'), slots, oidc, origin: base, adapter, epochenDir, now,
     sleep: async ms => { delays.push(ms); },
     clearSlot: async (slot, action) => {
       const f = hubFixtures[slot]; events.push(`${action}:${slot}`);
@@ -101,7 +102,7 @@ export async function empfangFixture(t, count = 10, { registerAfter, archiveBefo
       'x-cocopi-challenge': c.challenge_id, 'x-cocopi-signatur': crypto.sign(null, Buffer.from(payload), key.privateKey).toString('base64url') } });
   }
   async function token(person) { const f = hubFixtures[person.p.slot]; return login(f.base, person.p.geraet_id, person.owner.key, person.p.slot); }
-  return { base, checkin, signed, token, hubFixtures, get empfang() { return empfang; }, events, restart, delays,
+  return { base, boxesDir, checkin, signed, token, hubFixtures, get empfang() { return empfang; }, events, restart, delays,
     attachProcess: (slot, child) => processes.set(slot, child), failClear: value => { failClear = value; }, hash };
 }
 

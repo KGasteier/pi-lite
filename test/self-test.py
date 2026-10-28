@@ -37,6 +37,34 @@ class MetricsTests(unittest.TestCase):
                  json.dumps(diagnostic(line=2))]
         self.assertEqual(metrics.warnings(lines), (3, 2))
 
+    def test_new_warning_identity_ignores_line_shifts_but_not_replacement(self):
+        old = diagnostic()["message"]
+        old["spans"][0]["text"] = [{"text": "fn old() {}"}]
+        shifted = json.loads(json.dumps(old))
+        shifted["spans"][0]["line_start"] = 42
+        self.assertEqual(metrics.new_warnings([shifted], [old]), [])
+        replacement = json.loads(json.dumps(shifted))
+        replacement["spans"][0]["text"] = [{"text": "fn new() {}"}]
+        self.assertEqual(metrics.new_warnings([replacement], [old]), [replacement])
+        self.assertEqual(metrics.locations(replacement), ["src/main.rs:42:unused"])
+        self.assertEqual(metrics.new_warnings([shifted, shifted], [old]), [shifted])
+
+    def test_new_warning_report_has_current_location_and_fixed_baseline(self):
+        with tempfile.TemporaryDirectory(prefix="s6-new-warnings.") as directory:
+            d = Path(directory)
+            old = diagnostic()["message"]
+            current = diagnostic(message="new", line=73)
+            (d / "log").write_text(json.dumps(current) + "\n")
+            baseline = {"schema": 1, "unique_warning_count": 1, "diagnostics": [old]}
+            (d / "base").write_text(json.dumps(baseline))
+            result = subprocess.run(["python3", str(ROOT / "gate-metrics.py"),
+                                     str(d / "log"), str(d / "base"), str(d / "new")],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0)  # Bestehende Anzahlpolitik.
+            self.assertEqual(json.loads(result.stdout)["new"], 1)
+            self.assertIn("NEW src/main.rs:73:unused", (d / "new").read_text())
+            self.assertEqual(json.loads((d / "base").read_text()), baseline)
+
     def test_threshold_and_invalid_baselines(self):
         with tempfile.TemporaryDirectory(prefix="s6-metrics.") as directory:
             d = Path(directory)
@@ -120,7 +148,17 @@ class ScriptTests(unittest.TestCase):
         calls = self.base / "calls"
         warning = json.dumps(diagnostic())
         executable(tools / "cargo", f'''#!/bin/bash
-printf 'cargo %s target=%s home=%s\n' "$*" "$CARGO_TARGET_DIR" "$HOME" >> '{calls}'
+printf 'cargo %s target=%s home=%s hub=%s\n' "$*" "$CARGO_TARGET_DIR" "$HOME" "$COCOPI_PI_HUB" >> '{calls}'
+if [[ $1 == test ]]; then
+    for arg in "$@"; do
+        case "$arg" in
+          local_node_end*|node_encrypts*|explicit_upload_header*)
+            if [[ -f "$PWD/empty-i2c" ]]; then exit 0; fi
+            printf 'test fixture::%s ... ok\\n' "$arg"
+            if [[ -f "$PWD/skip-i2c" ]]; then printf 'übersprungen: node fehlt\\n'; fi ;;
+        esac
+    done
+fi
 if [[ $1 == clippy ]]; then printf '%s\n' '{warning}'; fi
 if [[ -f "$PWD/fail-$1" ]]; then exit 7; fi
 exit 0
@@ -131,15 +169,17 @@ printf 'rustfmt %s\\n' "$*" >> '{calls}'
 [[ ! -f "$PWD/fail-fmt" ]]
 ''')
         executable(tools / "node", f'''#!/bin/bash
-printf 'node %s seminar=%s\n' "$*" "$I2_SEMINAR_DIR" >> '{calls}'
+printf 'node %s seminar=%s module=%s\n' "$*" "$I2_SEMINAR_DIR" "$COCOPI_V1_TEST_MODULE" >> '{calls}'
 for arg in "$@"; do
+    if [[ $arg == */abholfach.i2c.test.mjs ]]; then printf '# pass 1\\n# skipped 0\\n# todo 0\\n'; fi
     [[ $arg != *a.js && $arg != *test-a.cjs ]] || [[ ! -f "$PWD/fail-js" ]] || exit 9
     [[ $arg != *test-statusline-net.cjs ]] || [[ ! -f "$PWD/fail-known" ]] || exit 9
     [[ $arg != --test ]] || [[ ! -f "$PWD/fail-mobile" ]] || exit 9
     [[ $arg != empfang/test/*.mjs && $arg != test/sync.mjs ]] || [[ ! -f "$PWD/fail-i2" ]] || exit 9
 done
+if [[ "$*" == *mobile/test/* && -f "$PWD/skip-mobile" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
 if [[ "$*" == *test/i2/*.i2b.test.mjs* && -f "$PWD/skip-i2b" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
-if [[ "$*" == *test/i2/* && -f "$PWD/skip-i2" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
+if [[ "$*" == *test/i2/* && "$*" != */abholfach.i2c.test.mjs* && -f "$PWD/skip-i2" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
 exit 0
 ''')
         for repository in (worktree, hub):
@@ -159,8 +199,8 @@ exit 0
         worktree, hub, calls = self.setup_gate()
         result = self.run_script("v3-gate.sh", worktree, hub)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assertEqual(len(result.stdout.splitlines()), 13)
-        self.assertEqual(sum(line.startswith("PASS") for line in result.stdout.splitlines()), 7)
+        self.assertEqual(len(result.stdout.splitlines()), 19)
+        self.assertEqual(sum(line.startswith("PASS") for line in result.stdout.splitlines()), 13)
         self.assertEqual(sum(line.startswith("SKIP") for line in result.stdout.splitlines()), 6)
         entries = calls.read_text()
         self.assertIn("--offline --locked --workspace --features copi/cocopi", entries)
@@ -184,8 +224,8 @@ exit 0
         (worktree / "fail-js").touch()
         result = self.run_script("v3-gate.sh", worktree, hub)
         self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertEqual(len(result.stdout.splitlines()), 13)
-        self.assertEqual(sum(line.startswith("FAIL") for line in result.stdout.splitlines()), 6)
+        self.assertEqual(len(result.stdout.splitlines()), 22)
+        self.assertEqual(sum(line.startswith("FAIL") for line in result.stdout.splitlines()), 14)
         self.assertIn("PASS hub-smoke", result.stdout)
         self.assertIn("node --check ui/b.js", calls.read_text())
         self.assertIn("node scripts/test-b.cjs", calls.read_text())
@@ -287,6 +327,12 @@ exit 0
         self.assertIn("PASS mobile-tests", result.stdout)
         self.assertIn("PASS r2-tests", result.stdout)
         self.assertIn("node --test mobile/test/stub.mjs", calls.read_text())
+        (worktree / "skip-mobile").touch()
+        skipped = self.run_script("v3-gate.sh", worktree)
+        self.assertEqual(skipped.returncode, 0, skipped.stdout + skipped.stderr)
+        self.assertIn("SKIP mobile-tests | Abnahme unvollständig", skipped.stdout)
+        self.assertNotIn("PASS mobile-tests", skipped.stdout)
+        (worktree / "skip-mobile").unlink()
         (worktree / "fail-mobile").touch()
         r2_test.write_text("raise SystemExit(7)\n")
         result = self.run_script("v3-gate.sh", worktree)
@@ -333,7 +379,7 @@ exit 0
         (worktree / "skip-i2").touch()
         result = self.run_script("v3-gate.sh", worktree, hub)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("SKIP i2-szenarien | I2-Abnahme unvollständig", result.stdout)
+        self.assertIn("SKIP i2-szenarien | Abnahme unvollständig", result.stdout)
         self.assertNotIn("PASS i2-szenarien", result.stdout)
 
     def test_gate_i2b_missing_contract_does_not_hide_green_i2(self):
@@ -345,7 +391,7 @@ exit 0
         result = self.run_script("v3-gate.sh", worktree, hub)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PASS i2-szenarien |", result.stdout)
-        self.assertIn("SKIP i2b-szenarien | I2-Abnahme unvollständig", result.stdout)
+        self.assertIn("SKIP i2b-szenarien | Abnahme unvollständig", result.stdout)
         self.assertNotIn("PASS i2b-szenarien", result.stdout)
         self.assertIn("node --test test/i2/base.test.mjs seminar=", calls.read_text())
         self.assertIn("node --test test/i2/contracts.i2b.test.mjs seminar=", calls.read_text())
@@ -361,6 +407,31 @@ exit 0
         result = self.run_script("v3-gate.sh", worktree, hub, I2_SEMINAR_DIR="/explicit/repo")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("seminar=/explicit/repo", calls.read_text())
+
+    def test_i2c_empty_filters_and_silent_cross_test_skip_fail(self):
+        worktree, hub, calls = self.setup_gate()
+        for flag in ("empty-i2c", "skip-i2c"):
+            marker = worktree / "copi" / flag
+            marker.touch()
+            result = self.run_script("v3-gate.sh", worktree, V3_GATE_HUBS=str(hub))
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("FAIL i2c-szenarien |", result.stdout)
+            self.assertIn("FAIL i2c-szenarien/sync-e2e", result.stdout)
+            self.assertIn("PASS hub-smoke", result.stdout)
+            marker.unlink()
+        self.assertIn(f"hub={hub}", calls.read_text())
+        self.assertIn("-p pi-backend --features cocopi", calls.read_text())
+
+    def test_first_environment_hub_is_used_for_i2c_even_with_cli_hub(self):
+        worktree, hub, calls = self.setup_gate()
+        second = self.base / "second-hub"
+        subprocess.run(["git", "clone", "-q", str(hub), str(second)], check=True)
+        result = self.run_script("v3-gate.sh", worktree, second, V3_GATE_HUBS=str(hub))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"module={hub}/lib/hub-v1.mjs", calls.read_text())
+        for line in calls.read_text().splitlines():
+            if line.startswith("cargo test"):
+                self.assertIn(f"hub={hub}", line)
 
     def test_gate_rejects_empty_js_globs(self):
         worktree, _, _ = self.setup_gate()

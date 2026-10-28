@@ -51,6 +51,7 @@ für solche Pfade positionale, gequotete Argumente verwenden.
   Kein Ersatz für den zusätzlich vorhandenen parallelen HTTP-Test.
 - `oidc.test.mjs`: RS256/ES256 und negative Claims-/Signaturtests gegen lokalen
   JWKS-Issuer. Kein vollständiger Systembrowser-/PKCE-/authentik-Livetest.
+- `abholfach.i2c.test.mjs`: erzwungener Check-out über HTTP, bestätigtes Slot-Fake-Leeren, erneuter Fake-OIDC-Check-in desselben `sub` mit zweitem Gerät; Abruf zulässig, Entschlüsselung mit neuem X25519-Schlüssel abgewiesen. Nach Empfang-Neustart bei 72 h − 1 ms noch vorhanden, bei exakt 72 h per Sweep physisch gelöscht. Node-Clientsimulation mit echter S7-Kryptofunktion; separat als `i2c-szenarien` ausgeführt.
 - `abholfach.test.mjs`: Schlüsselbindung, Manipulation und 72-h-Ablauf.
 - `fixtures.test.mjs`: validiert die selbst erzeugten Miniarchive/Auswertung.
 
