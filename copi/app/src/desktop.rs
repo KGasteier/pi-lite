@@ -159,6 +159,7 @@ pub enum Reply {
     },
     Completed(Box<Reply>),
     Heartbeat,
+    AktivCompleted(Result<(), String>),
     Disconnected(String),
     Sent(String, String),
     #[cfg(test)]
@@ -194,6 +195,10 @@ pub enum Reply {
 pub trait DesktopApi: Send + Sync {
     fn call(&self, request: Request) -> Reply;
     fn watch(&self, _tx: mpsc::Sender<Reply>) {}
+    /// Wird auf einem Worker aufgerufen, nie während eines UI-Frames blockierend.
+    fn aktiv_signal(&self, _connected: bool) -> Result<(), String> {
+        Ok(())
+    }
     fn seminar(&self, _sessions: &[Session]) -> Result<Option<seminar::Seminar>, String> {
         Ok(None)
     }
@@ -293,6 +298,9 @@ pub struct Desktop {
     confirm_host: Option<String>,
     last_event: Option<Instant>,
     watch_started: bool,
+    aktiv_clock: Instant,
+    aktiv_takt: flow_adapter::AktivTakt,
+    aktiv_pending: bool,
     chat_by_session: std::collections::HashMap<String, Vec<ChatMessage>>,
     streaming: std::collections::HashMap<String, String>,
 }
@@ -400,6 +408,9 @@ impl Desktop {
             confirm_host: None,
             last_event: None,
             watch_started: false,
+            aktiv_clock: Instant::now(),
+            aktiv_takt: flow_adapter::AktivTakt::default(),
+            aktiv_pending: false,
             chat_by_session: Default::default(),
             streaming: Default::default(),
         }
@@ -494,6 +505,12 @@ impl Desktop {
             Reply::Completed(reply) => {
                 self.pending = self.pending.saturating_sub(1);
                 self.apply(*reply);
+            }
+            Reply::AktivCompleted(result) => {
+                self.aktiv_pending = false;
+                if let Err(error) = result {
+                    self.error = Some(error);
+                }
             }
             Reply::Heartbeat => {
                 self.last_event = Some(Instant::now());
@@ -653,7 +670,13 @@ impl Desktop {
         } else {
             "☁ Nur Remote"
         };
-        match &self.account {
+        let account = self
+            .flow
+            .receipt
+            .as_ref()
+            .map(|r| &r.account)
+            .or(self.account.as_ref());
+        match account {
             Some(a) => format!(
                 "{prefix} · {} · {} @ R2 · {}",
                 a.person,
@@ -670,7 +693,7 @@ impl Desktop {
                     "offline"
                 }
             ),
-            None => format!("{prefix} · nicht angemeldet"),
+            None => format!("{prefix} · nicht eingecheckt"),
         }
     }
     fn redeem(&mut self) {
@@ -846,6 +869,19 @@ impl Desktop {
         {
             self.connected = false;
             self.error = Some("Die Verbindung zu R2 ist veraltet. Prüfe den letzten Auftrag, bevor du erneut sendest.".into());
+        }
+        if !self.demo && !self.aktiv_pending {
+            let connected = self.connected && self.flow.receipt.is_some();
+            if let Some(signal) = self.aktiv_takt.next(self.aktiv_clock.elapsed(), connected) {
+                self.aktiv_pending = true;
+                let (api, tx) = (self.api.clone(), self.tx.clone());
+                std::thread::spawn(move || {
+                    let _ = tx.send(Reply::AktivCompleted(api.aktiv_signal(signal)));
+                });
+            }
+        }
+        if self.aktiv_pending || self.flow.receipt.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_secs(1));
         }
         if self.watch_started {
             ui.ctx().request_repaint_after(Duration::from_secs(1));
@@ -1417,6 +1453,16 @@ impl Desktop {
         if let Some(seminar) = seminar::scene(scene) {
             // Szenen bleiben synthetisch. Kein produktiver Empfangspin aus Demo-Daten.
             self.scene("v3-arbeiten-eingecheckt");
+            if scene == "v3-mitsteuern-aktiv-leitung" {
+                let account = Account {
+                    person: "Aylin".into(),
+                    slot: "account01".into(),
+                    device_name: "Aylins Rechner".into(),
+                    device_id: "demo-leitung".into(),
+                };
+                self.flow.receipt.as_mut().unwrap().account = account.clone();
+                self.account = Some(account);
+            }
             for prompt in &seminar.marked_prompts {
                 self.chat_by_session
                     .entry("a".into())
@@ -1562,7 +1608,7 @@ mod tests {
     #[test]
     fn status_has_one_authoritative_mode_and_offline() {
         let mut d = Desktop::new(true);
-        assert_eq!(d.status(), "☁ Nur Remote · nicht angemeldet");
+        assert_eq!(d.status(), "☁ Nur Remote · nicht eingecheckt");
         d.scene("v3-main-remote");
         assert_eq!(
             d.status(),
@@ -1921,6 +1967,61 @@ mod tests {
         }
         assert_eq!(SessionState::Working.color(), WORKING);
     }
+    #[test]
+    fn i3_status_uses_own_receipt_even_when_viewing_someone_else() {
+        let mut d = Desktop::new(true);
+        d.scene("v3-mitsteuern-aktiv-leitung");
+        assert_eq!(
+            d.status(),
+            "☁ Nur Remote · Aylin · account01 @ R2 · eingecheckt seit 14:02"
+        );
+        d.account = Some(MemoryApi::receipt().account);
+        assert!(
+            d.status().contains("Aylin · account01"),
+            "Receipt ist maßgeblich, nicht fremde Session"
+        );
+        d.connected = false;
+        assert_eq!(
+            d.status(),
+            "☁ Nur Remote · Aylin · account01 @ R2 · offline"
+        );
+    }
+
+    #[test]
+    fn i3_queue_and_clear_unconfirmed_are_honest_rendered_states() {
+        let ctx = egui::Context::default();
+        crate::setup_ctx(&ctx);
+        let mut d = Desktop::new(true);
+        for (scene, expected) in [
+            ("v3-warteschlange", "Warteschlange"),
+            (
+                "v3-checkout-leeren-unbestaetigt",
+                "Deine Dateien sind trotzdem schon lokal.",
+            ),
+        ] {
+            d.scene(scene);
+            for _ in 0..3 {
+                frame(&mut d, &ctx, vec![]);
+            }
+            let output = frame(&mut d, &ctx, vec![]);
+            let texts = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::epaint::Shape::Text(t) => Some(t.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(texts.contains(&expected), "{scene}: {texts:?}");
+            assert!(
+                !texts
+                    .iter()
+                    .any(|t| t.contains("Ein Arbeitsplatz wird für dich frei")
+                        || t.ends_with("ist leer."))
+            );
+        }
+    }
+
     #[test]
     fn i2_scenes_render_the_requested_cards_and_one_checkout_location() {
         for (scene, expected) in [

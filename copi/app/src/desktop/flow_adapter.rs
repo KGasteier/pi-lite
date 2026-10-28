@@ -18,6 +18,30 @@ use std::{
 
 type Sha256 = fn(&[u8]) -> [u8; 32];
 
+/// N8: reine Zeitsteuerung, monotone Uhr wird vom Desktop bzw. Test eingespeist.
+/// 30 s lassen Reserve für Worker und langsame Frames gegenüber der 60-s-Grenze.
+#[derive(Default)]
+pub(super) struct AktivTakt {
+    last: Option<Duration>,
+    connected: bool,
+}
+impl AktivTakt {
+    pub fn next(&mut self, now: Duration, connected: bool) -> Option<bool> {
+        let due = connected
+            && self
+                .last
+                .is_none_or(|last| now.saturating_sub(last) >= Duration::from_secs(30));
+        if due || self.connected != connected {
+            self.connected = connected;
+            self.last = Some(now);
+            Some(connected)
+        } else {
+            None
+        }
+    }
+}
+type AktivSignal = Arc<dyn Fn(bool) -> Result<(), String> + Send + Sync>;
+
 /// Geprüfte SHA-256-Implementierung (RustCrypto `sha2`, bereits über pi-sync im Lockfile).
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     use sha2::Digest;
@@ -63,6 +87,7 @@ pub struct FlowAdapter {
     transfer: sync_flow::Transfer,
     archive_key: pi_backend::hub_v1::abholfach::Schluessel,
     identity: pi_net::identity::Identity,
+    aktiv_signal: Mutex<Option<AktivSignal>>,
 }
 impl FlowAdapter {
     pub fn new(config: Config) -> Result<Self, String> {
@@ -81,6 +106,7 @@ impl FlowAdapter {
             config,
             archive_key,
             identity,
+            aktiv_signal: Mutex::new(None),
             transfer: sync_flow::Transfer::default(),
             cancelled_attempt: AtomicU64::new(0),
             current_attempt: AtomicU64::new(0),
@@ -107,6 +133,15 @@ impl FlowAdapter {
                 seminar_hub: None,
             }),
         })
+    }
+    /// K verbindet hier nach S3-Merge den authentifizierten Empfang::aktiv-Aufruf.
+    /// Der Callback muss unabhängig vom Transfer-State bleiben: Uploads dürfen
+    /// Aktiv-Signale nicht hinter dem langen State-Mutex blockieren.
+    pub fn set_aktiv_signal(
+        &self,
+        signal: impl Fn(bool) -> Result<(), String> + Send + Sync + 'static,
+    ) {
+        *self.aktiv_signal.lock().unwrap() = Some(Arc::new(signal));
     }
     fn checkin(&self, s: &mut State, proof: Value) -> Result<FlowReply, String> {
         let mut body = json!({
@@ -458,9 +493,10 @@ impl FlowAdapter {
                 s.receipt_unconfirmed = true;
                 let confirmed = s
                     .empfang
-                    .erhalten(&field(&meta, "checkout_id")?, &field(&meta, "sha256")?)?;
-                if confirmed["typ"] != "ausgecheckt" {
-                    return Err("Der Empfang hat die Leerung noch nicht bestätigt.".into());
+                    .erhalten(&field(&meta, "checkout_id")?, &field(&meta, "sha256")?);
+                if !confirmed.is_ok_and(|v| v["typ"] == "ausgecheckt") {
+                    // Kein zweites erhalten, kein erneuter Import, kein falscher Erfolg.
+                    return Ok(Reply::Flow(FlowReply::ClearUnconfirmed(summary)));
                 }
                 sync_flow::journal(
                     &folder,
@@ -548,6 +584,14 @@ impl FlowAdapter {
     }
 }
 impl DesktopApi for FlowAdapter {
+    fn aktiv_signal(&self, connected: bool) -> Result<(), String> {
+        let signal = self
+            .aktiv_signal
+            .lock()
+            .map_err(|_| "Das Aktiv-Signal wurde unterbrochen.")?
+            .clone();
+        signal.ok_or("Der Empfang erhält noch kein Aktiv-Signal. Bitte die Seminarleitung um die aktualisierte Verbindung.")?(connected)
+    }
     fn progress(&self) -> Option<Progress> {
         self.transfer.progress()
     }
@@ -640,6 +684,59 @@ mod tests {
         process::{Command, Stdio},
     };
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn aktiv_signal_fake_clock_connection_period_disconnect_and_reconnect() {
+        let mut takt = AktivTakt::default();
+        let mut signals = vec![];
+        let mut tick = |seconds, connected| {
+            if let Some(signal) = takt.next(Duration::from_secs(seconds), connected) {
+                signals.push((seconds, signal));
+            }
+        };
+        tick(0, false);
+        tick(1, true);
+        for seconds in 2..=121 {
+            tick(seconds, true);
+        }
+        tick(122, false);
+        tick(500, false);
+        tick(501, true);
+        assert_eq!(
+            signals,
+            vec![
+                (1, true),
+                (31, true),
+                (61, true),
+                (91, true),
+                (121, true),
+                (122, false),
+                (501, true)
+            ]
+        );
+        assert!(
+            signals
+                .windows(2)
+                .filter(|pair| pair[0].1 && pair[1].1)
+                .all(|pair| pair[1].0 - pair[0].0 <= 60)
+        );
+    }
+
+    #[test]
+    fn aktiv_callback_runs_without_transfer_state_lock() {
+        let f = Fixture::start().unwrap();
+        let adapter = f.adapter("aktiv");
+        let signals = Arc::new(Mutex::new(vec![]));
+        let output = signals.clone();
+        adapter.set_aktiv_signal(move |connected| {
+            output.lock().unwrap().push(connected);
+            Ok(())
+        });
+        let _transfer_lock = adapter.state.lock().unwrap();
+        adapter.aktiv_signal(true).unwrap();
+        adapter.aktiv_signal(false).unwrap();
+        assert_eq!(*signals.lock().unwrap(), [true, false]);
+    }
 
     #[test]
     fn browser_is_bound_to_https_issuer_origin() {
@@ -1220,15 +1317,20 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         else {
             panic!("Vorschau fehlt")
         };
-        for _ in 0..2 {
-            assert!(matches!(
-                adapter.call(Request::Checkout {
-                    checkin_id: r.checkin_id.clone(),
-                    preview_id: p.id.clone(),
-                    large_files: vec![],
-                }),
-                Reply::Error(_)
-            ));
+        for attempt in 0..2 {
+            let reply = adapter.call(Request::Checkout {
+                checkin_id: r.checkin_id.clone(),
+                preview_id: p.id.clone(),
+                large_files: vec![],
+            });
+            if attempt == 0 {
+                assert!(matches!(
+                    reply,
+                    Reply::Flow(FlowReply::ClearUnconfirmed(ReturnSummary { files: 1, .. }))
+                ));
+            } else {
+                assert!(matches!(reply, Reply::Error(_)));
+            }
         }
         assert_eq!(
             std::fs::read_to_string(f.root.join("ack-attempts")).unwrap(),

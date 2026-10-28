@@ -125,7 +125,7 @@ impl Desktop {
                             self.cancel_button(ui);
                         }
                         Stage::Queue { position, .. } => {
-                            ui.heading("Ein Arbeitsplatz wird für dich frei");
+                            ui.heading("Warteschlange");
                             ui.add_space(18.0);
                             ui.label(format!("Alle 10 Arbeitsplätze sind belegt. Du bist Nr. {position} in der Warteschlange."));
                             ui.label("Du rückst automatisch nach. Lass dieses Fenster einfach offen.");
@@ -165,7 +165,7 @@ impl Desktop {
                                 ui.add_space(8.0);
                             }
                             ui.add_space(12.0);
-                            ui.label("Große Dateien (> 200 MiB) stehen einzeln und ohne Vorauswahl in der Liste. Wähle auch den zugehörigen Eintrag aus.");
+                            ui.label("Große Dateien (> 200 MB) stehen einzeln und ohne Vorauswahl in der Liste. Wähle auch den zugehörigen Eintrag aus.");
                             ui.label(format!("Builds/Cache werden nicht übertragen ({})", bytes(self.flow.plan.excluded_bytes)));
                             let total: u64 = self.flow.plan.items.iter().filter(|i| i.selected).map(|i| i.bytes).sum();
                             ui.add_space(22.0);
@@ -217,9 +217,8 @@ impl Desktop {
                                     columns[1].label(RichText::new("Wird gelöscht").strong());
                                     columns[1].add_space(14.0);
                                     columns[1].label(format!("Builds, Cache und temporäre Dateien · {}", bytes(preview.volatile_bytes)));
-                                    columns[1].collapsing(format!("{} Dateien · Beispiele zeigen", preview.volatile_files), |ui| {
-                                        for example in &preview.examples { ui.label(example); }
-                                    });
+                                    columns[1].label(format!("{} Dateien · Beispiele", preview.volatile_files));
+                                    for example in &preview.examples { columns[1].label(example); }
                                     columns[1].add_space(12.0);
                                     columns[1].label("Auch alle übrigen Dateien auf R2 werden nach der sicheren Rückkehr entfernt. Unveränderte Dateien hast du schon lokal.");
                                 });
@@ -240,6 +239,17 @@ impl Desktop {
                             ui.heading("Abbruch wird bestätigt …");
                             ui.label("Bitte warte. Deine Dateien werden nicht aufgrund dieses Klicks gelöscht.");
                         }
+                        Stage::ClearUnconfirmed => {
+                            ui.heading("Der Arbeitsplatz ist noch nicht nachweislich leer.");
+                            ui.add_space(18.0);
+                            ui.label("Die Seminarleitung muss den Arbeitsplatz prüfen.");
+                            ui.label("Deine Dateien sind trotzdem schon lokal.");
+                            if let Some(summary) = &self.flow.summary {
+                                ui.label(format!("{} Dateien in ~/cocopi · {} Konflikte erhalten.", summary.files, summary.conflicts));
+                            }
+                            ui.add_space(22.0);
+                            self.open_local_folder(ui);
+                        }
                         Stage::Done => {
                             ui.heading("Ausgecheckt");
                             ui.add_space(18.0);
@@ -250,19 +260,7 @@ impl Desktop {
                                 if summary.conflicts > 0 { ui.add_space(12.0); ui.label(format!("{} Dateien hattest du lokal geändert – die R2-Fassung liegt daneben.", summary.conflicts)); }
                             }
                             ui.add_space(22.0);
-                            if ui.button("Ordner öffnen").clicked() {
-                                if self.demo { self.error = Some("Vorschau: Es wird kein echter Ordner geöffnet.".into()); }
-                                else if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
-                                    let path = std::path::PathBuf::from(home).join("cocopi");
-                                    #[cfg(target_os = "linux")]
-                                    let mut command = std::process::Command::new("xdg-open");
-                                    #[cfg(target_os = "macos")]
-                                    let mut command = std::process::Command::new("open");
-                                    #[cfg(target_os = "windows")]
-                                    let mut command = std::process::Command::new("explorer");
-                                    if let Err(e) = command.arg(path).spawn() { self.error = Some(format!("Der Ordner konnte nicht geöffnet werden. {e}")); }
-                                }
-                            }
+                            self.open_local_folder(ui);
                             if ui.small_button("Zur Startkarte").clicked() { self.flow = Flow::default(); }
                         }
                         Stage::Start | Stage::Working => {}
@@ -282,6 +280,27 @@ impl Desktop {
             });
         });
     }
+    fn open_local_folder(&mut self, ui: &mut Ui) {
+        if !ui.button("Ordner öffnen").clicked() {
+            return;
+        }
+        if self.demo {
+            self.error = Some("Vorschau: Es wird kein echter Ordner geöffnet.".into());
+            return;
+        }
+        if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+            let path = std::path::PathBuf::from(home).join("cocopi");
+            #[cfg(target_os = "linux")]
+            let mut command = std::process::Command::new("xdg-open");
+            #[cfg(target_os = "macos")]
+            let mut command = std::process::Command::new("open");
+            #[cfg(target_os = "windows")]
+            let mut command = std::process::Command::new("explorer");
+            if let Err(e) = command.arg(path).spawn() {
+                self.error = Some(format!("Der Ordner konnte nicht geöffnet werden. {e}"));
+            }
+        }
+    }
     fn cancel_button(&mut self, ui: &mut Ui) {
         ui.add_space(20.0);
         if ui.small_button("Abbrechen").clicked() {
@@ -300,6 +319,7 @@ impl Desktop {
             "v3-checkout-vorschau" => Stage::Preview,
             "v3-checkout-konflikt" => Stage::Done,
             "v3-checkout-fertig" => Stage::Done,
+            "v3-checkout-leeren-unbestaetigt" => Stage::ClearUnconfirmed,
             "v3-sync-fortschritt" => Stage::Transfer(TransferKind::Upload),
             "v3-checkout-fortschritt" => Stage::Transfer(TransferKind::Checkout),
             "v3-abholfach" => Stage::Pickup,
@@ -382,13 +402,6 @@ impl Desktop {
     }
 }
 fn bytes(n: u64) -> String {
-    if n >= 1_000_000_000 {
-        format!("{:.1} GB", n as f64 / 1_000_000_000.0)
-    } else if n >= 1_000_000 {
-        format!("{:.1} MB", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.0} KB", n as f64 / 1_000.0)
-    } else {
-        format!("{n} B")
-    }
+    // Dezimale MB in allen Sync-Karten, auch Fortschritt, Cache und große Dateien.
+    format!("{:.2} MB", n as f64 / 1_000_000.0).replace('.', ",")
 }
