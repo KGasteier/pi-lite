@@ -36,8 +36,18 @@ impl HubAdapter {
             Request::Redeem(input) => {
                 let mut key = c.key.take().map(Ok).unwrap_or_else(|| DeviceKey::load_or_create("seminar-desktop"))?;
                 c.hub.hello("cocopi")?;
-                let result = if key.geraet_id.is_some() && input.is_empty() { Ok(Value::Null) } else { c.hub.redeem(&mut key, &input, 'e', &c.name, "desktop") };
-                let result = match result { Ok(v) => v, Err(e) => { c.key = Some(key); return Err(e); } };
+                let result = if key.geraet_id.is_some() && input.is_empty() {
+                    Ok(Value::Null)
+                } else {
+                    c.hub.redeem(&mut key, &input, 'e', &c.name, "desktop")
+                };
+                let result = match result {
+                    Ok(v) => v,
+                    Err(e) => {
+                        c.key = Some(key);
+                        return Err(e);
+                    }
+                };
                 if result["typ"] == "koppeln_wartet" {
                     c.key = Some(key);
                     let confirmation = &result["bestaetigung"];
@@ -54,26 +64,50 @@ impl HubAdapter {
                 c.key = Some(key);
                 if result?["typ"] == "koppeln_bestaetigt" {
                     let key = c.key.take().ok_or("Die Geräteanmeldung ist nicht mehr vorhanden.")?;
-                    let login = c.hub.login(&key); c.key = Some(key);
+                    let login = c.hub.login(&key);
+                    c.key = Some(key);
                     let login = login?;
                     Ok(Reply::SignedIn(Account { person: string(&login,"person"), slot: string(&login,"slot"), device_id: string(&login,"geraet_id"), device_name: c.name.clone() }))
-                } else { Ok(Reply::Ok) }
+                } else {
+                    Ok(Reply::Ok)
+                }
             }
             Request::Devices => Ok(devices(&c.hub.devices()?)),
-            Request::Pair => { let v = c.hub.start_pairing()?; let until = v["gueltig_bis"].as_u64().ok_or("R2 hat keine Gültigkeitsdauer bestätigt.")?; Ok(Reply::Pair(PairCode { code: string(&v,"code"), url: string(&v,"url"), valid_for: Duration::from_millis(until.saturating_sub(now_ms())) })) }
-            Request::PairDecision(id, allow) => { c.hub.approve_pairing(&id, allow)?; Ok(Reply::PairDone) }
-            Request::Revoke(id) => { c.hub.revoke(&id)?; Ok(Reply::Revoked(id)) }
+            Request::Pair => {
+                let v = c.hub.start_pairing()?;
+                Ok(Reply::Pair(pair_code(&v)?))
+            }
+            Request::PairDecision(id, allow) => {
+                c.hub.approve_pairing(&id, allow)?;
+                Ok(Reply::PairDone)
+            }
+            Request::Revoke(id) => {
+                c.hub.revoke(&id)?;
+                Ok(Reply::Revoked(id))
+            }
             Request::Rename => Err("Der Gerätename kann auf R2 in I1 noch nicht geändert werden. Es wurde nichts umbenannt.".into()),
             Request::Sessions => Ok(sessions(&c.hub.sessions()?)),
             Request::Open(id) => {
                 let opened = c.hub.open_session(if id.is_empty() { None } else { Some(id.as_str()) }, None, None)?;
-                let id = string(&opened, "session_id"); c.hub.view(&id)?;
-                let Reply::Sessions(list) = sessions(&c.hub.sessions()?) else { unreachable!() };
+                let id = string(&opened, "session_id");
+                c.hub.view(&id)?;
+                let Reply::Sessions(list) = sessions(&c.hub.sessions()?) else {
+                    unreachable!()
+                };
                 Ok(Reply::Opened(id, list))
             }
-            Request::Rest(id) => { c.hub.rest(&id)?; Ok(sessions(&c.hub.sessions()?)) }
-            Request::Prompt(id, text) => { c.hub.send(&id, &text)?; Ok(Reply::Sent(id, text)) }
-            Request::Stop(id) => { c.hub.stop(&id)?; Ok(sessions(&c.hub.sessions()?)) }
+            Request::Rest(id) => {
+                c.hub.rest(&id)?;
+                Ok(sessions(&c.hub.sessions()?))
+            }
+            Request::Prompt(id, text) => {
+                c.hub.send(&id, &text)?;
+                Ok(Reply::Sent(id, text))
+            }
+            Request::Stop(id) => {
+                c.hub.stop(&id)?;
+                Ok(sessions(&c.hub.sessions()?))
+            }
         }
     }
 }
@@ -241,7 +275,10 @@ mod tests {
             io::{BufRead, BufReader},
             process::{Command, Stdio},
         };
-        let hub = std::path::Path::new("/home/medienhaus/Work/pi-hub-wt/s3");
+        let hub_path = std::env::var_os("COCOPI_TEST_HUB_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("/home/medienhaus/Work/pi-hub-wt/s3"));
+        let hub = hub_path.as_path();
         assert!(
             hub.join("server.mjs").is_file(),
             "S3-Mock fehlt; kein Live-Fallback"
@@ -320,7 +357,43 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].state, SessionState::Ready);
         assert!(
-            matches!(adapter.call(Request::Rest(id)), Reply::Sessions(s) if s[0].state == SessionState::Resting)
+            matches!(adapter.call(Request::Open(String::new())), Reply::Opened(_, s) if s.len() == 2)
+        );
+        let limit = adapter.call(Request::Open(String::new()));
+        assert!(
+            matches!(limit, Reply::Limit),
+            "HTTP-Sessiongrenze wurde nicht erkannt: {limit:?}"
+        );
+        let mut desktop = super::super::Desktop::new(true);
+        desktop.apply(limit);
+        assert!(desktop.limit, "Echtes HTTP-Limit muss den Dialog öffnen");
+        let ctx = egui::Context::default();
+        crate::setup_ctx(&ctx);
+        let mut dialog_visible = false;
+        for _ in 0..5 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 880.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| desktop.draw(ui),
+            );
+            dialog_visible |= output.shapes.iter().any(|s| {
+                matches!(&s.shape,
+                egui::epaint::Shape::Text(t) if t.galley.job.text == "Zwei Sessions sind offen")
+            });
+            output.textures_delta.clear();
+        }
+        assert!(
+            dialog_visible,
+            "HTTP-Limitdialog muss tatsächlich gerendert werden"
+        );
+        assert_eq!(super::super::LIMIT_TEXT, "Du hast schon 2 offene Sessions. Lass eine ruhen, dann kannst du diese öffnen. Es geht nichts verloren.");
+        assert!(
+            matches!(adapter.call(Request::Rest(id)), Reply::Sessions(s) if s.iter().any(|s| s.state == SessionState::Resting))
         );
         assert!(
             matches!(adapter.call(Request::Pair), Reply::Pair(p) if p.url.contains("#1.k.") && p.valid_for.as_secs() <= 300)
@@ -333,6 +406,50 @@ mod tests {
         drop(child);
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn actual_http_invitation_errors_show_exact_a3_text_without_server_copy() {
+        use std::io::{Read, Write};
+        for (code, status, expected) in [
+            ("abgelaufen", 410, "Diese Einladung ist abgelaufen. Bitte deine Seminarleitung um eine neue."),
+            ("verbraucht", 409, "Diese Einladung wurde schon benutzt. Jede Einladung gilt nur einmal. Wenn du das nicht warst, sag deiner Seminarleitung Bescheid."),
+            ("unbekannt", 404, "Dieser Code passt zu keiner Einladung. Prüfe die Zeichen oder öffne den Link direkt."),
+            ("zu_viele", 429, "Zu viele Versuche. Warte eine Minute und versuche es dann noch einmal."),
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                for step in 0..2 {
+                    let (mut socket, _) = listener.accept().unwrap();
+                    socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                    let mut header = Vec::new();
+                    let mut byte = [0];
+                    while !header.ends_with(b"\r\n\r\n") {
+                        socket.read_exact(&mut byte).unwrap();
+                        header.push(byte[0]);
+                    }
+                    let header = String::from_utf8(header).unwrap();
+                    let length = header.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|n| n.trim().parse::<usize>().unwrap())).unwrap_or(0);
+                    socket.read_exact(&mut vec![0; length]).unwrap();
+                    let body = if step == 0 {
+                        json!({"protokoll":1,"typ":"hallo","slot":"account01"})
+                    } else {
+                        json!({"protokoll":1,"typ":"fehler","code":code,"was":"Fremder Werbetext","tun":"Öffne eine fremde Seite"})
+                    }.to_string();
+                    let status = if step == 0 { 200 } else { status };
+                    write!(socket, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                }
+            });
+            let root = std::env::temp_dir().join(format!("s2-http-a3-{}-{code}", std::process::id()));
+            let adapter = HubAdapter::new(&format!("http://{address}"), "Fixture").unwrap();
+            adapter.connection.lock().unwrap().key = Some(DeviceKey::at(&root, "fixture").unwrap());
+            let reply = adapter.call(Request::Redeem("K7QM-2XDA-9FHT-W3NB".into()));
+            let Reply::Error(error) = reply else { panic!("HTTP-Fehler erwartet: {reply:?}") };
+            assert_eq!(error.text(), expected, "Code {code}");
+            server.join().unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[test]
     fn v1_errors_map_without_guessing_ui_text() {
         assert!(matches!(

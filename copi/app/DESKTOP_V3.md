@@ -74,9 +74,12 @@ Auf dem isolierten Node-Mock wird zusätzlich der echte App-Adapter geprüft:
 Einladung, Ed25519-Login mit temporärem DeviceKey, Geräteliste, Öffnen/Ruhen,
 Paircode und Widerruf. Kein Modell und keine echte Konfiguration beteiligt.
 
-Die noch fehlenden maschinenlesbaren Fehlercodes in S3s Client sind als
-Schnittstellenanfrage festgehalten; bis dahin sind die exakten A3-Texte zwar
-Fixture-/Unit-geprüft, aber für echte HTTP-Fehler nicht durchgängig erreichbar.
+Der integrierte S3-Client erhält bekannte HTTP-Fehler als `[code]`-Präfix; der
+Adapter bildet sie auf lokale A3-Texte bzw. den Sessionlimit-Dialog ab. Ein echter
+Loopback-HTTP-Test prüft abgelaufen/verbraucht/unbekannt/zu viele Versuche mit
+absichtlich unpassenden Servertexten. Der Node-Adaptertest öffnet zwei Sessions
+und prüft beim dritten HTTP-Versuch den tatsächlich gerenderten Limitdialog.
+`COCOPI_TEST_HUB_DIR` kann den isolierten Mockpfad explizit setzen.
 
 ## Ehrliche I1-Grenzen
 
@@ -93,3 +96,10 @@ Umfang ist eine eigene Folgeaufgabe erforderlich.
 
 Keine macOS-/Windows-Liveabnahme, keine R2-Verbindung, kein Kameratest und kein
 Modellaufruf sind durch headless Tests oder Screenshots nachgewiesen.
+
+S3 begrenzt den SSE-Body auf insgesamt 45 Sekunden (kein gleitender Idle-Timer).
+Der Desktop zeigt das Ende als Verbindungsunterbrechung; automatischer Reconnect
+mit Last-Event-ID/Deduplizierung ist hier noch nicht implementiert. Es werden
+niemals Prompts automatisch wiederholt. Der lokale Schlüsselspeichername ist
+noch nicht je Ursprung/Slot getrennt; die neue Signatur bindet den Ursprung und
+prüft den Challenge-Slot gegen `hallo`. Beides bleibt vor Pilotbetrieb zu prüfen.
