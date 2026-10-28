@@ -48,7 +48,7 @@ pub fn canonical_json(value: &Value) -> Result<String, String> {
 
 /// Prüft nur Integrität/Herkunft, NICHT Rolle, Zweck, Gültigkeitszeit oder Pin-Vertrauen.
 /// Aufrufer (S8) müssen `typ`, Schlüsselbindung und `iat`/`exp` zusätzlich prüfen.
-/// Empfangsformat `{inhalt,signatur}`; frühes flaches Format wird additiv akzeptiert.
+/// Kanonisches Empfangsformat `{...inhalt,signatur}`; alte Hüllen bleiben lesbar.
 /// Zusätzliche unsignierte Hüllfelder werden abgewiesen.
 pub fn verify_signed(json: &Value, pubkey: &str) -> Result<Value, String> {
     let mut object = json
@@ -90,6 +90,57 @@ pub fn verify_signed(json: &Value, pubkey: &str) -> Result<Value, String> {
     Ok(value)
 }
 
+#[derive(Debug)]
+enum RequestError {
+    Verbindung(String),
+    Dauerhaft(String),
+}
+fn request_error(e: ureq::Error, message: &str) -> RequestError {
+    if matches!(
+        e,
+        ureq::Error::Io(_)
+            | ureq::Error::Timeout(_)
+            | ureq::Error::HostNotFound
+            | ureq::Error::ConnectionFailed
+    ) {
+        RequestError::Verbindung(message.into())
+    } else {
+        RequestError::Dauerhaft(message.into())
+    }
+}
+impl From<&str> for RequestError {
+    fn from(value: &str) -> Self {
+        Self::Dauerhaft(value.into())
+    }
+}
+impl From<String> for RequestError {
+    fn from(value: String) -> Self {
+        Self::Dauerhaft(value)
+    }
+}
+fn retry_idempotent<T>(
+    allowed: bool,
+    mut call: impl FnMut() -> Result<T, RequestError>,
+    mut wait: impl FnMut(std::time::Duration),
+) -> Result<T, String> {
+    let mut delays = [1, 3, 9].into_iter();
+    loop {
+        match call() {
+            Ok(value) => return Ok(value),
+            Err(RequestError::Verbindung(message)) if allowed => {
+                if let Some(seconds) = delays.next() {
+                    wait(std::time::Duration::from_secs(seconds));
+                } else {
+                    return Err(message);
+                }
+            }
+            Err(RequestError::Verbindung(message) | RequestError::Dauerhaft(message)) => {
+                return Err(message);
+            }
+        }
+    }
+}
+
 pub struct Empfang {
     origin: String,
     agent: ureq::Agent,
@@ -105,12 +156,39 @@ impl Empfang {
             auth: None,
         })
     }
-    fn request(&self, method: &str, path: &str, mut body: Value) -> Result<Value, String> {
+    fn request(&self, method: &str, path: &str, body: Value) -> Result<Value, String> {
+        self.request_with_wait(method, path, body, std::thread::sleep)
+    }
+    fn request_with_wait(
+        &self,
+        method: &str,
+        path: &str,
+        body: Value,
+        wait: impl FnMut(std::time::Duration),
+    ) -> Result<Value, String> {
+        // Kein erneuter Check-in/Tokenverbrauch. erhalten ist ohne Empfangs-Tombstone
+        // NICHT sicher wiederholbar. checkout liefert serverseitig denselben Auftrag.
+        let allowed = matches!(
+            (method, path),
+            ("POST", "hallo" | "checkout") | ("GET", "status")
+        ) || (method == "GET" && path.starts_with("warten/"));
+        retry_idempotent(
+            allowed,
+            || self.request_once(method, path, body.clone()),
+            wait,
+        )
+    }
+    fn request_once(
+        &self,
+        method: &str,
+        path: &str,
+        mut body: Value,
+    ) -> Result<Value, RequestError> {
         let url = format!("{}/v1/empfang/{path}", self.origin);
         let auth_headers =
             if !matches!(path, "hallo" | "checkin" | "challenge") && !path.starts_with("warten/") {
                 if let Some((id, key)) = &self.auth {
-                    let c = self.request("POST", "challenge", json!({"checkin_id":id}))?;
+                    let c = self.request_once("POST", "challenge", json!({"checkin_id":id}))?;
                     let cid = c["challenge_id"]
                         .as_str()
                         .ok_or("Die Anmeldeprüfung fehlt.")?;
@@ -153,19 +231,24 @@ impl Empfang {
             }
             req.send(serde_json::to_vec(&body).map_err(|_| "Die Anfrage ist ungültig.")?)
         }
-        .map_err(|_| "Der Empfang ist nicht erreichbar. Prüfe die Verbindung.")?;
+        .map_err(|e| request_error(e, "Der Empfang ist nicht erreichbar. Prüfe die Verbindung."))?;
         let status = response.status().as_u16();
         let text = response
             .body_mut()
             .with_config()
             .limit(2 * 1024 * 1024)
             .read_to_string()
-            .map_err(|_| "Die Antwort des Empfangs ist zu groß oder unvollständig.")?;
+            .map_err(|e| {
+                request_error(
+                    e,
+                    "Die Antwort des Empfangs ist zu groß oder unvollständig.",
+                )
+            })?;
         let value: Value = serde_json::from_str(&text)
             .map_err(|_| "Der Empfang hat keine gültige Antwort gesendet.")?;
         check_packet(&value)?;
         if !(200..300).contains(&status) || value["typ"] == "fehler" {
-            return Err(packet_error(&value));
+            return Err(RequestError::Dauerhaft(packet_error(&value)));
         }
         Ok(value)
     }
@@ -213,7 +296,10 @@ impl Empfang {
             || belegung["checkin_id"] != result["checkin_id"]
             || belegung["person"] != result["person"]
             || belegung["rolle"] != result["rolle"]
-            || belegung["gueltig_bis"].as_u64().is_none_or(|t| t <= now_ms)
+            || belegung["gueltig_bis"]
+                .as_u64()
+                .is_none_or(|t| t <= now_ms / 1000)
+            || belegung["epoche"].as_u64().is_none()
             || ausweis["v"] != 1
             || ausweis["typ"] != "geraeteausweis"
             || ausweis["geraet_pubkey"] != key.public_key()
@@ -283,6 +369,111 @@ mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
     #[test]
+    fn retry_only_connections_and_idempotent_calls_with_n2_backoff() {
+        use std::cell::Cell;
+        let calls = Cell::new(0);
+        let mut delays = Vec::new();
+        let result: Result<(), _> = retry_idempotent(
+            true,
+            || {
+                calls.set(calls.get() + 1);
+                Err(RequestError::Verbindung("offline".into()))
+            },
+            |d| delays.push(d.as_secs()),
+        );
+        assert_eq!(result.unwrap_err(), "offline");
+        assert_eq!(calls.get(), 4); // Erstanfrage plus höchstens drei Wiederholungen.
+        assert_eq!(delays, [1, 3, 9]);
+        calls.set(0);
+        let result: Result<(), _> = retry_idempotent(
+            false,
+            || {
+                calls.set(calls.get() + 1);
+                Err(RequestError::Verbindung("unklar".into()))
+            },
+            |_| panic!("Nicht idempotent"),
+        );
+        assert!(result.is_err());
+        assert_eq!(calls.get(), 1);
+        let result: Result<(), _> = retry_idempotent(
+            true,
+            || Err(RequestError::Dauerhaft("abgelehnt".into())),
+            |_| panic!("Kein Transportfehler"),
+        );
+        assert!(result.is_err());
+        for err in [
+            ureq::Error::BodyExceedsLimit(1),
+            ureq::Error::TooManyRedirects,
+            ureq::Error::Tls("Test"),
+        ] {
+            assert!(matches!(
+                request_error(err, "dauerhaft"),
+                RequestError::Dauerhaft(_)
+            ));
+        }
+        assert!(matches!(
+            request_error(
+                ureq::Error::Io(std::io::ErrorKind::UnexpectedEof.into()),
+                "verloren"
+            ),
+            RequestError::Verbindung(_)
+        ));
+    }
+    #[test]
+    fn dropped_hallo_response_retries_but_checkin_never_does() {
+        use std::io::Write;
+        for route in ["hallo", "checkin", "checkout/id/erhalten"] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let c = Empfang::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+            let t = std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let mut stream = std::io::BufReader::new(stream);
+                read_mock_request(&mut stream);
+                drop(stream); // Erstanfrage angenommen, Antwort verloren.
+                if route == "hallo" {
+                    let (stream, _) = listener.accept().unwrap();
+                    let mut stream = std::io::BufReader::new(stream);
+                    read_mock_request(&mut stream);
+                    let mut stream = stream.into_inner();
+                    let text = r#"{"protokoll":1,"typ":"empfang_willkommen"}"#;
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                        text.len()
+                    )
+                    .unwrap();
+                }
+            });
+            let mut sleeps = Vec::new();
+            let result =
+                c.request_with_wait("POST", route, json!({}), |d| sleeps.push(d.as_secs()));
+            assert_eq!(
+                result.is_ok(),
+                route == "hallo",
+                "{route}: {result:?}; sleeps={sleeps:?}"
+            );
+            assert_eq!(sleeps, if route == "hallo" { vec![1] } else { vec![] });
+            t.join().unwrap();
+        }
+    }
+    fn read_mock_request(stream: &mut impl std::io::BufRead) {
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            stream.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            if let Some((k, v)) = line.split_once(':') {
+                if k.eq_ignore_ascii_case("content-length") {
+                    length = v.trim().parse().unwrap();
+                }
+            }
+        }
+        let mut b = vec![0; length];
+        stream.read_exact(&mut b).unwrap();
+    }
+    #[test]
     fn canonical_signature_tamper_and_unsafe_numbers() {
         let k = SigningKey::from_bytes(&[0; 32]);
         let mut v = json!({"z":[{"b":2,"a":"ä"}],"a":1});
@@ -304,7 +495,7 @@ mod tests {
         );
     }
     #[test]
-    fn empfang_envelope_matches_node_vector() {
+    fn flat_empfang_matches_node_vector() {
         let example: Value = serde_json::from_str(include_str!(
             "../../../../shared/protocol/v1/examples/empfang_eingecheckt.json"
         ))

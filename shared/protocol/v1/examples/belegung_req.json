@@ -2,23 +2,22 @@
   "protokoll": 1,
   "typ": "belegung",
   "belegung": {
-    "inhalt": {
-      "v": 1,
-      "typ": "belegung",
-      "slot": "account01",
-      "checkin_id": "test-checkin",
-      "person": "Mira",
-      "rolle": "teilnehmende",
-      "geraete": [
-        {
-          "geraet_id": "test-geraet",
-          "pubkey": "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik",
-          "name": "Testrechner",
-          "art": "desktop"
-        }
-      ],
-      "gueltig_bis": 1900000000000
-    },
-    "signatur": "W1KXkiTidGbP1xlUUqxTwhrgzXPuoaR5QCOkL91Dr5D_jsJuHCccCcEkS4VYtVRRA58uhlBT9yp9ty6EkmHZBA"
+    "v": 1,
+    "typ": "belegung",
+    "slot": "account01",
+    "checkin_id": "test-checkin",
+    "person": "Mira",
+    "rolle": "teilnehmende",
+    "geraete": [
+      {
+        "geraet_id": "test-geraet",
+        "pubkey": "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik",
+        "name": "Testrechner",
+        "art": "desktop"
+      }
+    ],
+    "gueltig_bis": 1900000000,
+    "epoche": 0,
+    "signatur": "LTA9HERE9L9UGQppzgIP4Ed_3_u2RxHMOKyerwE7MKKspyYGbWuW5GRmY03BW1k5TywOhKtkUzelayro5YcuCQ"
   }
 }

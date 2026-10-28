@@ -13,6 +13,8 @@ use std::time::Duration;
 pub mod empfang;
 #[path = "oidc.rs"]
 pub mod oidc;
+#[path = "sync_http.rs"]
+pub mod sync_http;
 pub(crate) fn secure_random(bytes: &mut [u8]) -> Result<(), String> {
     os_random(bytes)
 }
