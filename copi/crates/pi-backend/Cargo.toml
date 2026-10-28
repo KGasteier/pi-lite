@@ -5,11 +5,18 @@ edition.workspace = true
 license.workspace = true
 description = "GUI-freie Anbindung an `pi --mode rpc` (Prozess, Sessions, CLI, Ordner, Editor)"
 
+[features]
+default = []
+cocopi = ["dep:curve25519-dalek", "dep:ring"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 base64 = "0.22"
 ed25519-dalek = "3.0.0"
+# Bereits im Workspace-Lockfile; persistentes X25519 und geprüfte HKDF/AEAD/RNG.
+curve25519-dalek = { version = "=5.0.0", optional = true }
+ring = { version = "=0.17.14", optional = true }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # Portable Konfigurations-/Datenverzeichnisse (XDG auf Linux, Known Folders auf Windows,
 # Standardverzeichnisse auf macOS). Fällt in `pi_backend::{config_dir,data_dir}` bei

@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 // Additiv; keine Änderung an der gemeinsam verwendeten Crate-Wurzel nötig.
+#[cfg(feature = "cocopi")]
+#[path = "abholfach.rs"]
+pub mod abholfach;
 #[path = "empfang.rs"]
 pub mod empfang;
 #[path = "oidc.rs"]

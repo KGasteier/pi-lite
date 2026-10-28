@@ -3271,8 +3271,10 @@ name = "pi-backend"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "curve25519-dalek",
  "dirs",
  "ed25519-dalek",
+ "ring",
  "serde",
  "serde_json",
  "ureq",
