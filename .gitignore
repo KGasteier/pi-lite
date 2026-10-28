@@ -3,3 +3,4 @@ src-tauri/gen/
 *.log
 .DS_Store
 copi/target/
+__pycache__/

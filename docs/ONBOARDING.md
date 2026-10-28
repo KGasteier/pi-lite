@@ -1,0 +1,100 @@
+# cocopi · Onboarding und geprüfte Übergabe
+
+Stand: 26.10.2026 · Arbeitsstand `cocopi` / `b65a1e7`. Dieses Dokument unterscheidet aktuellen Befund, historische Testberichte und Zielbild. Es ist keine Freigabe für vertraulichen Seminarbetrieb.
+
+## 1. Was cocopi werden soll
+
+Eine konsistente native Anwendung für den eigenen Agenten-Hauptchat (lokal oder auf R2) und die Zusammenarbeit mit Menschen und Agenten. Remote ist kein abgesetztes Dashboard: ein gewählter Remote-Agent erscheint im normalen Hauptchat; Mehrfachauswahl bleibt als bewusstes Raster verfügbar. Menschliche P2P-Chatpartner bekommen eigene Gespräche, nicht den eigenen Agentenprompt als versteckten Versandkanal.
+
+Das Ziel umfasst Gruppen **humans**, **agents** und **mixed**, direkte Gespräche mit Menschen oder Agenten, Seminarleiter-/Teilnehmerrollen im Seminarkontext und gleichberechtigte Entwickler ohne dauerhafte Leiterhierarchie. Später kommen sichtbar gekennzeichnete Persona-Nebenagenten hinzu. Diese Funktionen sind überwiegend Planung, nicht heutiger Lieferumfang. Phasen, Rechte und Abnahmekriterien: [Roadmap](ROADMAP-COCOPI.md); konkrete Arbeiten: [Todo](TODO-WEITERENTWICKLUNG.md).
+
+## 2. Aktueller Befund dieser Prüfung
+
+| Bereich | Frisch geprüft, ohne Build oder Modellprompt |
+|---|---|
+| ARM-Repository | Branch `cocopi`, HEAD `b65a1e7`; `copi` bei `44c22d5`, `main` bei `d009ad1` |
+| Bestehende lokale Änderungen | Nur `docs/concepts/` und `scripts/__pycache__/` untracked vor dieser Arbeit; nicht verändert |
+| R2-Repository per SSH BatchMode | pi-lite ebenfalls `cocopi` / `b65a1e7`, dieselben zwei untracked Pfade; pi-hub `master` / `2060b1c`, sauber |
+| Lokaler Hub | `2060b1c`, vor dieser Arbeit sauber |
+| ARM-Installation copi | SHA256 `81a9b8edb465016a71b068676cb17204f8bef395be38f4eeb8aab44f26873518`, identisch mit `copi/target/release/copi` |
+| ARM-Installation cocopi | SHA256 `6cce74d51907a170475d8c497c67070bac87ca2b42adbeb2fd804d8c21ad60fb`, identisch mit `copi/target/release/cocopi` |
+| R2-Hub | systemd-Userdienst aktiv; HOME `/home/medienhaus`, Dienst-cwd `/home/medienhaus` |
+| Hub-PATH | `/home/medienhaus/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin`; `pi` darin als mise-Shim auflösbar |
+| Hub-Kontext | `PI_CODING_AGENT_DIR` und `HUB_PI_BIN` im laufenden Dienst nicht gesetzt; beobachteter Kindprozess-cwd `/home/medienhaus/Downloads` |
+
+Binärgleichheit beweist nicht den Git-Ursprung eines Builds oder den Stand bereits laufender Fenster. Keine neue Installation, kein Prozessneustart, kein Push/Commit und kein Provideraufruf wurden durchgeführt. Die Version hinter dem R2-Shim wurde nicht ausgeführt; dessen Existenz ist kein Beleg für identische pi-Versionen.
+
+Historische Dokumente enthalten überholte Aussagen („privates Repo“, „nie kompiliert“, „Instanzen nach Neustart weg“, frühere Installationshashes). Sie sind keine aktuelle Wahrheit. Aktuelle Branch-/Dateibefunde oben haben Vorrang; GitHub-Sichtbarkeit wurde hier nicht online neu geprüft.
+
+## 3. Architektur verstehen
+
+- `copi/`: Rust/egui-Frontend und Workspace. Binary `cocopi` mit Feature `cocopi`, `copi/app/src/cocopi.rs` bindet `main.rs` ein. Gemeinsame copi-Grundfunktionen statt separatem UI-Fork.
+- `src-tauri/` und `ui/`: pi-lite, separates Tauri/WebKit-Frontend. Grundfunktionsparität bleibt Aufgabe; cocopi-P2P-Adapter dort noch nicht implementiert.
+- `copi/crates/pi-backend/`: `Instances`, `Harness`, `Files`, lokaler Kindprozess und `HubInstances` (HTTP/SSE).
+- Eigenes Repository `~/Work/pi-hub`: Node-Hub, PWA mobicopi und Harnessadapter. Der Hub steuert RPC-Prozesse; er ist **kein** P2P-Gruppentransport.
+- `copi/crates/pi-net/`: frontendunabhängiger Kollaborationskern, gegenwärtig direkte iroh-Karten.
+- `copi/app/src/net.rs`, `net_view.rs`, `view.rs`, `app.rs`: Remote-Auswahl, Hauptchat und Raster. Aktueller Vertrag: `remote_main && !grid`, genau eine existierende Remote-Auswahl. Ausblenden der Netzleiste darf Senden/Abbruch nicht zum lokalen Agenten umleiten. Ältere Raster-Beschreibungen gelten nicht mehr.
+
+Remote-Workspace und Modellauswahl müssen die gewählte Serverinstanz betreffen. Lokaler Dateibrowser, lokale Materialauswahl, lokaler Editor und Sprache sind deshalb nicht automatisch remote-paritätisch. Vollständige Parität nicht behaupten.
+
+## 4. Skills im RPC: die belegte Antwort
+
+**Ja, pi-Skills funktionieren auch über RPC.** Die Anweisungen müssen beim **ausführenden pi-Prozess** vorhanden und auffindbar sein – beim R2-Hauptchat also unter dessen HOME/Agentenverzeichnis oder vertrauenswürdigem Projekt-cwd, nicht bloß auf ARM.
+
+Die installierte Dokumentation unter `/home/kg/.local/share/mise/installs/pi/1.4.0/pi/` belegt:
+
+1. `docs/skills.md`, „Understand how skills load“: Start entdeckt Namen, Beschreibungen und Pfade. Volltext wird erst bei passender Aufgabe durch das Modell gelesen. Automatisches Lesen ist nicht garantiert.
+2. `docs/rpc.md`, „Start RPC mode“: normale CLI-Ressourcenoptionen gelten auch für RPC.
+3. `docs/rpc-commands.md`, „prompt“: `/skill:name` wird **vor** Senden/Queueing expandiert. Beispiel für einen später ausdrücklich freigegebenen Aufruf:
+
+    {"id":"work-1","type":"prompt","message":"/skill:copidev Prüfe den aktuellen Entwicklungsstand."}
+
+4. `docs/rpc-commands.md`, „get_commands“: ohne Modellprompt Befehle entdecken; Skills haben `source: "skill"`, Namen `skill:copidev` und Pfadmetadaten. Das beweist Entdeckung, nicht bereits befolgte Volltextanweisungen. Deaktivierte Befehlsregistrierung kann die Liste unvollständig machen.
+5. `docs/skills.md` und `docs/settings.md`: `enableSkillCommands` beeinflusst die Befehlsentdeckung; manuell eingegebene Skillbefehle funktionieren weiter. `disable-model-invocation` betrifft automatische Auswahl. `--skill <Pfad>` lädt eine explizite Ressource, ist für sich kein Arbeitsauftrag und keine Garantie, dass jedes Modell sie korrekt befolgt.
+6. `docs/configuration.md`, `docs/cli.md`, `docs/security.md`: HOME/`PI_CODING_AGENT_DIR`, cwd, Ressourcenfilter und Projektvertrauen bestimmen das Inventar. RPC kann keine eingebaute interaktive Trust-Rückfrage zeigen; bei Standard `ask` werden nicht freigegebene Projektressourcen übersprungen. Nicht pauschal `--approve` setzen.
+
+Es gibt keinen separaten RPC-Befehl `activate_skill`. Ein `/skill:copidev …` als `prompt` startet normalerweise Modellarbeit und kann Kosten verursachen – hier **nicht ausgeführt**. `get_commands` wurde in dieser Sitzung ebenfalls nicht an die laufende private Instanz geschickt. Diese Antwort ist dokumentations- und umgebungsbelegt, nicht durch einen Modelltest belegt. `/reload` ist kein dokumentierter allgemeiner RPC-Befehl wie in der TUI; keine ungesicherte Reload-Anweisung an laufende Sessions senden.
+
+### Hashvergleich der Ressourcen
+
+Per SHA256 über reguläre Dateiinhalte mit aufgelösten Skill-Symlinks verglichen; `.git`, `node_modules`, `__pycache__` ausgelassen. Messung **vor** dieser Skill-Aktualisierung:
+
+| Ressource unter `~/.pi/agent` | ARM | R2 | Vergleich |
+|---|---|---|---|
+| Skills | 692 Dateien | 16 Dateien | Alle 16 R2-Dateien identisch; 676 nur lokal |
+| Agentendefinitionen | 5 | 5 | Alle identisch |
+| Extensions | 7 | 0 | Keine nutzerlokalen Extension-Dateien auf R2 gefunden |
+
+R2 hatte die Skill-Dateien von copidev, pi-lite-dev, mobicopidev sowie cc-style samt Unterdateien. **Vorhanden heißt nicht aktiviert:** in dieser Arbeit kein cc-style-Verfahren. Agentendefinitionen sind Ressourcen der Subagent-Extension, kein Beweis für ein verfügbares Subagent-Werkzeug. Keine Extensions im genannten Verzeichnis heißt nicht „keine eingebauten, projektlokalen oder paketbasierten Extensions“; diese weiteren Quellen wurden nicht vollständig inventarisiert. Auth/models/settings wurden nicht kopiert oder offengelegt. Nach der lokalen Skill-Aktualisierung ist copidev absichtlich nicht mehr hashgleich mit R2.
+
+### Sicherer Wissenstransfer
+
+`scripts/sync-r2.sh` standardmäßig oder mit `--dry-run` aufrufen. Es löst die obersten Symlinks auf, nimmt nur die drei Projekt-Skills und planner/reviewer/scout/worker als Text-Allowlist und prüft Zielsymlinks. Kein Quellcode, keine Extensions, keine Auth-, Modell-, Settings-, Session- oder Secret-Dateien; keine Löschungen. Nur ein später explizites `--apply` schreibt, mit Backups außerhalb der Skill-Entdeckung. Quellprüfung bleibt nötig: ein einfacher Secret-Musterscan ist keine vollständige DLP-Garantie. Keine automatische Synchronisation aller 692 Dateien und kein Verteilen des cc-style-Modus.
+
+## 5. Sicher starten und testen
+
+Bestehende Anwendung normal durch den Nutzer starten. Backend-Konfiguration nicht überschreiben. R2 bewusst in der Netzleiste aktivieren und genau eine Remote-Instanz für den Hauptchat wählen. Vor Senden Ziel, Workspace und Modell prüfen; echter Prompt braucht vorherige Zustimmung. Nicht dieselbe Session gleichzeitig durch TUI, lokalen RPC und Hub bearbeiten.
+
+P2P separat mit zwei Testpersonen und erfundenen Texten nach [COCOPI_QUICKSTART.md](COCOPI_QUICKSTART.md) testen. Heutiger Prototyp: flüchtige Schlüssel, beidseitig manuell geprüfte Kontaktadresse, ein bestätigter Peer, direkte QUIC-Karten, explizite Sendebestätigung. Empfang führt weder Code noch Prompt aus. Übernahme in die editierbare Agenteneingabe und tatsächliches Senden sind zwei getrennte Freigaben.
+
+Kein MLS, keine verifizierte Seminaridentität, keine synchronisierten Gruppen, kein Relay-only, kein Offline-Postfach oder dauerhafter Schlüsselbund nachgewiesen. Der frühere lokale Zwei-Endpunkt-Test ersetzt weder zwei Geräte noch LAN/WAN/UI-Abnahme. Transportverschlüsselung ist nicht automatisch Gruppen-E2EE.
+
+## 6. Persistenz und Reconnect ohne falsches Versprechen
+
+Der Hubcode enthält eine Registry (`HUB_STATE`, abschaltbar mit `off`) mit Instanzmetadaten und Sessionpfad. Beim Wiederherstellen startet ein neuer pi-Prozess mit `--session`; laufende Werkzeugprozesse, RAM-Zustand, SSE-Puffer und Dialoge werden nicht als identische Fortsetzung wiederhergestellt. pi-Sessiondateien sind eine andere Persistenzebene als Hub-Events.
+
+HTTP/SSE hat Sequenz-/Replaymechanismen und der Client Auto-Reconnect. Ein endlicher Ringpuffer kann Lücken verlieren; Restart und Netzabbruch sind unterschiedliche Fälle. Vollständigkeit, Duplikatfreiheit, Rückfragen-Rekonstruktion und Reconnect bei echtem Funkloch sind hier nicht live getestet. Bei unklarem Versandstatus nicht blind erneut prompten. P2P-Karten haben heute keine nachgewiesene dauerhafte Zustellung oder Offline-Warteschlange.
+
+## 7. Arbeitsaufteilung ARM ↔ R2
+
+**R2 entwickelt; ARM überwacht, prüft Änderungen und baut das ARM-Ergebnis.** Git-Stand und Eigentümerschaft je Arbeitspaket zuerst prüfen. R2-Quellcode nicht per rsync vom alten ARM-Stand überschreiben. Rückweg bevorzugt als geprüfte Commits/Patches mit Diff-/Secret-Prüfung; ungepushte Änderungen bewusst exportieren. Kein automatischer Merge auf copi/main.
+
+R2 ist x86_64, ARM aarch64: keine R2-Binaries, Cargo-targets oder node_modules als ARM-Ergebnis übernehmen. Auf ARM aus geprüften Quellen mit Lockfile bauen; Installation getrennt freigeben und SHA256 Quelle/Ziel prüfen. Historische Tests sind nicht automatisch aktuelle Tests. Bei reiner Dokumentationsarbeit kein Rebuild. Speicher vor Builds prüfen; ARM üblicherweise `CARGO_BUILD_JOBS=2`, R2 begrenzt nach Ressourcen planen.
+
+## 8. Sicherheitsregeln und offene Abnahme
+
+Hub = faktisch Shell-Zugriff. Nur bewusst über SSH-Tunnel/geschütztes Netz und Token; nicht ungefragt öffentlich binden. `HUB_ROOTS` schützt Hub-Dateirouten, sandboxed jedoch **nicht** pi-Werkzeuge. Tokens, ntfy-Thema, Providerkonfiguration, private Sessions und Kontaktadressen nie dokumentieren/exportieren. OIDC-Anmeldung ist kein KI-API-Token; keine gemeinsamen Seminarschlüssel verteilen. Keine automatische Freigabe blockierender Extension-Dialoge.
+
+Ungeprüft bleiben echter Remote-Modellchat, hörbare lokale Sprache, reale Fensterinteraktion, vollständige Tauri-Parität, Handy/PWA, echte WAN-/NAT-/Relay-Peers, Neustart-/Funkloch-Abnahme, produktiver Seminarbetrieb und A2A. Kein Produktionsversprechen aus dem bloß aktiven Dienst ableiten.
+
+Weitere Quellen: [COCOPI.md](COCOPI.md), [COCOPI_DEPLOYMENT.md](COCOPI_DEPLOYMENT.md), `copi/app/REMOTE_MODE.md`, `~/Work/pi-hub/docs/STATUS.md`, `TODO.md` und `pi-Remote-Hub-Empfehlung.md`. Letztere enthalten ältere Konzepte (z.B. Rust/WebSocket statt gegenwärtigem Node/HTTP/SSE); Entscheidungen nicht rückwirkend als implementiert darstellen.

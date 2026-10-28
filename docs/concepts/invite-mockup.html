@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><title>Einladen und prüfen</title>
+<style>
+@font-face { font-family:Figtree; font-weight:300; src:url(../../copi/app/assets/fonts/Figtree-Light.ttf); }
+@font-face { font-family:Figtree; font-weight:600; src:url(../../copi/app/assets/fonts/Figtree-SemiBold.ttf); }
+:root { --bg:#1e2227; --panel:#262b30; --card:#2b3137; --fg:#e6edf3; --dim:#8b949e; --acc:#e454c4; --net:#18a999; --border:#3a4046; --yellow:#e0b25a; --violet:#b08cf0; }
+* { box-sizing:border-box; }
+body { margin:0; width:2000px; height:600px; background:#14171b; font:300 15px/1.45 Figtree, sans-serif; color:var(--fg); display:flex; gap:30px; padding:30px; }
+.d { flex:1; background:var(--panel); border:1px solid var(--net); border-radius:12px; padding:20px 22px; box-shadow:0 12px 30px #000a; display:flex; flex-direction:column; gap:12px; }
+h3 { margin:0; font-size:20px; font-weight:600; }
+.sub { color:var(--dim); font-size:13px; margin-top:-8px; }
+.f { background:var(--bg); border-radius:8px; padding:10px 12px; }
+.f small { display:block; color:var(--dim); font-size:12px; }
+.row { display:flex; gap:8px; align-items:center; }
+.seg { display:flex; border-radius:8px; overflow:hidden; box-shadow:inset 0 0 0 1px var(--border); }
+.seg span { flex:1; text-align:center; padding:8px 0; font-size:14px; color:var(--dim); }
+.seg span.on { background:color-mix(in srgb, var(--net) 25%, #2b3137); color:var(--fg); font-weight:600; }
+.btn { background:#343a41; border-radius:7px; padding:8px 14px; font-size:14px; text-align:center; }
+.btn.acc { background:var(--acc); color:#fff; font-weight:600; }
+.btn.net { background:var(--net); color:#0f2420; font-weight:600; }
+.chk { display:flex; gap:9px; align-items:flex-start; font-size:14px; }
+.chk i { width:16px; height:16px; border-radius:4px; box-shadow:inset 0 0 0 1.5px var(--net); flex:none; margin-top:2px; font-style:normal; font-size:12px; text-align:center; line-height:16px; color:var(--net); }
+.qr { width:170px; height:170px; background:#fff; border-radius:8px; padding:10px; display:grid; grid-template-columns:repeat(17,1fr); gap:0; flex:none; }
+.qr b { background:#14171b; } .qr u { background:#fff; }
+.code { font:600 30px/1.25 ui-monospace, monospace; letter-spacing:2px; text-align:center; background:var(--bg); border-radius:8px; padding:12px; }
+.words { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+.words span { background:var(--bg); border-radius:6px; padding:6px; text-align:center; font-size:15px; }
+.badge { font-size:12px; border-radius:5px; padding:1px 7px; }
+.badge.ok { color:var(--net); box-shadow:inset 0 0 0 1px var(--net); }
+.badge.guest { color:var(--yellow); box-shadow:inset 0 0 0 1px var(--yellow); }
+.badge.self { color:var(--violet); box-shadow:inset 0 0 0 1px var(--violet); }
+.person { display:flex; gap:10px; align-items:center; background:var(--bg); border-radius:8px; padding:8px 10px; font-size:14px; }
+.av { width:28px; height:28px; border-radius:50%; display:grid; place-items:center; font-weight:600; font-size:12px; color:#14171b; flex:none; }
+.note { color:var(--dim); font-size:12.5px; }
+.n { position:absolute; width:34px; height:34px; border-radius:50%; background:#fff; color:#14171b; font:600 18px/34px Figtree; text-align:center; box-shadow:0 0 0 4px #ff9f1c; }
+</style></head><body>
+<span class="n" style="left:16px;top:14px">A</span>
+<span class="n" style="left:676px;top:14px">B</span>
+<span class="n" style="left:1336px;top:14px">C</span>
+
+<div class="d">
+  <h3>Neues Projekt gründen</h3><div class="sub">freie Vernetzung – ohne Admin, ohne Lehreinheit</div>
+  <div class="f"><small>Name</small>Klangarchiv – Feldaufnahmen</div>
+  <div><div class="note" style="margin-bottom:5px">Art der Gruppe</div>
+    <div class="seg"><span>Kurs (authentik)</span><span class="on">Freies Projekt</span><span>Direkt</span></div></div>
+  <div class="f"><small>Wer darf beitreten?</small>Nur mit persönlicher Einladung · UdK-Ausweis <b>oder</b> freigegebene Gäste</div>
+  <div class="f"><small>Aufbewahrung (Empfehlung an alle, lokal)</small>Chat 90 Tage · Dateien bis zum manuellen Löschen</div>
+  <div class="chk"><i>✓</i><div>Mitglieder dürfen weitere Personen einladen<br><span class="note">Einladungen erscheinen im Verlauf, Gründerin kann widerrufen</span></div></div>
+  <div class="chk"><i></i><div>Präsenz in dieser Gruppe zeigen<br><span class="note">aus = niemand sieht, ob ich online bin</span></div></div>
+  <div class="row" style="margin-top:auto"><span class="note">Rolle: <span class="badge self">gründet</span></span><span style="flex:1"></span><span class="btn">Abbrechen</span><span class="btn net">Projekt anlegen</span></div>
+</div>
+
+<div class="d">
+  <h3>Einladen</h3><div class="sub">Klangarchiv – Feldaufnahmen</div>
+  <div class="row" style="gap:16px; align-items:flex-start">
+    <div class="qr" id="qr"></div>
+    <div style="display:flex;flex-direction:column;gap:9px;flex:1">
+      <div class="f"><small>Einladungslink (einmalig)</small>copi://netz/einladung/7Q2F…K9</div>
+      <div class="f"><small>Gilt bis</small>20.10.2026 · 1 Person · danach ungültig</div>
+      <div><div class="note" style="margin-bottom:5px">Eingeladen als</div>
+        <div class="seg"><span class="on">Mitglied</span><span>Gast</span><span>Leitung</span></div></div>
+    </div>
+  </div>
+  <div class="chk"><i>✓</i><div>Gast: nur dieses Projekt, Ablauf nach 30 Tagen, sichtbar markiert <span class="badge guest">Gast</span></div></div>
+  <div class="chk"><i>✓</i><div>Nach dem Beitritt Sicherheitscode gemeinsam prüfen</div></div>
+  <div class="note">Link per Signal, Mail oder persönlich weitergeben. Er enthält keinen Zugang zu Dateien, nur das Recht, einmal beizutreten.</div>
+  <div class="row" style="margin-top:auto"><span class="btn">Kopieren</span><span class="btn">Als QR zeigen</span><span style="flex:1"></span><span class="btn net">Fertig</span></div>
+</div>
+
+<div class="d">
+  <h3>Kontakt prüfen</h3><div class="sub">Ist das wirklich Mira? Vergleicht die Wörter – am Telefon oder persönlich.</div>
+  <div class="person"><div class="av" style="background:#5ec2a0">MS</div><div>Mira Sommer <span class="badge ok">UdK-Ausweis</span><br><span class="note">Gerät „Laptop“ · Schlüssel seit 02.10.2026</span></div></div>
+  <div class="words"><span>Kiefer</span><span>Ampel</span><span>Mond</span><span>Rabe</span><span>Ziegel</span><span>Harfe</span></div>
+  <div class="note" style="text-align:center">Mira sieht auf ihrem Gerät dieselben sechs Wörter.</div>
+  <div class="row"><span class="btn" style="flex:1">Stimmt nicht – blockieren</span><span class="btn net" style="flex:1">Stimmt überein ✓</span></div>
+  <div class="person" style="margin-top:6px"><div class="av" style="background:#e0b25a">JT</div><div>Jonas T. <span class="badge guest">Gast bis 12.11.</span><br><span class="note">eingeladen von Anna · noch nicht geprüft</span></div></div>
+  <div class="note" style="margin-top:auto">Ändert sich ein Schlüssel (neues Gerät, Neuinstallation), zeigt copi einen Hinweis und markiert die Person wieder als „nicht geprüft“.</div>
+</div>
+<script>
+// Pseudo-QR, rein dekorativ
+const q=document.getElementById('qr'); let s=7;
+for(let i=0;i<289;i++){ const x=i%17,y=(i/17)|0; s=(s*1103515245+12345)&0x7fffffff;
+  const f=(a,b)=>x>=a&&x<a+5&&y>=b&&y<b+5; const finder=f(0,0)||f(12,0)||f(0,12);
+  const ring=finder&&!((x%17===1||x%17===2||x%17===3||x===13||x===14||x===15)&&(y===1||y===2||y===3||y===13||y===14||y===15));
+  const on=finder? (ring || ((x===2||x===14)&&(y===2||y===14))) : ((s>>9)&1);
+  q.appendChild(document.createElement(on?'b':'u')); }
+</script>
+</body></html>

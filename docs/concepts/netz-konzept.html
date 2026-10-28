@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<title>copi / pi-lite · Privates Netz – Konzept und Empfehlungen</title>
+<style>
+@font-face { font-family:Figtree; font-weight:300; src:url(../../copi/app/assets/fonts/Figtree-Light.ttf); }
+@font-face { font-family:Figtree; font-weight:400; src:url(../../copi/app/assets/fonts/Figtree-Regular.ttf); }
+@font-face { font-family:Figtree; font-weight:600; src:url(../../copi/app/assets/fonts/Figtree-SemiBold.ttf); }
+@font-face { font-family:Figtree; font-weight:700; src:url(../../copi/app/assets/fonts/Figtree-Bold.ttf); }
+@page { size:A4; margin:18mm 17mm 20mm 17mm; }
+@page cover { margin:0; }
+:root { --ink:#1d232a; --dim:#5b6570; --line:#d9dee3; --net:#12927f; --netbg:#e7f5f2; --acc:#c23aa6; --accbg:#fbeaf7; --warn:#b7791f; --warnbg:#fdf4e3; --bad:#c0392b; --badbg:#fbe9e7; --blue:#3f7fc4; --bluebg:#e9f1fa; --violet:#7e5cc4; }
+* { box-sizing:border-box; }
+html { font:300 9.7pt/1.48 Figtree, sans-serif; color:var(--ink); }
+body { margin:0; }
+h1,h2,h3,h4 { font-weight:600; line-height:1.2; color:#11161b; }
+h2 { font-size:16.5pt; margin:0 0 4mm; padding-top:1mm; break-after:avoid; }
+h2 .no { color:var(--net); margin-right:3mm; }
+h3 { font-size:13pt; margin:6mm 0 2mm; break-after:avoid; }
+h4 { font-size:11pt; margin:4mm 0 1.5mm; break-after:avoid; }
+p { margin:0 0 2.6mm; }
+b, strong { font-weight:600; }
+code { font:9pt ui-monospace, "JetBrains Mono", monospace; background:#f1f3f5; border-radius:3px; padding:0 3px; }
+ul, ol { margin:0 0 3mm; padding-left:5.5mm; }
+li { margin:0 0 1.2mm; }
+section { break-before:auto; margin-top:7mm; } section.pb { break-before:page; margin-top:0; }
+.lead { font-size:11.6pt; line-height:1.5; color:#2b333b; margin-bottom:4mm; }
+.small { font-size:8.8pt; color:var(--dim); }
+table { width:100%; border-collapse:collapse; margin:2mm 0 3.5mm; font-size:8.7pt; break-inside:auto; }
+th, td { border-bottom:1px solid var(--line); padding:1.5mm 2mm; text-align:left; vertical-align:top; }
+th { font-weight:600; background:#f4f6f8; }
+tr { break-inside:avoid; }
+.box { border-radius:3mm; padding:3.2mm 4mm; margin:3mm 0 4mm; break-inside:avoid; }
+.box > :last-child { margin-bottom:0; }
+.box .t { font-weight:600; display:block; margin-bottom:1.2mm; letter-spacing:.2px; }
+.why { background:var(--bluebg); border-left:1.2mm solid var(--blue); }
+.why .t { color:var(--blue); }
+.do { background:var(--netbg); border-left:1.2mm solid var(--net); }
+.do .t { color:var(--net); }
+.warn { background:var(--warnbg); border-left:1.2mm solid var(--warn); }
+.warn .t { color:var(--warn); }
+.bad { background:var(--badbg); border-left:1.2mm solid var(--bad); }
+.bad .t { color:var(--bad); }
+.term { background:#f4f6f8; border-left:1.2mm solid #8a96a3; }
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:4mm; }
+.grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:3.5mm; }
+.card { border:1px solid var(--line); border-radius:3mm; padding:3mm 3.5mm; break-inside:avoid; }
+.card h4 { margin-top:0; }
+.fig { margin:3mm 0 4mm; break-inside:avoid; }
+.fig img { width:100%; border-radius:2mm; border:1px solid #2a2f35; display:block; }
+.fig .cap { font-size:8.8pt; color:var(--dim); margin-top:1.5mm; }
+.pill { display:inline-block; font-size:8pt; font-weight:600; border-radius:2mm; padding:0 2mm; margin-right:1mm; }
+.p-net { background:var(--netbg); color:var(--net); }
+.p-acc { background:var(--accbg); color:var(--acc); }
+.p-warn { background:var(--warnbg); color:var(--warn); }
+.p-bad { background:var(--badbg); color:var(--bad); }
+.score { font-weight:600; white-space:nowrap; }
+.s3 { color:var(--net); } .s2 { color:var(--warn); } .s1 { color:var(--bad); }
+.toc { columns:2; column-gap:10mm; font-size:10.4pt; }
+.toc div { break-inside:avoid; padding:1mm 0; border-bottom:1px dotted var(--line); }
+.toc span { color:var(--net); font-weight:600; display:inline-block; width:8mm; }
+.check li { list-style:none; position:relative; padding-left:1mm; }
+.check li::before { content:"☐"; position:absolute; left:-5mm; color:var(--net); }
+.layer { display:grid; grid-template-columns:30mm 1fr; gap:0; border:1px solid var(--line); border-radius:3mm; overflow:hidden; margin:3mm 0 4mm; break-inside:avoid; }
+.layer > div { padding:2.4mm 3mm; border-bottom:1px solid var(--line); font-size:9.4pt; }
+.layer > div:nth-last-child(-n+2) { border-bottom:0; }
+.layer .k { background:var(--netbg); color:var(--net); font-weight:600; }
+/* Deckblatt */
+.cover { page:cover; height:297mm; background:#15191e; color:#e6edf3; padding:24mm 20mm 18mm; display:flex; flex-direction:column; position:relative; overflow:hidden; }
+.cover h1 { color:#fff; font-size:34pt; margin:14mm 0 4mm; font-weight:600; line-height:1.1; }
+.cover .kick { color:#18a999; font-weight:600; letter-spacing:2px; font-size:10pt; text-transform:uppercase; }
+.cover .sub { font-size:14pt; color:#c3cad2; max-width:150mm; }
+.cover img { width:100%; border-radius:3mm; margin-top:12mm; border:1px solid #3a4046; }
+.cover .meta { margin-top:auto; font-size:9.5pt; color:#8b949e; display:flex; justify-content:space-between; }
+.cover .bar { position:absolute; left:0; top:0; width:6mm; height:100%; background:linear-gradient(#18a999,#e454c4); }
+</style></head><body>
+
+<div class="cover">
+  <div class="bar"></div>
+  <div class="kick">Konzept · copi &amp; pi-lite</div>
+  <h1>Ein privates Netz<br>für Lehre und Zusammenarbeit</h1>
+  <div class="sub">Chatten, Dateien, Codeblöcke und Prompts austauschen, Präsenz sehen, Kontakt steuern – sicher, schlank und mit klaren Empfehlungen für Architektur, Gruppen, Gäste und Datenschutz.</div>
+  <img src="collab-mockup.png" alt="UI-Dummy">
+  <div class="meta"><span>Stand 13.10.2026 · Entwurf zur Entscheidung · noch nicht umgesetzt</span><span>Beispieldaten im Bild sind fiktiv</span></div>
+</div>
+
+<section style="break-before:auto">
+<h2>Inhalt</h2>
+<div class="toc">
+  <div><span>1</span>Auf einen Blick</div>
+  <div><span>2</span>Ausgangslage und Ziele</div>
+  <div><span>3</span>Der UI-Dummy erklärt</div>
+  <div><span>4</span>Fünf Grundbegriffe</div>
+  <div><span>5</span>Vier Architekturen im Vergleich</div>
+  <div><span>6</span>Peer-to-Peer mit maximaler Sicherheit</div>
+  <div><span>7</span>Gruppen, Rollen und Gäste</div>
+  <div><span>8</span>Lokale Speicherung: Risiken und Schutz</div>
+  <div><span>9</span>Warum Datenschutz trotzdem eine Rolle spielt</div>
+  <div><span>10</span>Empfehlung und Fahrplan</div>
+  <div><span>11</span>Checkliste zum Abhaken</div>
+  <div><span>A</span>Begriffe und Bausteine</div>
+</div>
+
+<h2 style="margin-top:9mm"><span class="no">1</span>Auf einen Blick</h2>
+<p class="lead">Empfohlen wird ein <b>schlankes Peer-to-Peer-Netz</b>, das in copi und pi-lite eingebaut ist. Für UdK-Personen gibt es einen optionalen <b>„UdK-Ausweis“ über authentik</b>. Ein eigener Matrix-Server ist möglich, für dieses Ziel aber unnötig schwer.</p>
+<div class="grid2">
+  <div class="box do"><span class="t">Empfehlung</span>
+    <ul>
+      <li><b>Verbindung:</b> direkt zwischen den Geräten (P2P, verschlüsselt). Ein eigener Vermittlungsserver (Relay) hilft nur, wenn keine direkte Verbindung möglich ist; er sieht keine Inhalte.</li>
+      <li><b>Gruppen:</b> Ende-zu-Ende-Verschlüsselung nach dem Standard MLS. Wer die Gruppe verlässt, kann neue Nachrichten nicht mehr lesen.</li>
+      <li><b>Identität:</b> Jedes Gerät hat einen eigenen Schlüssel. authentik bestätigt optional „das ist eine UdK-Person, Gruppe Lehrende“.</li>
+      <li><b>Speicherung:</b> nur lokal, verschlüsselt, mit selbst gewählten Löschfristen.</li>
+    </ul></div>
+  <div class="box why"><span class="t">Warum nicht einfach Matrix?</span>
+    <p>Matrix kann alles Nötige, bringt aber einen kompletten Server mit Datenbank, Medienspeicher, Benutzerverwaltung und Betrieb mit. Außerdem kämen eine große Bibliothek in beide Apps und ein zentraler Ort, an dem verschlüsselte Inhalte und Metadaten liegen.</p>
+    <p>Das P2P-Konzept braucht serverseitig nur zwei kleine, zustandsarme Dienste.</p></div>
+</div>
+<table>
+  <tr><th style="width:34%">Ihre Frage</th><th>Kurzantwort</th></tr>
+  <tr><td>Eigene Matrix-Instanz?</td><td>Machbar (Kap. 5, Variante A), aber nicht die erste Wahl. Wird Matrix gewählt, dann ohne Föderation und mit authentik-Anmeldung.</td></tr>
+  <tr><td>Schlankere Alternativen ohne Matrix?</td><td>Ja: eigenes kleines Relay mit MLS (B), P2P mit iroh (C, empfohlen), oder ein VPN-Netz mit Headscale (D).</td></tr>
+  <tr><td>P2P, auch ohne authentik, sicher?</td><td>Ja. Die Sicherheit entsteht durch Geräteschlüssel, Einmal-Einladungen, gemeinsam geprüfte Sicherheitswörter und MLS. authentik ist dann eine Zusatzbestätigung, keine Voraussetzung (Kap. 6).</td></tr>
+  <tr><td>Wer legt Gruppen an?</td><td>Admins (Kurse über authentik), Lehrende (in der App, durch authentik-Rolle berechtigt) und alle Nutzenden (freie Projekte über Einladungen) (Kap. 7).</td></tr>
+  <tr><td>Gäste?</td><td>Ja, nach Freigabe: Einmal-Einladung, sichtbar markiert, auf eine Gruppe begrenzt, mit Ablaufdatum.</td></tr>
+  <tr><td>Speicherdauer?</td><td>Lokal nach eigenem Ermessen. Die Risiken und Gegenmaßnahmen stehen in Kap. 8.</td></tr>
+  <tr><td>Ist der UdK-Datenschutz zuständig?</td><td>Teilweise ja. Sobald personenbezogene Daten anderer im Lehrbetrieb verarbeitet werden, gilt die DSGVO. Die Begründung und der kleinste sinnvolle Schritt stehen in Kap. 9.</td></tr>
+</table>
+</section>
+
+<section>
+<h2><span class="no">2</span>Ausgangslage und Ziele</h2>
+<p>copi (nativ, Rust/egui) und pi-lite (Tauri/Web) sind zwei gleichwertige Oberflächen für den Agenten <b>pi</b>. Bisher arbeitet jede Person allein mit ihrem Agenten. Das Netz soll diese Arbeitsplätze verbinden, ohne den Agentenchat zu verdrängen.</p>
+<div class="grid3">
+  <div class="card"><h4>Lehren</h4><p>Ein Tutorial Schritt für Schritt führen, Beispieldateien und fertige Prompts an alle verteilen, Fragen per „Hand heben“ sammeln.</p></div>
+  <div class="card"><h4>Zusammenarbeiten</h4><p>In Projekten chatten, Codeblöcke und Zwischenstände austauschen, gute Prompts teilen.</p></div>
+  <div class="card"><h4>Selbst bestimmen</h4><p>Sehen, wer erreichbar ist, und den eigenen Kontakt jederzeit pausieren. Niemand steuert fremde Rechner.</p></div>
+</div>
+<h3>Leitplanken aus dem bisherigen Projekt</h3>
+<ul>
+  <li><b>Parität:</b> Jede Funktion entsteht gleichzeitig in copi und pi-lite, idealerweise aus einem gemeinsamen Rust-Baustein <code>pi-net</code>.</li>
+  <li><b>Einwilligung statt Automatik:</b> Nichts wird ohne ausdrückliche Handlung gesendet, ausgeführt oder an ein KI-Modell weitergegeben. Das gilt auch für eingehende Prompts.</li>
+  <li><b>Originale bleiben unverändert:</b> Empfangene Dateien landen nicht von selbst im Arbeitsordner.</li>
+  <li><b>Schlank bleiben:</b> wenig Serverbetrieb, wenige zusätzliche Abhängigkeiten, keine neue Daueraufgabe für Admins.</li>
+</ul>
+<div class="box why"><span class="t">Didaktischer Hinweis: Was „Prompt-Injektion im positiven Sinn“ hier heißt</span>
+<p>Gemeint ist die bewusste <b>Übergabe eines fertigen Prompts</b> von Lehrenden an Lernende. Eine Lehrende formuliert die Aufgabe einmal sorgfältig, und alle erhalten sie als Vorschlag in ihrer Eingabezeile. Entscheidend ist, dass die empfangende Person den Prompt <b>sieht, ändern kann und selbst abschickt</b>.</p>
+<p>Damit unterscheidet sich die Funktion grundlegend von einer echten (schädlichen) Prompt-Injektion, bei der Anweisungen unbemerkt in den Agenten gelangen.</p></div>
+</section>
+
+<section class="pb">
+<h2><span class="no">3</span>Der UI-Dummy erklärt</h2>
+<p>Der Entwurf zeigt, wie sich das Netz in die bestehende Oberfläche einfügt. Die Bedienung folgt drei Regeln:</p>
+<ol>
+  <li><b>Der Agentenchat bleibt in der Mitte.</b> Das Netz ist eine einklappbare Region am rechten Rand.</li>
+  <li><b>Ein eigenes Farbsignal:</b> Alles, was über das Netz kommt oder dorthin geht, ist türkis. Dadurch ist es nicht mit Agentenausgaben zu verwechseln.</li>
+  <li><b>Austausch als Karten:</b> Dateien, Codeblöcke und Prompts erscheinen als Karten mit Aktionen, nie als ausführbarer Fließtext.</li>
+</ol>
+<div class="fig"><img src="collab-mockup.png"><div class="cap">Abb. 1 – Hauptfenster mit Netz-Region, Tutorial-Leiste, eingehendem Prompt und geöffnetem Erreichbarkeitsmenü (Beispieldaten fiktiv).</div></div>
+<table>
+  <tr><th style="width:6%">Nr.</th><th style="width:22%">Element</th><th>Funktion und Begründung</th></tr>
+  <tr><td>1</td><td>Netz-Chip in der Kopfzeile</td><td>Zeigt Status, aktive Gruppe und Personen online. Das Menü steuert die Erreichbarkeit: erreichbar, pausieren für 30 min, 2 h, bis morgen oder bis auf Weiteres, unsichtbar. Die Erreichbarkeit soll mit einem Klick änderbar sein, ohne Einstellungsdialog.</td></tr>
+  <tr><td>2</td><td>Netz-Region rechts</td><td>Reiter für Kurse, Projekte und Direktgespräche, mit Ungelesen-Zähler. Lässt sich per Tastenkürzel einklappen.</td></tr>
+  <tr><td>3</td><td>Präsenz</td><td>Online, abwesend, pausiert oder offline, dazu eine Rolle wie „leitet“. Es erscheinen nur Gruppenmitglieder, keine globale Personensuche.</td></tr>
+  <tr><td>4</td><td>Karten</td><td>Datei mit Prüfsumme und „Speichern unter …“; Codeblock zum Kopieren oder Übernehmen; Prompt zum Übernehmen in die Eingabe.</td></tr>
+  <tr><td>5</td><td>Senden</td><td>+ Datei · { } Codeblock · ✎ Prompt. Im Agentenchat hat jeder Block zusätzlich „↗ Ins Netz teilen“.</td></tr>
+  <tr><td>6</td><td>Prompt-Übergabe</td><td>Ein eingehender Prompt erscheint als Karte über der Eingabe: ansehen, übernehmen (bleibt editierbar) oder verwerfen. Er wird nie automatisch gesendet.</td></tr>
+  <tr><td>7</td><td>Tutorial-Leiste</td><td>Zeigt Schritt x/y. Teilnehmende wählen „Folgen“ oder „Eigenes Tempo“ und können die Hand heben.</td></tr>
+  <tr><td>8</td><td>Geteilte Sessions</td><td>Markierung und Personenzahl in der Session-Liste. Projektsessions bleiben lokale Agentensitzungen; geteilt werden nur Chat und Artefakte.</td></tr>
+</table>
+</section>
+
+<section>
+<h2><span class="no">4</span>Fünf Grundbegriffe</h2>
+<p class="lead">Die Architekturentscheidung lässt sich mit fünf Begriffen erklären. Wer diese Seite kennt, kann die Varianten in Kapitel 5 selbst bewerten.</p>
+<div class="box term"><span class="t">① Identität ≠ Transport</span><p><b>Identität</b> beantwortet die Frage „Wer bist du, und darfst du hinein?“. Das kann authentik leisten. <b>Transport</b> beantwortet „Wie kommt die Nachricht an?“. Dafür braucht es Server, Relays oder direkte Verbindungen. authentik ist ein Ausweisamt, keine Post.</p></div>
+<div class="box term"><span class="t">② Ende-zu-Ende-Verschlüsselung (E2EE)</span><p>Nur die Geräte der Gruppenmitglieder können Inhalte lesen. Server oder Relays sehen höchstens verschlüsselte Pakete und Metadaten: wer, wann, wie groß. Gegen Metadaten hilft E2EE nicht, dagegen hilft nur Sparsamkeit im Design.</p></div>
+<div class="box term"><span class="t">③ Peer-to-Peer (P2P) und Relay</span><p>Bei P2P sprechen Geräte direkt miteinander. Firewalls und Uni-WLANs verhindern das oft. Ein <b>Relay</b> leitet dann verschlüsselte Pakete weiter, ohne sie lesen zu können. P2P braucht also meist trotzdem einen kleinen Hilfsserver, aber keinen, der Inhalte speichert.</p></div>
+<div class="box term"><span class="t">④ MLS – verschlüsselte Gruppen</span><p><i>Messaging Layer Security</i> (IETF-Standard RFC 9420) verwaltet einen gemeinsamen Schlüssel für Gruppen mit wenigen bis vielen Mitgliedern. Bei jedem Ein- oder Austritt wird der Schlüssel erneuert:</p>
+<ul><li>Neue Mitglieder lesen nicht rückwirkend mit.</li><li>Entfernte Mitglieder lesen nichts Neues mehr.</li></ul>
+<p>Mit <b>OpenMLS</b> gibt es eine Rust-Umsetzung.</p></div>
+<div class="box term"><span class="t">⑤ Sicherheitswörter (Schlüsselprüfung)</span><p>Zwei Personen vergleichen persönlich oder am Telefon eine kurze Wortfolge, die aus ihren Geräteschlüsseln berechnet wird. Stimmt sie überein, sitzt garantiert niemand dazwischen. Das ist die stärkste und zugleich einfachste Schutzmaßnahme gegen gefälschte Kontakte.</p></div>
+</section>
+
+<section class="pb">
+<h2><span class="no">5</span>Vier Architekturen im Vergleich</h2>
+<p>Alle vier Varianten erfüllen die Grundfunktionen. Sie unterscheiden sich darin, <b>wie viel Server</b> nötig ist, <b>wie groß die Apps</b> werden und <b>wer welche Daten sieht</b>.</p>
+
+<div class="grid2">
+<div class="card"><h4><span class="pill p-warn">A</span>Eigene Matrix-Instanz</h4>
+<p>Neuer Homeserver unter UdK-Domain (z. B. Synapse oder ein schlankerer Rust-Server der Conduit-Familie), Anmeldung per OIDC über authentik, Föderation abgeschaltet. Die Apps nutzen <code>matrix-rust-sdk</code>.</p>
+<p><b>+</b> ausgereift: E2EE, Präsenz, Dateien, Spaces, Offline-Zustellung; Element als Ersatz-Client.<br><b>−</b> dauerhafter Serverbetrieb mit Datenbank, Medienspeicher, Updates und Backups; große Bibliothek in beiden Apps; zentraler Ort für verschlüsselte Inhalte und Metadaten; das Matrix-Rechtemodell passt nur indirekt zu authentik-Gruppen.</p></div>
+<div class="card"><h4><span class="pill p-warn">B</span>Eigenes kleines Relay + MLS</h4>
+<p>Ein einziger kleiner Dienst (WebSocket, SQLite) prüft authentik-Tokens und leitet verschlüsselte MLS-Nachrichten weiter. Für Offline-Empfänger hält er sie mit Ablaufzeit zwischen.</p>
+<p><b>+</b> schlank, volle Kontrolle, gute Offline-Zustellung, einfache Anbindung an authentik.<br><b>−</b> eigenes Protokoll muss gebaut, getestet und geprüft werden; ohne Server keine Kommunikation; Gäste brauchen ein authentik-Konto oder einen Sonderweg.</p></div>
+<div class="card" style="border-color:var(--net)"><h4><span class="pill p-net">C</span>P2P mit iroh + MLS · empfohlen</h4>
+<p>Geräte verbinden sich direkt über <b>iroh</b> (Rust, QUIC, Lochstanzen durch NAT, verschlüsselt, Ausweichen über ein Relay). Gruppen laufen über OpenMLS, Dateien über inhaltsadressierte Blobs. authentik stellt optional einen signierten „UdK-Ausweis“ aus.</p>
+<p><b>+</b> kein zentraler Datenspeicher, Relay sieht nur verschlüsselte Pakete, gleicher Rust-Kern für beide Apps, funktioniert auch ohne authentik (freie Projekte, Gäste), im LAN sogar ganz ohne Internet.<br><b>−</b> Nachrichten an Offline-Personen brauchen einen kleinen Zwischenspeicher oder warten; Mitglieder sehen sich bei direkter Verbindung gegenseitig die IP-Adressen (abschaltbar: nur über Relay).</p></div>
+<div class="card"><h4><span class="pill p-bad">D</span>VPN-Netz: Headscale/WireGuard</h4>
+<p>Ein selbst betriebener Headscale-Server (Anmeldung über authentik) bildet ein privates WireGuard-Netz. Die Apps sprechen darin direkt miteinander.</p>
+<p><b>+</b> sehr robuste, geprüfte Netzschicht; Gruppenregeln als Zugriffsregeln (ACL).<br><b>−</b> verlangt einen zusätzlichen VPN-Client und Systemrechte auf jedem Gerät; öffnet ein ganzes Netz statt nur einer App; Gäste umständlich; Gruppen-E2EE und Chat müssen trotzdem selbst gebaut werden.</p></div>
+</div>
+
+<table>
+  <tr><th>Kriterium</th><th>A Matrix</th><th>B Relay+MLS</th><th>C P2P iroh</th><th>D Headscale</th></tr>
+  <tr><td>Serverbetrieb</td><td class="score s1">hoch</td><td class="score s2">gering</td><td class="score s3">minimal¹</td><td class="score s2">mittel</td></tr>
+  <tr><td>Zusatzgröße der Apps</td><td class="score s1">groß</td><td class="score s3">klein</td><td class="score s2">mittel</td><td class="score s3">klein + VPN</td></tr>
+  <tr><td>Inhalte zentral gespeichert</td><td class="score s2">ja, verschlüsselt</td><td class="score s2">kurz, verschlüsselt</td><td class="score s3">nein</td><td class="score s3">nein</td></tr>
+  <tr><td>Metadaten zentral</td><td class="score s1">viele</td><td class="score s2">einige</td><td class="score s3">wenige</td><td class="score s2">Verbindungen</td></tr>
+  <tr><td>Offline-Zustellung</td><td class="score s3">ja</td><td class="score s3">ja</td><td class="score s2">mit Postfach²</td><td class="score s1">nein</td></tr>
+  <tr><td>Ohne authentik nutzbar</td><td class="score s1">kaum</td><td class="score s1">kaum</td><td class="score s3">ja</td><td class="score s2">eingeschränkt</td></tr>
+  <tr><td>Gäste</td><td class="score s2">Konto nötig</td><td class="score s2">Sonderweg</td><td class="score s3">Einladung</td><td class="score s1">umständlich</td></tr>
+  <tr><td>Eigenentwicklung</td><td class="score s3">wenig</td><td class="score s1">viel</td><td class="score s2">mittel</td><td class="score s1">viel</td></tr>
+</table>
+<p class="small">¹ Ein selbst betriebenes iroh-Relay und ein kleiner Ausweis-Dienst, beide ohne Inhaltsspeicher. ² Optionales „Postfach“: ein kleiner Dienst, der verschlüsselte Nachrichten für Offline-Personen begrenzt aufbewahrt.</p>
+<div class="box do"><span class="t">Einordnung</span><p><b>C</b> erfüllt die Wünsche „schlank“, „P2P“, „auch ohne authentik“ und „maximale Sicherheit“ am besten. <b>A</b> lohnt sich nur, wenn Offline-Zustellung, Mehrgeräte-Komfort und ein fertiger Ersatz-Client wichtiger sind als Schlankheit. <b>B</b> und <b>D</b> sind Zwischenlösungen ohne klaren Vorteil gegenüber C.</p></div>
+</section>
+
+<section>
+<h2><span class="no">6</span>Peer-to-Peer mit maximaler Sicherheit</h2>
+<p class="lead">Auch ohne zentrale Instanz kann ein P2P-Netz sehr sicher sein. Die Sicherheit entsteht aus mehreren Schichten, die sich gegenseitig absichern.</p>
+<div class="layer">
+  <div class="k">Gerät</div><div>Jedes Gerät erzeugt einen eigenen Schlüssel (Ed25519) und legt ihn im System-Schlüsselbund ab. Der Schlüssel verlässt das Gerät nie und wird nicht zentral registriert.</div>
+  <div class="k">Einladung</div><div>Zutritt nur per Einmal-Einladung (Link oder QR): an eine Gruppe gebunden, gültig für eine Person, mit Ablaufdatum, widerrufbar. Sie enthält das Beitrittsrecht, keinen Inhalt.</div>
+  <div class="k">Prüfung</div><div>Nach dem Beitritt vergleichen beide Seiten sechs Sicherheitswörter. Ändert sich später ein Schlüssel (z. B. durch ein neues Gerät), zeigt die App einen Hinweis und setzt die Person auf „nicht geprüft“.</div>
+  <div class="k">Verbindung</div><div>iroh baut verschlüsselte QUIC-Verbindungen auf, die an den Geräteschlüssel gebunden sind (TLS 1.3). Das Relay sieht nur verschlüsselte Pakete. Es sollte selbst betrieben werden, damit keine Drittanbieter-Infrastruktur nötig ist.</div>
+  <div class="k">Gruppe</div><div>MLS erneuert den Gruppenschlüssel bei jedem Ein- und Austritt. Entfernte Personen lesen nichts Neues mehr, und alte Schlüssel werden verworfen (Vorwärtssicherheit).</div>
+  <div class="k">Inhalt</div><div>Dateien mit Prüfsumme und Größenlimit, ohne Ausführungsrecht gespeichert. Prompts werden von unsichtbaren und Bidi-Steuerzeichen bereinigt. Nichts wird automatisch ausgeführt oder an KI weitergegeben.</div>
+  <div class="k">Sichtbarkeit</div><div>Präsenz ist je Gruppe ausdrücklich einzuschalten. Der Modus „nur über Relay“ verbirgt die eigene IP-Adresse vor anderen Mitgliedern.</div>
+</div>
+<h3>Der optionale „UdK-Ausweis“: authentik ohne zentralen Datenverkehr</h3>
+<p>authentik muss nicht im Datenverkehr stehen. Ein kleiner <b>Ausweis-Dienst</b> genügt:</p>
+<ol>
+  <li>Man meldet sich einmal per authentik an (OIDC).</li>
+  <li>Der Dienst stellt eine signierte Bestätigung aus: „Gerät mit Schlüssel X gehört zu Name Y, Gruppen Z, gültig bis …“.</li>
+  <li>Andere Teilnehmende prüfen diese Bestätigung <b>offline</b> mit dem öffentlichen Schlüssel der UdK. Er ist in der App fest hinterlegt.</li>
+</ol>
+<p>Das Ergebnis ist das Abzeichen <span class="pill p-net">UdK-Ausweis</span>. Kurse können verlangen, dass alle Mitglieder einen gültigen Ausweis haben. Für freie Projekte ist er nur ein Vertrauenssignal.</p>
+<div class="box warn"><span class="t">Ehrliche Grenzen</span>
+<ul>
+  <li><b>Offline-Zustellung:</b> Ohne Postfach erreicht eine Nachricht nur Personen, die gerade online sind. Für Tutorials ist das meist unproblematisch, für Projekte sinnvoll ergänzbar.</li>
+  <li><b>Mehrere Geräte:</b> Jedes Gerät ist ein eigenes Mitglied. Ein zweiter Rechner wird wie eine neue Person eingeladen und dem eigenen Profil zugeordnet.</li>
+  <li><b>Kopien bei anderen:</b> Was einmal empfangen wurde, liegt beim Gegenüber. Keine Technik kann es dort zuverlässig löschen (siehe Kap. 8).</li>
+  <li><b>Prüfung:</b> Kryptografische Bausteine nur aus geprüften Bibliotheken übernehmen (OpenMLS, iroh/rustls), nichts selbst erfinden. Vor dem Lehreinsatz ein unabhängiges Review einplanen.</li>
+</ul></div>
+</section>
+
+<section class="pb">
+<h2><span class="no">7</span>Gruppen, Rollen und Gäste</h2>
+<p>Es gibt drei Arten von Gruppen. Sie unterscheiden sich darin, wer sie anlegt und wie man hineinkommt.</p>
+<table>
+  <tr><th style="width:17%">Art</th><th style="width:22%">Wer legt an</th><th style="width:27%">Wie kommt man hinein</th><th>Typischer Einsatz</th></tr>
+  <tr><td><b>Kurs</b></td><td>Admins in authentik oder Lehrende in der App</td><td>Automatisch über die authentik-Gruppe (Ausweis) oder per Einladung der Lehrenden</td><td>Seminar, Tutorial, Übung</td></tr>
+  <tr><td><b>Freies Projekt</b></td><td>Jede Person</td><td>Persönliche Einladung; wahlweise dürfen Mitglieder weitere einladen</td><td>Projektgruppen, Ausstellungen, Arbeitskreise</td></tr>
+  <tr><td><b>Direkt</b></td><td>Zwei Personen</td><td>Kontaktanfrage, die angenommen werden muss</td><td>Absprachen, Hilfe unter vier Augen</td></tr>
+</table>
+<div class="grid2">
+  <div class="box why"><span class="t">Warum Lehrende Kurse in der App anlegen sollten</span><p>Würde jeder Kurs eine authentik-Gruppe brauchen, entstünde Verwaltungsaufwand bei den Admins. Besser trägt authentik nur die Rolle „lehrende“; der Ausweis-Dienst schreibt sie in die Bestätigung. Wer sie besitzt, darf in der App Kurse gründen, leiten und auflösen. Admins können zusätzlich Pflichtkurse über authentik-Gruppen vorgeben.</p></div>
+  <div class="box why"><span class="t">Rollen in einer Gruppe</span>
+  <ul>
+    <li><b>gründet/leitet:</b> einladen, entfernen, Tutorial steuern, Prompts an alle.</li>
+    <li><b>Mitglied:</b> chatten, teilen, je nach Einstellung einladen.</li>
+    <li><b>Gast:</b> wie Mitglied, aber nur in dieser Gruppe, mit Ablaufdatum und sichtbar markiert.</li>
+  </ul></div>
+</div>
+<div class="fig"><img src="invite-mockup.png"><div class="cap">Abb. 2 – (A) Freies Projekt gründen · (B) Einmal-Einladung mit Rolle und Ablauf · (C) Kontakt prüfen mit Sicherheitswörtern; Gäste sind sichtbar markiert (Beispieldaten fiktiv).</div></div>
+<div class="box do"><span class="t">Empfehlungen für Gäste</span>
+<ul>
+  <li>Gäste nur auf Freigabe einer leitenden Person, mit Einmal-Einladung und Ablaufdatum (Vorschlag: 30 Tage, verlängerbar).</li>
+  <li>Gäste sind immer sichtbar markiert, gehören zu genau einer Gruppe und sehen keine anderen Gruppen und keine Mitgliederlisten außerhalb.</li>
+  <li>Beim Entfernen eines Gastes wird der Gruppenschlüssel sofort erneuert (MLS).</li>
+  <li>Kurse können Gäste grundsätzlich ausschließen; freie Projekte entscheiden selbst.</li>
+</ul></div>
+</section>
+
+<section>
+<h2><span class="no">8</span>Lokale Speicherung: Risiken und Schutz</h2>
+<p class="lead">„Jede Person speichert lokal nach eigenem Ermessen“ ist datensparsam, weil es keinen zentralen Bestand gibt. Die Verantwortung verteilt sich damit aber auf alle Geräte. Diese Risiken sollten bekannt sein:</p>
+<table>
+  <tr><th style="width:27%">Risiko</th><th style="width:38%">Was passieren kann</th><th>Gegenmaßnahme in copi/pi-lite</th></tr>
+  <tr><td><b>Verlust oder Diebstahl des Geräts</b></td><td>Chats und Dateien mit Namen, Arbeiten und Fotos anderer fallen in fremde Hände.</td><td>Lokaler Speicher verschlüsselt, Schlüssel im System-Schlüsselbund; Festplattenverschlüsselung empfehlen.</td></tr>
+  <tr><td><b>Unbemerkte Kopien</b></td><td>Backups, iCloud/Dropbox-Ordner oder Time Machine kopieren Verläufe auf Server Dritter.</td><td>Speicherort außerhalb synchronisierter Ordner; Hinweis in den Einstellungen; Export nur bewusst.</td></tr>
+  <tr><td><b>Kopien bei anderen</b></td><td>Eine Löschung bei mir löscht nichts bei den anderen. Löschwünsche sind technisch nicht durchsetzbar.</td><td>Ablaufzeiten je Gruppe als <i>Bitte</i> an alle Apps (automatisches Löschen); klare Kommunikation, dass Geteiltes geteilt ist.</td></tr>
+  <tr><td><b>Weitergabe an KI</b></td><td>Jemand übernimmt die Datei oder Nachricht einer anderen Person in seinen Agenten; sie geht damit an einen KI-Anbieter.</td><td>Kein automatischer Weg vom Netz zum Agenten; beim Übernehmen Hinweis „stammt von …, wird an Modell X gesendet“.</td></tr>
+  <tr><td><b>Verhaltensprofile</b></td><td>Präsenz und „Schritt erledigt“-Meldungen zeigen, wer wann wie lange arbeitet; das kann zur Kontrolle missbraucht werden.</td><td>Präsenz und Fortschrittsmeldungen opt-in und je Gruppe; keine Historie der Präsenz speichern; keine Auswertungen für Lehrende.</td></tr>
+  <tr><td><b>Fremde Inhalte</b></td><td>Dateien mit Schadcode, manipulierte Prompts, Bilder von Personen ohne deren Einverständnis.</td><td>Keine Ausführung, Größenlimits, Bereinigung von Steuerzeichen, Melden- und Blockieren-Funktion.</td></tr>
+  <tr><td><b>IP-Adressen</b></td><td>Bei direkten P2P-Verbindungen sehen sich Mitglieder gegenseitig die IP-Adresse.</td><td>Einstellung „nur über Relay“, für Gäste standardmäßig an.</td></tr>
+</table>
+<div class="box do"><span class="t">Empfohlene Voreinstellungen</span>
+<ul>
+  <li><b>Chat:</b> 90 Tage, danach automatisch löschen (änderbar: nie / 7 / 30 / 90 / 365 Tage).</li>
+  <li><b>Empfangene Dateien:</b> bis zum manuellen Löschen, aber getrennt vom Arbeitsordner, in einem eigenen Netz-Ordner.</li>
+  <li><b>Kurse:</b> Lehrende können eine Ablaufzeit für den Kurs vorschlagen (z. B. Semesterende). Alle Apps übernehmen sie als Voreinstellung.</li>
+  <li><b>„Alles von mir löschen“:</b> eigene Nachrichten bei allen Mitgliedern löschen lassen. Das funktioniert nur kooperativ, nicht erzwungen.</li>
+</ul></div>
+</section>
+
+<section class="pb">
+<h2><span class="no">9</span>Warum Datenschutz trotzdem eine Rolle spielt</h2>
+<p class="lead">Die Frage ist berechtigt: Es handelt sich um ein Lehr-Software-Projekt, Inhalte liegen lokal und sind verschlüsselt. Trotzdem ist der Datenschutz berührt. Der Grund ist nicht die Software, sondern <b>wessen Daten</b> darin vorkommen und <b>in welchem Rahmen</b> sie genutzt werden.</p>
+<h3>Die drei Gründe</h3>
+<div class="grid3">
+  <div class="card"><h4>1 · Es sind Daten anderer Menschen</h4><p>Namen, Online-Zeiten, Chatinhalte, eingereichte Arbeiten, Fotos: Das alles sind personenbezogene Daten im Sinne der DSGVO, auch wenn sie verschlüsselt und nur lokal liegen.</p></div>
+  <div class="card"><h4>2 · Es ist Lehrbetrieb</h4><p>Die DSGVO nimmt nur rein private oder familiäre Tätigkeiten aus. Ein Kurs der Hochschule, mit Teilnehmenden, die sich womöglich zur Nutzung verpflichtet fühlen, ist das nicht.</p></div>
+  <div class="card"><h4>3 · UdK-Infrastruktur ist beteiligt</h4><p>Läuft die Anmeldung über authentik und betreibt die UdK Relay und Ausweis-Dienst, verarbeitet die Hochschule selbst Daten (Konten, Gruppen, IP-Adressen). Dafür ist sie verantwortlich.</p></div>
+</div>
+<h3>Was dabei gut ist</h3>
+<p>Das empfohlene Design hält den Aufwand klein:</p>
+<ul>
+  <li>Es gibt keinen zentralen Inhaltsspeicher.</li>
+  <li>Server sehen nur verschlüsselte Pakete.</li>
+  <li>Präsenz ist opt-in.</li>
+  <li>Es gibt keine Auswertungsfunktionen.</li>
+</ul>
+<p>Datenschutz bedeutet hier deshalb kein langes Verfahren, sondern wenige konkrete Schritte.</p>
+<div class="box do"><span class="t">Der kleinste sinnvolle Schritt</span>
+<ol>
+  <li>Kurzes Gespräch mit der behördlichen Datenschutzbeauftragten der UdK, mit dieser Konzeptbeschreibung als Grundlage.</li>
+  <li>Eintrag für den Ausweis-Dienst und das Relay im Verzeichnis der Verarbeitungstätigkeiten.</li>
+  <li>Eine Seite Datenschutzhinweis in der App: was wo liegt, wer was sieht, wie man löscht.</li>
+  <li><b>Freiwilligkeit</b> im Kurs sicherstellen: Wer das Netz nicht nutzen möchte, darf keinen Nachteil haben.</li>
+  <li>Wenn Lehrende mit Beschäftigten-Daten arbeiten (z. B. Fortschritts- oder Präsenzmeldungen): klären, ob die Personalvertretung einzubinden ist.</li>
+</ol></div>
+<div class="box warn"><span class="t">Hinweis</span><p>Dieses Kapitel ist eine fachliche Einordnung, keine Rechtsberatung. Ob etwa eine Datenschutz-Folgenabschätzung nötig ist, entscheidet die UdK; bei diesem sparsamen Design ist das eher unwahrscheinlich. Ein frühes Gespräch kostet wenig und vermeidet spätere Umbauten.</p></div>
+</section>
+
+<section>
+<h2><span class="no">10</span>Empfehlung und Fahrplan</h2>
+<p class="lead">Empfohlen wird <b>Variante C</b>: ein P2P-Kern in Rust (<code>pi-net</code>), eingebaut in copi und pi-lite, dazu zwei kleine eigene Dienste – iroh-Relay und Ausweis-Dienst. Später kann optional ein Postfach für Offline-Nachrichten dazukommen.</p>
+<table>
+  <tr><th style="width:12%">Phase</th><th style="width:34%">Inhalt</th><th>Ergebnis und Prüfkriterium</th></tr>
+  <tr><td><b>0 · Klären</b></td><td>Entscheidung für C; Gespräch mit der Datenschutzbeauftragten; Domain und Server für Relay und Ausweis-Dienst; authentik-Rolle „lehrende“.</td><td>Schriftliche Entscheidung; Testserver erreichbar.</td></tr>
+  <tr><td><b>1 · Kern</b></td><td><code>pi-net</code>: Geräteschlüssel, Einladungen, Sicherheitswörter, direkte Gespräche, Präsenz. UI: Netz-Chip, Region, Personenliste in beiden Apps.</td><td>Zwei Geräte im LAN und über das Relay; automatisierte Tests mit simulierten Teilnehmenden; Paritätstest copi ↔ pi-lite.</td></tr>
+  <tr><td><b>2 · Gruppen</b></td><td>MLS-Gruppen, freie Projekte, Rollen, Gäste mit Ablaufdatum, Entfernen mit Schlüsselerneuerung.</td><td>Entfernte Person kann neue Nachrichten nachweislich nicht lesen.</td></tr>
+  <tr><td><b>3 · Austausch</b></td><td>Karten für Datei, Codeblock und Prompt; „Ins Netz teilen“; Prompt-Übergabe über der Eingabe; lokale Speicherung mit Ablauf.</td><td>Nichts wird automatisch ausgeführt oder gesendet (Testfälle mit präparierten Inhalten).</td></tr>
+  <tr><td><b>4 · Lehre</b></td><td>Ausweis-Dienst (authentik), Kurse durch Lehrende, Tutorial-Leiste mit Schritten, „Hand heben“.</td><td>Probelauf mit einer kleinen Gruppe; Rückmeldungen zur Bedienung.</td></tr>
+  <tr><td><b>5 · Ausbau</b></td><td>Optionales Postfach; Nur-Lese-Freigabe der eigenen Sitzung; unabhängiges Sicherheitsreview.</td><td>Review abgeschlossen, Befunde behoben.</td></tr>
+</table>
+<div class="grid2">
+  <div class="box do"><span class="t">Was serverseitig bleibt</span>
+  <ul>
+    <li><b>iroh-Relay:</b> leitet weiter, speichert nichts.</li>
+    <li><b>Ausweis-Dienst:</b> etwa eine Seite Code; signiert Bestätigungen, speichert höchstens ein Protokoll.</li>
+    <li><b>Optional ein Postfach</b> mit kurzer Aufbewahrung.</li>
+  </ul>
+  <p>Alle drei lassen sich als einzelne Programme betreiben, ohne Datenbankserver.</p></div>
+  <div class="box why"><span class="t">Wann doch Matrix?</span>
+  <ul>
+    <li>wenn Nachrichten zuverlässig auch tagelang offline zugestellt werden müssen,</li>
+    <li>wenn viele Personen mit mehreren Geräten arbeiten,</li>
+    <li>wenn ein fertiger Ersatz-Client (Element) für Nicht-copi-Nutzende wichtig ist.</li>
+  </ul>
+  <p>Das UI bleibt gleich. Nur <code>pi-net</code> würde intern auf Matrix wechseln.</p></div>
+</div>
+</section>
+
+<section class="pb">
+<h2><span class="no">11</span>Checkliste zum Abhaken</h2>
+<div class="grid2">
+<div>
+<h4>Entscheidungen</h4>
+<ul class="check">
+  <li>Architektur C (P2P iroh + MLS) bestätigt</li>
+  <li>Server/Domain für Relay und Ausweis-Dienst festgelegt</li>
+  <li>authentik-Rolle „lehrende“ angelegt, Ausweis-Dienst als OIDC-Anwendung</li>
+  <li>Gastregeln: Ablauf 30 Tage, nur auf Freigabe, nur eine Gruppe</li>
+  <li>Voreinstellung der Aufbewahrung: Chat 90 Tage</li>
+</ul>
+<h4>Datenschutz</h4>
+<ul class="check">
+  <li>Gespräch mit der Datenschutzbeauftragten der UdK geführt</li>
+  <li>Eintrag im Verzeichnis der Verarbeitungstätigkeiten</li>
+  <li>Datenschutzhinweis in der App</li>
+  <li>Freiwilligkeit im Kurs zugesichert</li>
+  <li>Personalvertretung geklärt, falls Beschäftigte betroffen</li>
+</ul>
+</div>
+<div>
+<h4>Sicherheit (Abnahme)</h4>
+<ul class="check">
+  <li>Geräteschlüssel nur im System-Schlüsselbund</li>
+  <li>Einmal-Einladungen mit Ablauf und Widerruf</li>
+  <li>Sicherheitswörter und Warnung bei Schlüsselwechsel</li>
+  <li>Schlüsselerneuerung nach jedem Entfernen nachgewiesen</li>
+  <li>Prompts und Code nie automatisch gesendet oder ausgeführt</li>
+  <li>Dateien ohne Ausführungsrecht, mit Größenlimit und Prüfsumme</li>
+  <li>„Nur über Relay“ verfügbar, für Gäste voreingestellt</li>
+  <li>Lokaler Speicher verschlüsselt, außerhalb von Sync-Ordnern</li>
+  <li>Parität copi ↔ pi-lite getestet</li>
+  <li>Unabhängiges Review vor breitem Lehreinsatz</li>
+</ul>
+</div>
+</div>
+
+<h2 style="margin-top:8mm"><span class="no">A</span>Begriffe und Bausteine</h2>
+<table>
+  <tr><th style="width:24%">Begriff</th><th>Bedeutung</th></tr>
+  <tr><td>authentik</td><td>Identitätsanbieter der UdK (<code>auth.udk.digital</code>); verwaltet Konten, Gruppen und Rollen, Anmeldung per OIDC.</td></tr>
+  <tr><td>OIDC</td><td>OpenID Connect – Standard für „Mit … anmelden“; liefert der App eine geprüfte Identität.</td></tr>
+  <tr><td>iroh</td><td>Rust-Bibliothek für direkte, verschlüsselte Verbindungen zwischen Geräten (QUIC), mit Relay als Ausweichweg; Zusatzmodule für Gruppen-Nachrichten (gossip) und Dateien (blobs).</td></tr>
+  <tr><td>MLS / OpenMLS</td><td>IETF-Standard (RFC 9420) für Ende-zu-Ende-verschlüsselte Gruppen; OpenMLS ist die Rust-Umsetzung.</td></tr>
+  <tr><td>Relay</td><td>Weiterleitungsserver für verschlüsselte Pakete, wenn keine Direktverbindung möglich ist.</td></tr>
+  <tr><td>Ausweis-Dienst</td><td>Kleiner eigener Dienst: nach authentik-Anmeldung signierte Bestätigung „Geräteschlüssel X = UdK-Person Y, Rollen Z“.</td></tr>
+  <tr><td>Postfach</td><td>Optionaler Dienst, der verschlüsselte Nachrichten für Offline-Personen kurz aufbewahrt.</td></tr>
+  <tr><td>Matrix / Headscale</td><td>Alternativen: föderierbares Chatprotokoll mit eigenem Server bzw. selbst betriebener Steuerserver für ein WireGuard-VPN.</td></tr>
+</table>
+<p class="small">Hinweise zu Produkten und Bibliotheken geben den allgemeinen Kenntnisstand wieder. Vor der Umsetzung sind aktuelle Versionen, Lizenzen und der Wartungsstand zu prüfen.</p>
+</section>
+<script>
+if (location.hash === '#cover') document.querySelectorAll('section').forEach(e => e.remove());
+if (location.hash === '#body') document.querySelector('.cover').remove();
+</script>
+</body></html>
