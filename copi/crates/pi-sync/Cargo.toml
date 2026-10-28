@@ -1,0 +1,13 @@
+[package]
+name = "pi-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+flate2 = "1"
+sha2 = "0.11"
+walkdir = "2"
+tempfile = "3"
