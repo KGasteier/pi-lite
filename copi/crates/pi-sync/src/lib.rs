@@ -177,7 +177,17 @@ pub struct SelectionItem {
     pub fluechtig_bytes: u64,
     pub fluechtig_dateien: u64,
     pub gross_bytes: u64,
+    #[serde(default)]
     pub gross_dateien: u64,
+    /// Pfade relativ zur Auswahlwurzel, direkt für `upload_explicit` verwendbar.
+    /// Keine Vorauswahl: jede große Datei braucht eine einzelne Bestätigung.
+    #[serde(default)]
+    pub gross: Vec<LargeFile>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LargeFile {
+    pub pfad: String,
+    pub bytes: u64,
 }
 #[derive(Debug, Clone)]
 pub struct Conflict {
@@ -277,6 +287,7 @@ impl LocalFolder {
                     fluechtig_dateien: 0,
                     gross_bytes: 0,
                     gross_dateien: 0,
+                    gross: Vec::new(),
                 };
                 for entry in WalkDir::new(child.path()).follow_links(false) {
                     let entry = entry?;
@@ -297,10 +308,20 @@ impl LocalFolder {
                         Klasse::Gross => {
                             item.gross_bytes += size;
                             item.gross_dateien += 1;
+                            let base = if child.file_type()?.is_dir() {
+                                child.path()
+                            } else {
+                                dir.clone()
+                            };
+                            item.gross.push(LargeFile {
+                                pfad: relative_portable(&base, entry.path())?,
+                                bytes: size,
+                            });
                         }
                         Klasse::Nie => {}
                     }
                 }
+                item.gross.sort_by(|a, b| a.pfad.cmp(&b.pfad));
                 if item.dateien + item.fluechtig_dateien + item.gross_dateien > 0 {
                     result.push(item);
                 }
@@ -512,6 +533,10 @@ fn validate_stamp(s: &str) -> io::Result<()> {
     Ok(())
 }
 fn conflict_name(dest: &Path, stamp: &str, index: usize) -> io::Result<PathBuf> {
+    validate_stamp(stamp)?;
+    if index == 0 {
+        return Err(invalid("Die Konfliktnummer muss bei 1 beginnen."));
+    }
     let stem = dest
         .file_stem()
         .and_then(|x| x.to_str())
@@ -815,8 +840,99 @@ mod tests {
             fs::read_to_string(project.join("text (R2 28.10. 22-00).md")).unwrap(),
             "Von R2"
         );
+        assert_eq!(
+            result.konflikte[0].ruecklaeufer,
+            "Projekte/Buch/text (R2 28.10. 22-00).md"
+        );
+        let repeated = local
+            .import(
+                archive.as_slice(),
+                &hash,
+                "2026-10-28_2201_account01.tar.gz",
+                "28.10. 22-00",
+            )
+            .unwrap();
+        assert_eq!(
+            repeated.konflikte[0].ruecklaeufer,
+            "Projekte/Buch/text (R2 28.10. 22-00) 2.md"
+        );
         assert!(local.root.join(".sync/zustand.json").exists());
         assert_eq!(local.load_state().unwrap().v, 1);
+    }
+    #[test]
+    fn grossdateien_im_plan_einzeln_und_nicht_vorausgewaehlt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let local = LocalFolder::create(tmp.path().join("cocopi")).unwrap();
+        let project = local.root.join("Projekte/Ausstellung");
+        ensure_tree(&project.join("Medien")).unwrap();
+        ensure_tree(&project.join("node_modules/lib")).unwrap();
+        fs::write(project.join("konzept.md"), "Konzept").unwrap();
+        fs::write(project.join("node_modules/lib/index.js"), "Cache").unwrap();
+        // Sparse-Dateien: Plan liest nur Metadaten, keine 600 MiB Testdaten.
+        for name in ["Medien/film.mp4", "Medien/plakat.psd", "szene.blend"] {
+            File::create(project.join(name))
+                .unwrap()
+                .set_len(MAX_FILE + 1)
+                .unwrap();
+        }
+        File::create(local.root.join("Ergebnisse/film.mp4"))
+            .unwrap()
+            .set_len(MAX_FILE + 2)
+            .unwrap();
+        let items = local.selection().unwrap();
+        let item = items.iter().find(|x| x.name == "Ausstellung").unwrap();
+        assert_eq!(item.dateien, 1);
+        assert_eq!(item.fluechtig_dateien, 1);
+        assert_eq!(item.gross_dateien, 3);
+        assert_eq!(item.gross_bytes, 3 * (MAX_FILE + 1));
+        assert_eq!(
+            item.gross
+                .iter()
+                .map(|f| f.pfad.as_str())
+                .collect::<Vec<_>>(),
+            ["Medien/film.mp4", "Medien/plakat.psd", "szene.blend"]
+        );
+        assert!(item.gross.iter().all(|f| f.bytes == MAX_FILE + 1));
+        let single = items.iter().find(|x| x.bereich == "Ergebnisse").unwrap();
+        assert_eq!(single.gross[0].pfad, "film.mp4");
+        assert_eq!(single.gross[0].bytes, MAX_FILE + 2);
+        // Ohne ausdrückliche Auswahl geht nur das Konzept hoch, nie ein großes Medium.
+        let manifest = local
+            .upload(
+                &Auswahl {
+                    bereich: "Projekte".into(),
+                    name: "Ausstellung".into(),
+                },
+                Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(
+            manifest.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["konzept.md"]
+        );
+        let json = serde_json::to_value(item).unwrap();
+        assert_eq!(json["gross"][0]["pfad"], "Medien/film.mp4");
+    }
+    #[test]
+    fn konfliktnamen_behalten_endung_und_nummerieren_dahinter() {
+        for (name, expected) in [
+            ("Plakat.psd", "Plakat (R2 28.10. 22-00).psd"),
+            ("Szene.blend", "Szene (R2 28.10. 22-00).blend"),
+            ("Film.mp4", "Film (R2 28.10. 22-00).mp4"),
+            ("Entwurf", "Entwurf (R2 28.10. 22-00)"),
+            (".gitignore", ".gitignore (R2 28.10. 22-00)"),
+            ("Buch.tar.gz", "Buch.tar (R2 28.10. 22-00).gz"),
+        ] {
+            assert_eq!(
+                conflict_name(Path::new(name), "28.10. 22-00", 1).unwrap(),
+                PathBuf::from(expected)
+            );
+        }
+        assert_eq!(
+            conflict_name(Path::new("Plakat.psd"), "28.10. 22-00", 3).unwrap(),
+            PathBuf::from("Plakat (R2 28.10. 22-00) 3.psd")
+        );
+        assert!(conflict_name(Path::new("Film.mp4"), "../Datum", 1).is_err());
     }
     #[test]
     fn pfadangriffe_hash_und_links() {
