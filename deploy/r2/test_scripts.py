@@ -611,6 +611,93 @@ class SlotctlTests(unittest.TestCase):
         self.assertEqual(list((self.root / 'mnt/data/account01').iterdir()), [])
         self.assertTrue((self.root / 'home/account01/arbeit/Ergebnisse').is_dir())
 
+    def test_n7_last_line_is_receipt_and_read_survives_hub_activity(self):
+        import json
+        env = dict(self.env)
+        env.pop('COCOPI_ROOT')
+        # Explizites --fake funktioniert ohne die ältere Test-Umgebungsvariable.
+        result = subprocess.run([sys.executable, '-I', str(BASE / 'cocopi-slotctl'),
+                                 '--fake', str(self.root), '--ausfuehren', 'leeren', 'account01'],
+                                env=env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        lines = result.stdout.splitlines()
+        self.assertEqual(len(lines), 1)
+        receipt = json.loads(lines[-1])
+        self.assertEqual(receipt, json.loads((self.root / 'var/lib/cocopi-slots/account01.leer.json').read_text()))
+        self.assertEqual((receipt['slot'], receipt['epoche'], receipt['zustand'], receipt['nachweis']),
+                         ('account01', 1, 'leer', 'vor_hubstart'))
+        # Der wieder gestartete Hub hat Prozesse und neue Dateien: Live-pruefen
+        # muss scheitern, der historische N7-Beleg bleibt dagegen lesbar.
+        self.fixture(prozesse=True)
+        (self.root / 'home/account01/.hub-neu').write_text('synthetisch')
+        self.run_slot('pruefen', 'account01', success=False)
+        for args in (('pruefen', '--beleg', 'account01'), ('pruefen', 'account01', '--beleg')):
+            read = self.run_slot(*args)
+            self.assertEqual(json.loads(read.stdout), receipt)
+        self.assertEqual((self.root / 'var/lib/cocopi/slots/account01.epoche').read_text(), '1\n')
+        self.assertEqual((self.root / 'home/account01/.hub-neu').read_text(), 'synthetisch')
+
+    def test_receipt_read_never_checks_live_processes_homes_or_quota(self):
+        import importlib.machinery
+        from unittest.mock import patch
+        self.run_slot('--ausfuehren', 'leeren', 'account01')
+        loader = importlib.machinery.SourceFileLoader('slotctl_receipt_test', str(BASE / 'cocopi-slotctl'))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        with patch.dict(os.environ, self.env):
+            helper = module.Slots()
+        self.addCleanup(os.close, helper.rootfd)
+        for name in ('processes', 'roots', 'identity', 'quota', 'proof'):
+            stub = patch.object(helper, name, side_effect=AssertionError('Keine Live-Prüfung: ' + name))
+            stub.start()
+            self.addCleanup(stub.stop)
+        self.assertEqual(helper.read_receipt('account01')['epoche'], 1)
+
+    def test_receipt_read_fails_closed_for_missing_stale_and_malformed_proof(self):
+        import json
+        self.run_slot('pruefen', '--beleg', 'account01', success=False)
+        self.run_slot('--ausfuehren', 'leeren', 'account01')
+        path = self.root / 'var/lib/cocopi-slots/account01.leer.json'
+        original = json.loads(path.read_text())
+        for field, value in (('slot', 'account02'), ('epoche', 0), ('epoche', True),
+                             ('zustand', 'belegt'), ('nachweis', 'nach_hubstart'),
+                             ('quota_bytes', 1048577), ('quota_bytes', -1),
+                             ('grenze_bytes', 9999999), ('dauer_ms', '0'),
+                             ('zeit', 'morgen'), ('zeit', '2999-01-01T00:00:00+00:00'),
+                             ('zeit', '2026-01-01T00:00:00'), ('person', 'nie ausgeben')):
+            with self.subTest(field=field, value=value):
+                path.write_text(json.dumps(dict(original, **{field: value})))
+                result = self.run_slot('pruefen', '--beleg', 'account01', success=False)
+                self.assertEqual(result.stdout, '')
+        for text in ('{}', '[]', 'null', '{', 'x' * 4097):
+            path.write_text(text)
+            self.run_slot('pruefen', '--beleg', 'account01', success=False)
+        path.write_text(json.dumps(original))
+        epoch = self.root / 'var/lib/cocopi/slots/account01.epoche'
+        epoch.write_text('2\n')
+        self.run_slot('pruefen', '--beleg', 'account01', success=False)
+
+    def test_receipt_read_rejects_unsafe_files_and_mutating_arguments(self):
+        self.run_slot('--ausfuehren', 'leeren', 'account01')
+        path = self.root / 'var/lib/cocopi-slots/account01.leer.json'
+        for args in (('--beleg', 'leeren', 'account01'), ('--beleg', 'status', 'account01'),
+                     ('--ausfuehren', 'pruefen', '--beleg', 'account01'),
+                     ('pruefen', '--beleg', '../account01'), ('pruefen', '--beleg')):
+            self.run_slot(*args, success=False)
+        path.chmod(0o644)
+        self.run_slot('pruefen', '--beleg', 'account01', success=False)
+        path.chmod(0o600)
+        os.link(path, path.parent / 'zweiter-name')
+        self.run_slot('pruefen', '--beleg', 'account01', success=False)
+        path.unlink()
+        path.symlink_to(path.parent / 'zweiter-name')
+        self.run_slot('pruefen', '--beleg', 'account01', success=False)
+        path.unlink()
+        os.mkfifo(path)
+        self.run_slot('pruefen', '--beleg', 'account01', success=False)
+
     def test_epoch_replacement_is_atomic_for_existing_readers(self):
         epoch = self.root / 'var/lib/cocopi/slots/account01.epoche'
         with epoch.open() as old:
@@ -645,7 +732,8 @@ class SlotctlTests(unittest.TestCase):
 
     def test_failed_clear_never_rolls_back_epoch(self):
         self.fixture(quota_bytes=1048577)
-        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+        result = self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+        self.assertEqual(result.stdout, '')  # Kein N7-Erfolg bei fehlendem Nachweis.
         self.assertEqual((self.root / 'var/lib/cocopi/slots/account01.epoche').read_text(), '1\n')
         self.assertFalse((self.root / 'var/lib/cocopi-slots/account01.leer.json').exists())
 
