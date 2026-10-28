@@ -7,5 +7,554 @@
   "rustc": "1.99.0 (b940084d7 2026-09-28)",
   "cargo": "1.99.0 (5f94df478 2026-08-27)",
   "command": "cargo clippy --offline --workspace --features copi/cocopi --message-format=json",
-  "comparison": "unique diagnostics by message, code and source spans; exclude target/package/rendered"
+  "comparison": "unique diagnostics by message, code and source spans; exclude target/package/rendered",
+  "diagnostics": [
+    {
+      "message": "this `map_or` can be simplified",
+      "code": {
+        "code": "clippy::unnecessary_map_or"
+      },
+      "spans": [
+        {
+          "file_name": "crates/pi-backend/src/instances.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "                if instance_stream && target.map_or(false, |t| have >= t) {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "this `map_or` can be simplified",
+      "code": {
+        "code": "clippy::unnecessary_map_or"
+      },
+      "spans": [
+        {
+          "file_name": "crates/pi-backend/src/instances.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "                        if !live && target.map_or(true, |t| seq.map_or(false, |s| s >= t)) {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "this `map_or` can be simplified",
+      "code": {
+        "code": "clippy::unnecessary_map_or"
+      },
+      "spans": [
+        {
+          "file_name": "crates/pi-backend/src/instances.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "                        if !live && target.map_or(true, |t| seq.map_or(false, |s| s >= t)) {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "manual implementation of `split_once`",
+      "code": {
+        "code": "clippy::manual_split_once"
+      },
+      "spans": [
+        {
+          "file_name": "crates/pi-backend/src/material.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "    let after_scheme = trimmed.splitn(2, \"//\").nth(1).unwrap_or(\"\");"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "large size difference between variants",
+      "code": {
+        "code": "clippy::large_enum_variant"
+      },
+      "spans": [
+        {
+          "file_name": "crates/pi-net/src/node.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "pub enum NodeEvent {"
+            },
+            {
+              "text": "    Address(String),"
+            },
+            {
+              "text": "    Received {"
+            },
+            {
+              "text": "        from: PeerId,"
+            },
+            {
+              "text": "        env: Envelope,"
+            },
+            {
+              "text": "    },"
+            },
+            {
+              "text": "    Delivered {"
+            },
+            {
+              "text": "        to: PeerId,"
+            },
+            {
+              "text": "        tag: Option<MsgId>,"
+            },
+            {
+              "text": "    },"
+            },
+            {
+              "text": "    Failed {"
+            },
+            {
+              "text": "        to: PeerId,"
+            },
+            {
+              "text": "        tag: Option<MsgId>,"
+            },
+            {
+              "text": "        error: String,"
+            },
+            {
+              "text": "    },"
+            },
+            {
+              "text": "    Rejected {"
+            },
+            {
+              "text": "        from: PeerId,"
+            },
+            {
+              "text": "        why: String,"
+            },
+            {
+              "text": "    },"
+            },
+            {
+              "text": "    Reachable {"
+            },
+            {
+              "text": "        peer: PeerId,"
+            },
+            {
+              "text": "        ok: bool,"
+            },
+            {
+              "text": "    },"
+            },
+            {
+              "text": "    Error(String),"
+            },
+            {
+              "text": "    Stopped,"
+            },
+            {
+              "text": "}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "large size difference between variants",
+      "code": {
+        "code": "clippy::large_enum_variant"
+      },
+      "spans": [
+        {
+          "file_name": "crates/pi-net/src/node.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "enum Command {"
+            },
+            {
+              "text": "    Allowed(Vec<(PeerId, String)>),"
+            },
+            {
+              "text": "    Send(Outgoing, Vec<u8>, QueueSlot),"
+            },
+            {
+              "text": "    Stop,"
+            },
+            {
+              "text": "}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "this `if` statement can be collapsed",
+      "code": {
+        "code": "clippy::collapsible_if"
+      },
+      "spans": [
+        {
+          "file_name": "crates/pi-net/src/store.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "        if chat"
+            },
+            {
+              "text": "            .space"
+            },
+            {
+              "text": "            .as_ref()"
+            },
+            {
+              "text": "            .is_some_and(|id| self.space(id).is_some_and(|s| s.kind == SpaceKind::Seminar))"
+            },
+            {
+              "text": "        {"
+            },
+            {
+              "text": "            if devices"
+            },
+            {
+              "text": "                .iter()"
+            },
+            {
+              "text": "                .any(|d| !self.contact(d).is_some_and(|c| c.verified && !c.blocked))"
+            },
+            {
+              "text": "            {"
+            },
+            {
+              "text": "                return Err(\"Seminar-Einladungen sind nur an geprüfte, nicht gesperrte Kontakte erlaubt; bitte Sicherheitswörter vergleichen\".into());"
+            },
+            {
+              "text": "            }"
+            },
+            {
+              "text": "        }"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "variants `SetMyName`, `Post`, and `RemoteInput` are never constructed",
+      "code": {
+        "code": "dead_code"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/coco.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "    SetMyName(String),"
+            }
+          ]
+        },
+        {
+          "file_name": "app/src/coco.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "    Post { chat: ChatId, body: Body },"
+            }
+          ]
+        },
+        {
+          "file_name": "app/src/coco.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "    RemoteInput { req: String, text: String },"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "method `is_speaking` is never used",
+      "code": {
+        "code": "dead_code"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/coco.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "    pub fn is_speaking(&self, who: &Participant) -> bool {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "method `coco_my_agents` is never used",
+      "code": {
+        "code": "dead_code"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/coco.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "    pub(crate) fn coco_my_agents(&self) -> Vec<Member> {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "variant `Sort` is never constructed",
+      "code": {
+        "code": "dead_code"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/app.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "    Sort,"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "function `bookmark_small` is never used",
+      "code": {
+        "code": "dead_code"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/icons.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "pub fn bookmark_small(p: &Painter, r: Rect, c: Color32, filled: bool) {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "method `detail_label` is never used",
+      "code": {
+        "code": "dead_code"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/run_activity.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "    pub fn detail_label(&self) -> String {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "the `Err`-variant returned from this closure is very large",
+      "code": {
+        "code": "clippy::result_large_err"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/coco.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "            let _ = tx.lock().map(|tx| tx.send((w.clone(), t)));"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "very complex type used. Consider factoring parts into `type` definitions",
+      "code": {
+        "code": "clippy::type_complexity"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/app.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "    Local(Box<dyn FnOnce(&mut App, Option<Value>)>),"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "very complex type used. Consider factoring parts into `type` definitions",
+      "code": {
+        "code": "clippy::type_complexity"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/app.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "    pub(crate) deferred: Vec<Box<dyn FnOnce(&mut App)>>,"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "consider using `sort_by_key`",
+      "code": {
+        "code": "clippy::unnecessary_sort_by"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/app.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "                skills.sort_by(|x, y| x.label.to_lowercase().cmp(&y.label.to_lowercase()));"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "consider using `sort_by_key`",
+      "code": {
+        "code": "clippy::unnecessary_sort_by"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/app.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "                prompts.sort_by(|x, y| x.label.to_lowercase().cmp(&y.label.to_lowercase()));"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "manual check for common ascii range",
+      "code": {
+        "code": "clippy::manual_is_ascii_check"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/commands.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "                if ('0'..='9').contains(&n) || n == ';' || n == '?' {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "using `chunks_exact` with a constant chunk size",
+      "code": {
+        "code": "clippy::chunks_exact_to_as_chunks"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/headless.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "        for tri in mesh.indices.chunks_exact(3) {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "this `if` has identical blocks",
+      "code": {
+        "code": "clippy::if_same_then_else"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/net.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "    let visible = if narrow { rows.min(2) } else { rows.min(2) };"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "manual implementation of `.is_multiple_of()`",
+      "code": {
+        "code": "clippy::manual_is_multiple_of"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/store.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "            if r.len() % 2 == 0 { (r[m - 1] + r[m]) / 2.0 } else { r[m] }"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "the loop variable `i` is used to index `items`",
+      "code": {
+        "code": "clippy::needless_range_loop"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/view.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "                for i in pl.first..pl.last.min(total) {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "message": "useless use of `format!`",
+      "code": {
+        "code": "clippy::useless_format"
+      },
+      "spans": [
+        {
+          "file_name": "app/src/view.rs",
+          "is_primary": true,
+          "text": [
+            {
+              "text": "                            ui.label(RichText::new(format!(\"{}\", [\"Navigation\", \"Eingabe & Befehle\", \"Weitere Shortcuts\"].get(i).unwrap_or(&\"Bedienung\"))).size(14.0).color(acc()));"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "diagnostics_provenance": "Zwei identische Basisläufe eb534bb: /tmp/v3-gate.s6.3hn3BuQK und /tmp/v3-gate.s6.oXhVNEmg; Primärdatei, Quelltextanker, Meldung und Code; Zeilenverschiebungen ignorieren, Multimenge erhalten."
 }
