@@ -16,7 +16,9 @@ Erste passende Regel gewinnt: (1) unsichere Pfade und Nicht-Dateien/-Ordner nie;
 (4) unter Ergebnisse alles persönlich, auch Build-Dateien; (5) flüchtige Ordner;
 (6) flüchtige Namen/Endungen; (7) übrige Quellen, Skills, Verläufe persönlich.
 Damit gewinnt `Ergebnisse/target/demo.exe` gegenüber Cache-Regeln; Größenfreigabe
-bleibt unabhängig davon zwingend. Symlinks, Hardlinks im Archiv, Geräte und FIFOs nie.
+bleibt unabhängig davon zwingend. Symlinks/Hardlinks in Quellen und Archiven, Geräte und FIFOs nie. Portable Pfade
+verwerfen auch Windows-Gerätenamen und Komponenten mit abschließendem Punkt/Leerraum;
+Archive mit nur in Groß-/Kleinschreibung verschiedenen Pfaden werden abgewiesen.
 
 ## Hub-Vertrag (additiv zu Protokoll v1)
 
@@ -30,8 +32,9 @@ Kein Token in URL. Body-Limits, Origin-Prüfung und Authentisierung vor Upload.
 - `POST hoch`: gzip-ustar als Body, `X-Cocopi-Bereich`, `X-Cocopi-Name`
   (ein einzelner Name). Dateien relativ zu Bereich/Name. Nur reguläre Dateien
   und Verzeichnisse. Maximal 2 GiB entpackte Nutzdaten **insgesamt pro Belegung**;
-  auch komprimierter Body begrenzt. Keine Datei über 200 MiB im Upload (bewusst
-  große Uploads benötigen noch einen additiven Freigabevertrag). Ziel muss neu
+  auch komprimierter Body begrenzt. Dateien über 200 MiB nur nach ausdrücklicher
+  Einzeldateiauswahl (`upload_explicit` in Rust) und additivem Header
+  `X-Cocopi-Gross: bestaetigt`; Gesamtlimit bleibt. Ziel muss neu
   sein. Temp-Verzeichnis im Ziel-Dateisystem, atomarer Rename nach voller Prüfung.
 - Antwort `sync_hoch_ok{bereich,name,dateien,bytes,manifest_sha256}`.
   Manifest `manifest.json`: `{v:1,bytes_hoch,sha256:{"Projekte/Buch/a.md":"…"}}`.

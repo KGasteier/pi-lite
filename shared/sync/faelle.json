@@ -13,5 +13,9 @@
   {"pfad":"../Ergebnisse/a.md","bytes":12,"klasse":"nie"},
   {"pfad":"/Ergebnisse/a.md","bytes":12,"klasse":"nie"},
   {"pfad":"Projekte/a\\b","bytes":12,"klasse":"nie"},
-  {"pfad":"Projekte/link","bytes":12,"art":"symlink","klasse":"nie"}
+  {"pfad":"Projekte/link","bytes":12,"art":"symlink","klasse":"nie"},
+  {"pfad":"Ergebnisse/CON.txt","bytes":12,"klasse":"nie"},
+  {"pfad":"Ergebnisse/notiz. ","bytes":12,"klasse":"nie"},
+  {"pfad":"Skills/LPT1.md","bytes":12,"klasse":"nie"},
+  {"pfad":"Projekte","bytes":12,"klasse":"persoenlich"}
 ]

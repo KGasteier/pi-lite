@@ -212,6 +212,19 @@ impl LocalFolder {
                 fs::set_permissions(root.join(p), fs::Permissions::from_mode(0o700))?;
             }
         }
+        let journal = root.join(".sync/protokoll.jsonl");
+        if journal.exists() {
+            no_link(&journal)?;
+        } else {
+            let mut options = OpenOptions::new();
+            options.create_new(true).write(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            options.open(journal)?.sync_all()?;
+        }
         let folder = Self { root };
         if !folder.root.join(".sync/zustand.json").exists() {
             folder.save_state(&Zustand {
@@ -302,6 +315,18 @@ impl LocalFolder {
         selected: &Auswahl,
         output: W,
     ) -> io::Result<BTreeMap<String, String>> {
+        self.upload_explicit(selected, &[], output)
+    }
+    /// Zusätzliche relative Dateipfade wurden einzeln bewusst ausgewählt, auch große Dateien.
+    pub fn upload_explicit<W: Write>(
+        &self,
+        selected: &Auswahl,
+        zusaetzlich: &[String],
+        output: W,
+    ) -> io::Result<BTreeMap<String, String>> {
+        for p in zusaetzlich {
+            safe_path(p)?;
+        }
         safe_path(&selected.name)?;
         if selected.name.contains('/') {
             return Err(invalid("Wähle einen einzelnen Projektordner."));
@@ -322,12 +347,20 @@ impl LocalFolder {
             }
             let p = relative_portable(base, entry.path())?;
             let full = format!("{}/{}/{}", selected.bereich, selected.name, p);
-            if classify(&full, entry.metadata()?.len(), true) == Klasse::Persoenlich {
+            if classify(&full, entry.metadata()?.len(), true) == Klasse::Persoenlich
+                || zusaetzlich.contains(&p)
+            {
                 entries.push((p, entry.path().to_owned()));
             }
         }
         entries.sort_by(|a, b| a.0.cmp(&b.0));
-        write_archive(entries, output)
+        if zusaetzlich
+            .iter()
+            .any(|p| !entries.iter().any(|e| &e.0 == p))
+        {
+            return Err(invalid("Zusätzliche Datei fehlt oder ist nicht erlaubt."));
+        }
+        write_archive_explicit(entries, output, !zusaetzlich.is_empty())
     }
     /// Archiv erst vollständig sichern und prüfen, dann sicher importieren. Bestätigung macht der Aufrufer.
     pub fn import<R: Read>(
@@ -556,6 +589,14 @@ pub fn write_archive<W: Write>(
     entries: Vec<(String, PathBuf)>,
     output: W,
 ) -> io::Result<BTreeMap<String, String>> {
+    write_archive_explicit(entries, output, false)
+}
+/// `allow_large` nur nach ausdrücklicher Größenbestätigung; Gesamtlimit bleibt 2 GiB.
+pub fn write_archive_explicit<W: Write>(
+    entries: Vec<(String, PathBuf)>,
+    output: W,
+    allow_large: bool,
+) -> io::Result<BTreeMap<String, String>> {
     if entries.len() > MAX_ENTRIES {
         return Err(invalid("Zu viele Dateien."));
     }
@@ -572,7 +613,7 @@ pub fn write_archive<W: Write>(
         let before = input.metadata()?;
         if !before.is_file()
             || hardlinked(&before)
-            || before.len() > MAX_FILE
+            || (!allow_large && before.len() > MAX_FILE)
             || total + before.len() > MAX_BYTES
             || manifest.contains_key(&p)
         {
@@ -741,6 +782,17 @@ mod tests {
             .unwrap();
         assert_eq!(manifest.len(), 1);
         assert!(manifest.contains_key("text.md"));
+        let explicit = local
+            .upload_explicit(
+                &Auswahl {
+                    bereich: "Projekte".into(),
+                    name: "Buch".into(),
+                },
+                &["target/build.o".into()],
+                Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(explicit.len(), 2);
         let remote = tmp.path().join("remote.md");
         fs::write(&remote, "Von R2").unwrap();
         let mut archive = Vec::new();
@@ -794,6 +846,26 @@ mod tests {
         zip.write_all(&[0; 1024]).unwrap();
         let data = zip.finish().unwrap();
         assert!(read_archive(data.as_slice(), tmp.path()).is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn vorfahrenlinks_und_hardlinks_werden_nicht_uebertragen() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        ensure_tree(&real.join("child")).unwrap();
+        symlink(&real, tmp.path().join("link")).unwrap();
+        assert!(LocalFolder::create(tmp.path().join("link/child")).is_err());
+        let local = LocalFolder::create(tmp.path().join("cocopi")).unwrap();
+        fs::write(real.join("privat"), "Nicht übertragen").unwrap();
+        fs::hard_link(real.join("privat"), local.root.join("Projekte/link.md")).unwrap();
+        assert!(local.selection().unwrap().is_empty());
+        assert!(write_archive(
+            vec![("link.md".into(), local.root.join("Projekte/link.md"))],
+            Vec::new()
+        )
+        .is_err());
+        assert!(safe_path("Ergebnisse/CON.txt").is_err());
     }
     #[cfg(unix)]
     #[test]
