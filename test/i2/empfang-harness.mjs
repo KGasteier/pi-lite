@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import assert from 'node:assert/strict';
 import { hubDir, importHub, identity, login, request, syncFixture, hash } from './harness.mjs';
 
-export async function empfangFixture(t, count = 10) {
+export async function empfangFixture(t, count = 10, { registerAfter, archiveBefore, detectEmpty = false } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cocopi-i2-empfang-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const { createFakeOidc } = await importHub('empfang/test/fake-oidc.mjs');
@@ -17,14 +17,19 @@ export async function empfangFixture(t, count = 10) {
   const { verifySigned } = await importHub('empfang/ausweis.mjs');
   const fake = await createFakeOidc(); t.after(() => fake.close());
   const oidc = new Oidc({ issuer: fake.issuer, clientId: fake.clientId, allowHttp: true });
-  const slots = {}, events = [], hubFixtures = {}, processes = new Map();
+  const slots = {}, events = [], hubFixtures = {}, processes = new Map(), delays = [];
+  const epochenDir = path.join(tmp, 'epochen'); fs.mkdirSync(epochenDir);
   let failClear = false, empfang;
   for (let i = 1; i <= count; i++) {
     const slot = `account${String(i).padStart(2, '0')}`;
+    fs.writeFileSync(path.join(epochenDir, slot + '.epoche'), '1\n');
     hubFixtures[slot] = await syncFixture(t, { empty: true, slot }); slots[slot] = hubFixtures[slot].base;
   }
   // Service-Adapter ist ausdrücklich ein Testdouble; echte Sync-/Geräte-Routen laufen auf Loopback.
   const adapter = {
+    async isEmpty(slot) {
+      return detectEmpty && Object.values(hubFixtures[slot].roots).every(root => fs.readdirSync(root).length === 0);
+    },
     async register(slot, belegung) {
       assert.ok(verifySigned(belegung, empfang.ausweis.pubkey));
       const b = belegung, f = hubFixtures[slot];
@@ -33,8 +38,11 @@ export async function empfangFixture(t, count = 10) {
         ...g, slot, art: g.art, geraetename: g.name, widerrufen: false,
       })); });
       events.push(`belegung:${slot}`);
+      await registerAfter?.(slot, belegung);
     },
     async archive(slot) {
+      events.push(`archiv:${slot}`);
+      await archiveBefore?.(slot);
       const f = hubFixtures[slot], a = await f.sync.archive();
       const data = fs.readFileSync(f.sync.getArchive(a.archiv_id).file);
       return { ...a, data };
@@ -55,7 +63,8 @@ export async function empfangFixture(t, count = 10) {
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
   const base = `http://127.0.0.1:${server.address().port}`;
-  empfang = createEmpfang({ dir: path.join(tmp, 'empfang'), slots, oidc, origin: base, adapter,
+  const configuration = { dir: path.join(tmp, 'empfang'), slots, oidc, origin: base, adapter, epochenDir,
+    sleep: async ms => { delays.push(ms); },
     clearSlot: async (slot, action) => {
       const f = hubFixtures[slot]; events.push(`${action}:${slot}`);
       if (action === 'leeren') {
@@ -63,13 +72,17 @@ export async function empfangFixture(t, count = 10) {
         for (const root of Object.values(f.roots)) {
           for (const entry of fs.readdirSync(root)) fs.rmSync(path.join(root, entry), { recursive: true, force: true });
         }
+        const file = path.join(epochenDir, slot + '.epoche');
+        fs.writeFileSync(file, `${Number(fs.readFileSync(file, 'utf8')) + 1}\n`);
       } else {
         assert.ok(Object.values(f.roots).every(root => fs.readdirSync(root).length === 0), 'Slot-Fake ist nicht leer');
         const state = path.join(f.tmp, 'state');
         for (const entry of fs.readdirSync(state)) fs.rmSync(path.join(state, entry), { recursive: true, force: true });
         events.push(`leer-bestaetigt:${slot}`);
       }
-    } });
+    } };
+  const restart = () => { empfang = createEmpfang(configuration); return empfang; };
+  restart();
   let serial = 0;
   async function checkin({ sub = `person-${++serial}`, leader = false, owner = identity() } = {}) {
     const nonce = `nonce-test-${crypto.randomUUID()}`;
@@ -88,7 +101,7 @@ export async function empfangFixture(t, count = 10) {
       'x-cocopi-challenge': c.challenge_id, 'x-cocopi-signatur': crypto.sign(null, Buffer.from(payload), key.privateKey).toString('base64url') } });
   }
   async function token(person) { const f = hubFixtures[person.p.slot]; return login(f.base, person.p.geraet_id, person.owner.key, person.p.slot); }
-  return { base, checkin, signed, token, hubFixtures, empfang, events,
+  return { base, checkin, signed, token, hubFixtures, get empfang() { return empfang; }, events, restart, delays,
     attachProcess: (slot, child) => processes.set(slot, child), failClear: value => { failClear = value; }, hash };
 }
 

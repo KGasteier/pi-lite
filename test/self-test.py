@@ -138,6 +138,7 @@ for arg in "$@"; do
     [[ $arg != --test ]] || [[ ! -f "$PWD/fail-mobile" ]] || exit 9
     [[ $arg != empfang/test/*.mjs && $arg != test/sync.mjs ]] || [[ ! -f "$PWD/fail-i2" ]] || exit 9
 done
+if [[ "$*" == *test/i2/*.i2b.test.mjs* && -f "$PWD/skip-i2b" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
 if [[ "$*" == *test/i2/* && -f "$PWD/skip-i2" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
 exit 0
 ''')
@@ -334,6 +335,20 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("SKIP i2-szenarien | I2-Abnahme unvollständig", result.stdout)
         self.assertNotIn("PASS i2-szenarien", result.stdout)
+
+    def test_gate_i2b_missing_contract_does_not_hide_green_i2(self):
+        worktree, hub, calls = self.setup_gate()
+        (worktree / "test/i2").mkdir(parents=True)
+        (worktree / "test/i2/base.test.mjs").write_text("// stub\n")
+        (worktree / "test/i2/contracts.i2b.test.mjs").write_text("// stub\n")
+        (worktree / "skip-i2b").touch()
+        result = self.run_script("v3-gate.sh", worktree, hub)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS i2-szenarien |", result.stdout)
+        self.assertIn("SKIP i2b-szenarien | I2-Abnahme unvollständig", result.stdout)
+        self.assertNotIn("PASS i2b-szenarien", result.stdout)
+        self.assertIn("node --test test/i2/base.test.mjs seminar=", calls.read_text())
+        self.assertIn("node --test test/i2/contracts.i2b.test.mjs seminar=", calls.read_text())
 
     def test_gate_i2_uses_selected_repo_for_seminar_unless_overridden(self):
         worktree, hub, calls = self.setup_gate()
