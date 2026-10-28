@@ -63,6 +63,13 @@ test('Integration S3-v1: Ed25519-Anmeldung, Kopplung, Sessions/SSE und eigener W
   for (let i = 0; !messages.some(p => p.typ === 'session_ereignis') && i < 100; i++) await new Promise(r => setTimeout(r, 5));
   assert.ok(messages.some(p => p.pi_event?.message?.content[0].text === 'Mock-Ergebnis'));
   assert.ok(messages.some(p => p.zustand === 'fertig'));
+  // Widerruf eines anderen Geräts darf dieses Handy nicht abmelden.
+  const otherCode = v1.devices.issue('e');
+  const other = await post('/v1/einloesen', { art: 'e', code: otherCode.code, pubkey: mobile.pubkey, geraeteart: 'handy' });
+  await post(`/v1/geraete/${other.geraet_id}/widerrufen`, {}, desktop.token);
+  for (let i = 0; !messages.some(p => p.typ === 'widerruf') && i < 100; i++) await new Promise(r => setTimeout(r, 5));
+  assert.notEqual(stream.state, 'abgemeldet');
+  assert.equal((await transport.sessions()).sessions.length, 1);
   await transport.abmelden(); await stream.done;
   assert.equal(stream.state, 'abgemeldet');
   await assert.rejects(transport.sessions(), { status: 401 });
