@@ -651,6 +651,68 @@ mod tests {
         event(n, until, |e| matches!(e, NodeEvent::Stopped));
     }
     #[test]
+    fn loopback_optional_ausweis_exchange_keeps_tls_sender() {
+        use crate::ausweis::{base64url, kanonisch, Ausweis, Inhalt, Rolle};
+        let until = deadline();
+        let identity = Identity::ephemeral();
+        let peer = identity.peer();
+        let issuer = iroh::SecretKey::from_bytes(&[81; 32]);
+        let inhalt = Inhalt {
+            v: 1,
+            typ: "geraeteausweis".into(),
+            pid: "transport-test".into(),
+            person: "Aylin".into(),
+            rolle: Rolle::Seminarleitung,
+            net_pubkey: peer.to_string(),
+            geraet_pubkey: base64url(&[82; 32]),
+            iat: 1,
+            exp: 43201,
+        };
+        let signatur = base64url(&issuer.sign(&kanonisch(&inhalt).unwrap()).to_bytes());
+        let cert = Ausweis { inhalt, signatur };
+        let a = Node::start_with_ausweis(identity, Some(cert.clone()));
+        let b = Node::start(Identity::ephemeral());
+        let aa = address(&a, until);
+        let ba = address(&b, until);
+        a.set_allowed(vec![(b.me.clone(), ba)]);
+        b.set_allowed(vec![(a.me.clone(), aa)]);
+        a.send(outgoing(&b.me, 0)).unwrap();
+        let received = event(&b, until, |e| {
+            matches!(
+                e,
+                NodeEvent::Received {
+                    env: Envelope {
+                        payload: Payload::Geraeteausweis { .. },
+                        ..
+                    },
+                    ..
+                }
+            )
+        });
+        let NodeEvent::Received {
+            from,
+            env:
+                Envelope {
+                    payload: Payload::Geraeteausweis { ausweis },
+                    ..
+                },
+        } = received
+        else {
+            panic!("Ausweis fehlt")
+        };
+        assert_eq!(from, peer);
+        assert_eq!(ausweis, cert);
+        assert_eq!(
+            ausweis
+                .pruefen(&base64url(issuer.public().as_bytes()), &from, 2)
+                .unwrap()
+                .rolle(),
+            Rolle::Seminarleitung
+        );
+        stop(&a, until);
+        stop(&b, until);
+    }
+    #[test]
     fn loopback_bidirectional_order_sender_delivered_and_stop() {
         let until = deadline();
         let a = Node::start(Identity::ephemeral());

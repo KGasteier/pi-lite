@@ -343,6 +343,67 @@ impl SeminarState {
             },
         )])
     }
+    /// Explizit freigegebene eigene Session spiegeln; Runtime darf ausschließlich
+    /// deren Verlauf liefern. Kein automatisches Lesen von Dateien/anderen Chats.
+    pub fn mirror(
+        &mut self,
+        req: &str,
+        session: &SessionRef,
+        frame: RemoteFrame,
+        now: u64,
+    ) -> Result<Outbox, String> {
+        let g = self.remote.get(req).ok_or("Keine Freigabe")?;
+        if g.side != Side::Host
+            || g.session.as_ref() != Some(session)
+            || !self.checked_in
+            || self.verified(&self.chats.me, now).is_none()
+            || !self
+                .verified(&g.peer, now)
+                .is_some_and(|c| c.rolle() == Rolle::Seminarleitung)
+            || !self.available(&g.peer)
+            || !matches!(g.state,GrantState::Active{expires_ms} if expires_ms>now)
+        {
+            return Err("Keine aktive Freigabe für diese Session".into());
+        }
+        if frame.items.len() > MAX_FRAME_ITEMS {
+            return Err("Spiegelpaket zu groß".into());
+        }
+        let items = frame
+            .items
+            .into_iter()
+            .map(|item| match item {
+                MirrorItem::User { text } => MirrorItem::User {
+                    text: redact(&text),
+                },
+                MirrorItem::Assistant { text, done } => MirrorItem::Assistant {
+                    text: redact(&text),
+                    done,
+                },
+                MirrorItem::Note { text } => MirrorItem::Note {
+                    text: redact(&text),
+                },
+                MirrorItem::Tool {
+                    name,
+                    detail,
+                    state,
+                } => MirrorItem::Tool {
+                    name: redact(&name),
+                    detail: redact(&detail),
+                    state: redact(&state),
+                },
+            })
+            .collect();
+        let p = Payload::RemoteFrame {
+            req: req.into(),
+            frame: RemoteFrame {
+                items,
+                state: redact(&frame.state),
+                ..frame
+            },
+        };
+        crate::wire::Envelope::new(p.clone()).encode()?;
+        Ok(vec![(g.peer.clone(), p)])
+    }
     pub fn receive(&mut self, from: &PeerId, p: Payload, now: u64) -> Result<Effects, String> {
         if !self.checked_in || !self.chats.accepts_from(from) {
             return Err("Person nicht im Seminar".into());
@@ -407,6 +468,91 @@ impl SeminarState {
         }
         Ok(e)
     }
+}
+
+/// Ausschließlich Screenshot-/Testdaten: eigener öffentlicher Demo-Empfang,
+/// niemals als produktiven Vertrauensanker verwenden. Kein I/O und kein Netz.
+pub fn demo_pair(now: u64) -> (SeminarState, SeminarState) {
+    use crate::ausweis::{base64url, kanonisch, Inhalt};
+    let issuer = iroh::SecretKey::from_bytes(&[101; 32]);
+    let peers =
+        [102, 103].map(|b| PeerId(iroh::SecretKey::from_bytes(&[b; 32]).public().to_string()));
+    let certs: Vec<_> = peers
+        .iter()
+        .zip([
+            ("Aylin", Rolle::Seminarleitung),
+            ("Mira", Rolle::Teilnehmende),
+        ])
+        .map(|(peer, (name, rolle))| {
+            let inhalt = Inhalt {
+                v: 1,
+                typ: "geraeteausweis".into(),
+                pid: format!("demo-{name}"),
+                person: name.into(),
+                rolle,
+                net_pubkey: peer.to_string(),
+                geraet_pubkey: base64url(&[104; 32]),
+                iat: (now / 1000).saturating_sub(60),
+                exp: now / 1000 + 3600,
+            };
+            let signatur = base64url(
+                &issuer
+                    .sign(&kanonisch(&inhalt).expect("Demo JSON"))
+                    .to_bytes(),
+            );
+            Ausweis { inhalt, signatur }
+        })
+        .collect();
+    let mut states: Vec<_> = peers
+        .iter()
+        .zip(["Aylin", "Mira"])
+        .map(|(peer, name)| {
+            SeminarState::new(
+                peer.clone(),
+                name,
+                base64url(issuer.public().as_bytes()),
+                "demo-seminar".into(),
+            )
+        })
+        .collect();
+    for (idx, s) in states.iter_mut().enumerate() {
+        s.sessions = vec![
+            SessionRef {
+                label: "Seminar-Handout".into(),
+                cwd: "demo-session-1".into(),
+            },
+            SessionRef {
+                label: "Plakat-Entwurf".into(),
+                cwd: "demo-session-2".into(),
+            },
+        ];
+        s.identify(&peers[idx], &certs[idx], now)
+            .expect("Demoausweis");
+        let other = 1 - idx;
+        s.add_person(Person {
+            peer: peers[other].clone(),
+            name: certs[other].inhalt.person.clone(),
+            online: true,
+            slot: Some(format!("account{:02}", other + 1)),
+            sessions: s.sessions.clone(),
+            offline_since_ms: None,
+        })
+        .expect("Demoperson");
+        s.identify(&peers[other], &certs[other], now)
+            .expect("Demoausweis");
+        s.add_person(Person {
+            peer: PeerId(iroh::SecretKey::from_bytes(&[105; 32]).public().to_string()),
+            name: "Jonas".into(),
+            online: false,
+            slot: None,
+            sessions: vec![],
+            offline_since_ms: Some(now),
+        })
+        .expect("Demoperson");
+    }
+    let b = states.pop().expect("Demo Mira");
+    let a = states.pop().expect("Demo Aylin");
+    (a, b)
 }
 
 #[cfg(test)]
@@ -631,6 +777,46 @@ mod tests {
         assert!(b.remote.grants.is_empty());
         assert!(b.people.is_empty());
         assert!(b.verified.is_empty());
+    }
+    #[test]
+    fn mirror_only_selected_session_and_redacts_secrets() {
+        let (mut a, mut b, _, _) = pair();
+        let req = active(&mut a, &mut b);
+        let frame = RemoteFrame {
+            seq: 1,
+            reset: true,
+            items: vec![MirrorItem::User {
+                text: "token=secret normal".into(),
+            }],
+            state: "ruht".into(),
+        };
+        let wrong = SessionRef {
+            label: "Nicht freigegeben".into(),
+            cwd: "session-2".into(),
+        };
+        assert!(b.mirror(&req, &wrong, frame.clone(), NOW).is_err());
+        let (_, p) = b.mirror(&req, &session(), frame, NOW).unwrap().remove(0);
+        a.receive(&b.chats.me, p, NOW).unwrap();
+        assert_eq!(
+            a.remote.get(&req).unwrap().mirror,
+            vec![MirrorItem::User {
+                text: "token=[GESCHWÄRZT] normal".into()
+            }]
+        );
+        b.end(&req, "Beendet");
+        assert!(b
+            .mirror(
+                &req,
+                &session(),
+                RemoteFrame {
+                    seq: 2,
+                    reset: false,
+                    items: vec![],
+                    state: "ruht".into()
+                },
+                NOW
+            )
+            .is_err());
     }
     #[test]
     fn chats_and_dms_reuse_v2_and_mark_unverified() {
