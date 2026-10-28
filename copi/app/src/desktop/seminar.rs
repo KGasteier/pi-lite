@@ -918,6 +918,20 @@ pub fn scene(name: &str) -> Option<Seminar> {
         Box::<MemoryNet>::default(),
     );
     s.demo_now = Some(now);
+    // Auch die vorführbaren Szenen nutzen denselben Verzeichnisweg wie die
+    // spätere Empfang-Anbindung; keine zweite handgepflegte Kontaktliste.
+    let verzeichnis = s
+        .state
+        .people
+        .iter()
+        .map(|p| VerzeichnisEintrag {
+            person: format!("demo-{}", p.name),
+            anzeige: p.name.clone(),
+            rolle: String::new(),
+            net_pubkey: p.peer.to_string(),
+        })
+        .collect();
+    s.verzeichnis_uebernehmen(verzeichnis);
     s.marked_prompts = marked;
     Some(s)
 }
