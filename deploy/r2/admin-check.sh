@@ -72,7 +72,8 @@ admin_row() {
 pool_checks() {
     if [[ $MODE == dry-run ]]; then
         note 'Pool: nicht geprüft. PLAN: alle zehn Slots frei / belegt / leeren / gesperrt aus aktuellem lokalem Empfangsstatus lesen.'
-        note 'PLAN: freie Plätze nur mit Löschbeleg nachweisen, beide Quoten und Empfang an 127.0.0.1:8800 prüfen.'
+        note 'PLAN: freie Plätze mit cocopi-slotctl pruefen --beleg nachweisen (N7, keine Live-Prüfung nach Hubstart); beide Quoten und Empfang an 127.0.0.1:8800 prüfen.'
+        note 'ABNAHME OFFEN: Check-out gibt mit echtem cocopi-slotctl --fake frei; Aktiv-Signal (N8), Seminarverzeichnis (N9), 384-MiB-Sperre/Backoff (N10) separat testen.'
         note 'PLAN: Proxy-Sperren direkt und unter allen zehn Slotpfaden via HTTPS testen (auch Encoding/Traversal).'
         return
     fi
@@ -119,5 +120,7 @@ fi
 note 'Letzte Aktivität: vorerst nur Dienststart, falls bekannt; die letzte Arbeit am Hub ist noch unbekannt.'
 note 'Ein aktiver Verbindungsdienst bedeutet nicht, dass jemand gerade arbeitet. Dies ist kein Anwesenheitsnachweis.'
 note 'Speicherbelegung ist kein Nachweis aktiver Quoten: Die technische Abnahme bleibt erforderlich.'
+note 'N7: Leerbelege beschreiben den Zustand vor Hubstart, nicht den heutigen Livebaum. Empfang nutzt nur die letzte leeren-JSON-Zeile.'
+note 'N8–N10: Diese Übersicht bestätigt weder Aktiv-Signale noch Seminarverzeichnis oder Zwangsarchiv-Grenze; gesonderte Mock-Abnahme erforderlich.'
 note 'Es werden keine Gesprächsinhalte, Dateinamen, Gerätekennungen oder Zugangsdaten angezeigt.'
 (( ISSUES == 0 ))

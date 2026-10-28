@@ -166,6 +166,7 @@ set -- --slots account01,account02
                     text.replace('EMPFANG_OIDC_ISSUER=https:', 'EMPFANG_OIDC_ISSUER=http:'),
                     text.replace('public-client', '$(touch /tmp/nie)'),
                     text + '\nEMPFANG_PORT=8801\n',
+                    text + '\nEMPFANG_ZWANGSARCHIV_MAX_BYTES=402653184\n',
                     text.replace('account01,account02', 'account01..account10')):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 checker.validate(bad, 'account01,account02')
@@ -223,6 +224,29 @@ set -- --slots account01,account02
             else: bad['slots'][0]['zustand'] = 'alles gut'
             with self.subTest(change=change), self.assertRaises(ValueError):
                 reader.validate(bad, now)
+
+    def test_pool_free_slots_use_n7_receipt_reader_not_live_proof(self):
+        import datetime
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        reader = load('pool-read')
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        packet = {'protokoll': 1, 'zeit': now, 'slots': [
+            {'slot': f'account{n:02}', 'zustand': 'frei' if n == 1 else 'belegt'}
+            for n in range(1, 11)]}
+        proof = {'slot': 'account01', 'epoche': 7, 'zustand': 'leer',
+                 'nachweis': 'vor_hubstart', 'quota_bytes': 0, 'zeit': now}
+        with patch.object(reader.os, 'geteuid', return_value=0), \
+             patch.object(reader.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=123)), \
+             patch.object(reader, 'read_safe', return_value=packet) as safe, \
+             patch.object(reader.subprocess, 'run', return_value=subprocess.CompletedProcess(
+                 [], 0, __import__('json').dumps(proof) + '\n', '')) as run:
+            self.assertEqual(reader.main(), 0)
+            self.assertEqual(safe.call_count, 1)  # Nur inhaltsfreie Poolprojektion.
+            self.assertEqual(run.call_args.args[0],
+                             ['/usr/local/sbin/cocopi-slotctl', 'pruefen', '--beleg', 'account01'])
+            run.side_effect = subprocess.CalledProcessError(1, 'slotctl')
+            self.assertEqual(reader.main(), 1)
 
     def test_proxy_checks_are_mocked_and_fail_closed(self):
         from unittest.mock import patch
@@ -400,6 +424,9 @@ check_mounts
             self.assertIn(title, result.stdout)
         self.assertEqual(result.stdout.count('nicht geprueft'), 12)
         self.assertIn('kein Anwesenheitsnachweis', result.stdout)
+        self.assertIn('pruefen --beleg', result.stdout)
+        self.assertIn('Check-out gibt mit echtem cocopi-slotctl --fake frei', result.stdout)
+        self.assertIn('384-MiB-Sperre/Backoff', result.stdout)
         self.assertNotIn('OK:', result.stdout)
 
     def admin_fixture(self, extra=''):

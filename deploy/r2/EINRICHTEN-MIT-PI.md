@@ -45,8 +45,13 @@ Beginne ohne sudo mit:
 
 Prüfe danach gemeinsam die noch offenen S3/S7-Integrationsnachweise:
   produktiver Archivweg; signierte Belegung/Freigabe; Empfang nutzt engen
-  sudo-Wrapper; es akzeptiert den Löschbeleg VOR Hubstart, nicht ein erneutes
-  Live-pruefen nach Start; aktuelle inhaltsfreie Poolstatusprojektion vorhanden;
+  sudo-Wrapper; N7: Exit 0 und letzte leeren-JSON-Zeile mit zustand:"leer",
+  nachweis:"vor_hubstart", passendem Slot und neuer Epoche auswerten. Danach
+  KEIN pruefen, auch nicht --beleg, durch den Empfang. K1-Abnahme: Vollständiger
+  Check-out gibt mit echtem cocopi-slotctl --fake im Tempverzeichnis frei,
+  nicht nur mit gefaktem clearSlot. S4-Helfertests ersetzen diesen S7-Test nicht.
+  Administration liest Belege mit cocopi-slotctl pruefen --beleg account01,
+  ohne Live-Prozessprüfung; aktuelle inhaltsfreie Poolstatusprojektion vorhanden;
   authentik-PKCE und tatsächlicher Callback-Pfad stimmen; Caddy und visudo haben
   die exakten Dateien validiert; N3-Replaytest nach Leeren ist grün. Empfang liest
   EMPFANG_EPOCHEN_DIR=/var/lib/cocopi/slots, Hub verlangt
@@ -54,6 +59,20 @@ Prüfe danach gemeinsam die noch offenen S3/S7-Integrationsnachweise:
   enthalten die aktuelle Epoche. Fehlende Datei ist im Betrieb ein Fehler, nicht 0.
   Fehlt ein Nachweis: STOPP, keine Freigabeflags
   setzen. „bestaetigt“ ist kein Ersatz für einen Test.
+
+N8–N10 ebenfalls mit Mocks nachweisen, keine echten Modellaufrufe:
+  N8: aktiv{verbunden:true} alle <=60 s bei Desktop- ODER Mobilverbindung,
+  false beim sauberen Trennen. Zwangs-Check-out nur !verbunden und >8 h seit
+  letztem Signal oder nächstes Tagesende >= Check-in. Dienststart beweist
+  keine Aktivität. Prüfe aktive und getrennte Geräte sowie Check-in nach 23:30.
+  N9: GET /v1/empfang/seminar nur eingecheckt/geräte-signiert, Antwortsignatur
+  prüfen; Rollen weiterhin nur aus dem Geräteausweis des Peers, nicht aus
+  Verzeichnis/Client-JSON. Bestehende Proxyroute /v1/empfang/* reicht.
+  N10: Zwangsarchiv maximal 384 MiB Klartext (402653184 Bytes). Darüber
+  erzwingen_blockiert, Backoff 5/15/60 min und sichtbarer Status für die Leitung;
+  Daten bleiben bis manuell auf R2. Niemals Fehler durch Leeren/Freigabe beheben.
+  Die Abholfrist von <=72 h gilt für das erzeugte verschlüsselte Abholfach,
+  nicht als Erlaubnis zum Löschen eines blockierten, noch nicht gesicherten Slots.
 
 Erst nach menschlicher D-R1-Freigabe und dokumentiertem Teststand darf eine
 geprüfte, unveränderliche Skriptkopie root:root, ohne Gruppenschreibrechte,
@@ -73,7 +92,10 @@ Der gemergte Empfangseinstieg ist /opt/cocopi/pi-hub/empfang/empfang.mjs
   EMPFANG_SLOTCTL=/usr/local/lib/cocopi-r2/slotctl-empfang
   EMPFANG_TAGESENDE=23:30
   EMPFANG_EPOCHEN_DIR=/var/lib/cocopi/slots
-Keine zusätzlichen erfundenen EMPFANG_*-Schlüssel, keine Shell-Ausdrücke. Die
+Keine zusätzlichen erfundenen EMPFANG_*-Schlüssel, keine Shell-Ausdrücke.
+N7–N10 benötigen keine neuen Variablen: vorhandener Helfer/Epochenpfad,
+Tagesende und Schlüssel reichen; N10-Grenze und Backoff sind feste Vertragswerte.
+Die
 Prüfung in einrichten.sh liest nur Daten und zeigt keine Werte an. Die Namen
 stammen aus S7-Code, nicht aus älteren Entwürfen; Epochen-Einbindung im Hub und
 Empfang muss K vor Deployment gemeinsam integrieren und nachweisen.
@@ -98,7 +120,9 @@ Keine realen Dateien oder KI-Aufrufe zur Abnahme.
 
 Beende die Sitzung zwingend mit der sichtbaren Betriebsprüfung. Zuerst ohne sudo:
   bash /usr/local/lib/cocopi-r2/admin-check.sh --dry-run --slots account01,account02
-Dann erkläre: liest lokale Konten, Prozesse/PIDs, Quoten und Poolstatus; stellt
+Dann erkläre: liest lokale Konten, Prozesse/PIDs, Quoten und Poolstatus sowie
+für freie Plätze den historischen N7-Leerbeleg mit aktueller Epoche (kein
+Live-pruefen nach Hubstart); stellt
 inhaltsfreie hallo- sowie absichtlich ungültige POST-Anfragen an den expliziten
 HTTPS-Proxy. Frage ein neues ja vor genau diesem sudo (NAME ersetzen):
   sudo bash /usr/local/lib/cocopi-r2/admin-check.sh --ausfuehren --slots account01,account02 --proxy-url https://NAME
