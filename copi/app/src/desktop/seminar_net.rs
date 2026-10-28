@@ -12,6 +12,23 @@ use pi_net::{
     },
 };
 
+/// N4-Knoten-ID validieren, ohne in der App eine zweite iroh-Abhängigkeit.
+pub(super) fn directory_peer(key: &str) -> Result<pi_net::model::PeerId, String> {
+    let peer: pi_net::model::PeerId = key.into();
+    if key.len() != 64
+        || !key
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        || pi_net::node::parse_address(&directory_address(&peer))? != peer
+    {
+        return Err("Ungültige Knoten-ID im Seminarverzeichnis".into());
+    }
+    Ok(peer)
+}
+pub(super) fn directory_address(peer: &pi_net::model::PeerId) -> String {
+    serde_json::json!({"id":peer.as_str(), "addrs":[]}).to_string()
+}
+
 pub struct SlotHub {
     hub: HubV1,
     /// Nur eigene, vom Hub bestätigte Sessions. cwd ist keine Remote-Adresse.
