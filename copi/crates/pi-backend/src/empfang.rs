@@ -1031,6 +1031,94 @@ mod tests {
         server.join().unwrap();
     }
     #[test]
+    fn client_against_node_empfang_nonce_pin_activity_and_directory() {
+        use std::io::BufRead;
+        let Ok(repo) = std::env::var("COCOPI_EMPFANG_TEST_DIR") else {
+            eprintln!("Empfang-Integration übersprungen: COCOPI_EMPFANG_TEST_DIR nicht gesetzt.");
+            return;
+        };
+        struct Child(std::process::Child);
+        impl Drop for Child {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let dir =
+            std::env::temp_dir().join(format!("cocopi-empfang-integration-{}", random_test_id()));
+        let state = dir.join("server");
+        let module = std::path::Path::new(&repo).join("empfang/empfang.mjs");
+        // Echter Empfang mit injiziertem Identitätsprüfer/Hub-Adapter, keine
+        // externen Dienste, keine Client-nonce-Hintertür und kein slotctl.
+        let script = format!(
+            r#"
+            import http from 'node:http';
+            import crypto from 'node:crypto';
+            import {{createEmpfang}} from {module};
+            const raw = key => crypto.createPublicKey(key).export({{type:'spki',format:'der'}}).subarray(-32).toString('base64url');
+            const archive = raw(crypto.generateKeyPairSync('x25519').privateKey);
+            let origin;
+            const server = http.createServer((req,res)=>e.handle(req,res));
+            await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+            origin='http://127.0.0.1:'+server.address().port;
+            const e=createEmpfang({{dir:{state},origin,slots:{{account01:'http://127.0.0.1:8801'}},allowMissingEpoch:true,
+                oidc:{{issuer:'mock',clientId:'mock',verify:async(token,nonce)=>{{
+                    if(token!==nonce)throw new Error('Falsche Testnonce');
+                    return {{iss:'mock',sub:'test',person:'Mira',rolle:'teilnehmende',exp:Math.floor(Date.now()/1000)+3600}};
+                }}}},adapter:{{register:async()=>{{}},release:async()=>{{}},isEmpty:async()=>true}} }});
+            console.log(JSON.stringify({{origin,pubkey:e.ausweis.pubkey,archive}}));
+        "#,
+            module = serde_json::to_string(&module.to_str().unwrap()).unwrap(),
+            state = serde_json::to_string(&state.to_str().unwrap()).unwrap()
+        );
+        let mut child = Child(
+            std::process::Command::new("node")
+                .args(["--input-type=module", "-e", &script])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::inherit())
+                .spawn()
+                .unwrap(),
+        );
+        let mut line = String::new();
+        std::io::BufReader::new(child.0.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let ready: Value = serde_json::from_str(&line).unwrap();
+        let mut client = Empfang::new(ready["origin"].as_str().unwrap()).unwrap();
+        let mut key = DeviceKey::at(&dir.join("device"), "desktop").unwrap();
+        let nonce = client.nonce(&key.public_key()).unwrap();
+        let body = json!({"geraet":{"pubkey":key.public_key(),"name":"Testgerät","art":"desktop"},"archiv_pubkey":ready["archive"],"net_pubkey":"ab".repeat(32),"nachweis":{"art":"oidc","id_token":nonce,"nonce":nonce}});
+        let mut stolen = body.clone();
+        let other = SigningKey::from_bytes(&[14; 32]);
+        stolen["geraet"]["pubkey"] = json!(B64.encode(other.verifying_key().as_bytes()));
+        assert!(client.checkin(stolen).is_err()); // nonce gerätegebunden.
+        let checked = client.checkin(body.clone()).unwrap();
+        assert!(client.checkin(body).is_err()); // nonce einmalig.
+        client
+            .uebernehmen(
+                &checked,
+                &mut key,
+                ready["pubkey"].as_str().unwrap(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64,
+            )
+            .unwrap();
+        client.aktiv(true).unwrap();
+        let directory = client.seminar_verzeichnis().unwrap();
+        assert_eq!(directory.personen.len(), 1);
+        assert_eq!(
+            directory.personen[0].person,
+            checked["geraeteausweis"]["pid"]
+        );
+        assert_eq!(directory.personen[0].anzeige, "Mira");
+        assert_eq!(directory.personen[0].net_pubkey, "ab".repeat(32));
+        client.aktiv(false).unwrap();
+        drop(child);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn directory_rejects_wrong_pin_invalid_contact_and_legacy_unsigned_wrapper() {
         let signer = SigningKey::from_bytes(&[11; 32]);
         let pin = B64.encode(signer.verifying_key().as_bytes());
