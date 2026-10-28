@@ -36,8 +36,18 @@ def limits_match(data: Dqblk, blocks: int, inodes: int) -> bool:
             and data.space <= blocks * 1024 and data.inodes <= inodes)
 
 
+def usage_text(data: Dqblk, blocks: int, inodes: int) -> str:
+    """Nur Belegung/Grenze, keine Inhalte; fehlende/falsche Limits nie verbergen."""
+    text = f'{data.space / 1_000_000_000:.2f}/{data.bhard * 1024 / 1_000_000_000:.2f} GB'
+    if data.bhard != data.bsoft or data.bhard != blocks or data.ihard != data.isoft or data.ihard != inodes:
+        return text + ' (Grenze pruefen)'
+    if data.space >= blocks * 1024 or data.inodes >= inodes:
+        return text + ' (voll)'
+    return text
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--usage', action='store_true', help='Nur Belegung und Grenzen ausgeben (lesend)')
     parser.add_argument("device")
     parser.add_argument("uid", type=int)
     parser.add_argument("blocks", type=int, help="Hardlimit in KiB; Softlimit identisch")
@@ -50,6 +60,9 @@ def main() -> int:
     except OSError as error:
         print(f"Quota nicht nachweisbar: {error.strerror}", file=sys.stderr)
         return 1
+    if args.usage:
+        print(usage_text(data, args.blocks, args.inodes))
+        return 0
     if not limits_match(data, args.blocks, args.inodes):
         print("Quota oder aktuelle Belegung weicht vom vereinbarten Budget ab", file=sys.stderr)
         return 1

@@ -33,7 +33,7 @@ class SafeScripts(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='cocopi-s4-test-')
         self.addCleanup(self.temp.cleanup)
         self.env = dict(os.environ, HOME=self.temp.name, XDG_CONFIG_HOME=self.temp.name,
-                        PYTHONDONTWRITEBYTECODE='1', LC_ALL='C')
+                        PYTHONDONTWRITEBYTECODE='1', LC_ALL='C', TZ='UTC')
         # Eine versehentlich ausgeführte Änderungsfunktion muss sofort auffallen.
         self.sentinel = Path(self.temp.name) / 'mutation-attempt'
         for command in ('useradd', 'userdel', 'usermod', 'groupadd', 'install',
@@ -62,27 +62,27 @@ class SafeScripts(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_default_is_explicit_dry_run(self):
-        for script in ('provision.sh', 'check.sh', 'teardown.sh'):
+        for script in ('provision.sh', 'check.sh', 'teardown.sh', 'admin-check.sh'):
             with self.subTest(script=script):
                 default = self.run_script(script, '--slots', 'account01,account02')
                 explicit = self.run_script(script, '--dry-run', '--slots', 'account01,account02')
                 self.assertEqual(default.returncode, 0, default.stderr)
                 self.assertEqual(default.stdout, explicit.stdout)
-                self.assertIn('dry-run', default.stdout)
+                self.assertTrue('dry-run' in default.stdout or 'Vorschau' in default.stdout)
                 self.assertNotIn('OK:', default.stdout)
                 self.assertIn('account01', default.stdout)
                 self.assertIn('account02', default.stdout)
                 self.assertNotIn('--- account10', default.stdout)
 
     def test_apply_requires_root_without_mutation(self):
-        for script in ('provision.sh', 'check.sh', 'teardown.sh'):
+        for script in ('provision.sh', 'check.sh', 'teardown.sh', 'admin-check.sh'):
             with self.subTest(script=script):
                 result = self.run_script(script, '--apply', '--slots', 'account01,account02')
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('benötigt Root', result.stderr)
 
     def test_bad_arguments_fail_closed(self):
-        for script in ('provision.sh', 'check.sh', 'teardown.sh'):
+        for script in ('provision.sh', 'check.sh', 'teardown.sh', 'admin-check.sh'):
             for args in (('--slots', ''), ('--slots', 'account00'), ('--slots', 'account11'),
                          ('--slots', 'account01,account01'), ('--slots', 'account01, account02'),
                          ('--slots', '../../root'), ('--slots', 'account01;true'),
@@ -148,7 +148,8 @@ set -- --slots account01,account02
                          'HUB_MAX_ACTIVE_SESSIONS=1', 'HUB_GLOBAL_HEAVY_JOBS=1',
                          f'HUB_STATE=/mnt/data/cocopi/account{n:02}/hub-state'):
                 self.assertIn(line, env_lines)
-            self.assertIn(f'install -d -m 700 -o account{n:02} -g account{n:02} -- '
+            self.assertIn(f'runuser -u account{n:02} -- env -i HOME=/home/account{n:02} '
+                          f'PATH=/usr/bin:/bin /usr/bin/install -d -m 700 -- '
                           f'/mnt/data/cocopi/account{n:02}/hub-state', result.stdout)
         self.assertNotIn('HUB_STATE=off', result.stdout)
         self.assertFalse(self.sentinel.exists())
@@ -240,6 +241,138 @@ check_mounts
             result = self.run_script('hub-launch.sh', *args)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(result.stdout, '')
+
+    def test_admin_dry_run_is_quiet_and_honest(self):
+        result = self.run_script('admin-check.sh', '--slots', 'account01,account02')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for title in ('Konto', 'Eingerichtet', 'Verbindung', 'Zugang', 'Speicher', 'Letzte Aktivität'):
+            self.assertIn(title, result.stdout)
+        self.assertEqual(result.stdout.count('nicht geprueft'), 10)
+        self.assertIn('kein Anwesenheitsnachweis', result.stdout)
+        self.assertNotIn('OK:', result.stdout)
+
+    def admin_fixture(self, extra=''):
+        # Echte Kontrolllogik, aber ausschließlich Attrappen für Hostabfragen.
+        source = (BASE / 'admin-check.sh').read_text()
+        body = source[source.index('ISSUES=0\n'):]
+        definitions = source[source.index('last_activity()'):source.index('\nISSUES=0\n')]
+        fixture = r'''
+MODE=apply
+SLOT_LIST=account01,account02
+SELECTED=(account01 account02)
+getent() { return 2; }
+slot_vars() {
+    SLOT=$1; USER_NAME=$1; UID_NUM=20001; EXPECTED_UID=20001
+    SLOT_HOME=$HOME/homes/$1; SLOT_DATA=$HOME/data/$1
+    PORT=8801; UNIT=cocopi-hub@$1.service
+}
+require_commands() { :; }
+assert_account() { return 0; }
+user_systemctl() { [[ $* == 'is-active --quiet cocopi-hub@account01.service' ]]; }
+hub_loopback() { [[ $SLOT == account01 ]]; }
+quota_usage() { printf '%s' '1.00/10.00 GB'; }
+'''
+        result = self.helper(definitions + fixture + extra + body)
+        self.assertFalse(self.sentinel.exists(), result.stderr)
+        self.assertEqual(list(Path(self.temp.name).iterdir()), [])
+        return result
+
+    def test_admin_fixture_active_and_inactive_slot(self):
+        result = self.admin_fixture()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        rows = [line for line in result.stdout.splitlines() if line.startswith('account')]
+        self.assertEqual(len(rows), 2)
+        self.assertIn('vorhanden', rows[0])
+        self.assertIn('aktiv', rows[0])
+        self.assertIn('nur lokal', rows[0])
+        self.assertIn('NVMe 1.00/10.00 GB; SATA 1.00/10.00 GB', rows[0])
+        self.assertTrue(rows[0].endswith('unbekannt'))
+        self.assertIn('nicht aktiv', rows[1])
+        self.assertIn('bitte pruefen', rows[1])
+
+    def test_admin_fixture_missing_wrong_identity_and_quota_unavailable(self):
+        fixtures = (
+            ('slot_vars() { SLOT=$1; UID_NUM=; };\n', 'fehlt'),
+            ('assert_account() { return 1; };\n', 'bitte pruefen'),
+            ('quota_usage() { return 1; };\n', 'unbekannt'),
+            ('quota_usage() { printf "%s" "10.00/10.00 GB (voll)"; };\n', '(voll)'),
+            ('quota_usage() { printf "%s" "1.00/0.00 GB (Grenze pruefen)"; };\n', 'Grenze pruefen'),
+        )
+        for fixture, expected in fixtures:
+            with self.subTest(expected=expected):
+                result = self.admin_fixture(fixture)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                rows = [line for line in result.stdout.splitlines() if line.startswith('account')]
+                self.assertIn(expected, rows[0])
+
+    def test_admin_fixture_all_observed_checks_pass(self):
+        result = self.admin_fixture('user_systemctl() { return 0; }; hub_loopback() { return 0; };\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Bekannte Betriebswerte ergeben noch keinen erfundenen Aktivitätszeitpunkt.
+        self.assertEqual(sum(line.endswith('unbekannt') for line in result.stdout.splitlines()), 2)
+
+    def test_admin_activity_is_labelled_service_start_not_student_work(self):
+        result = self.admin_fixture(r'''
+user_systemctl() {
+    if [[ $1 == show && $* == *ActiveEnterTimestamp* ]]; then
+        printf '%s\n' '2026-10-28 18:00:00 UTC'
+    else
+        return 0
+    fi
+}
+hub_loopback() { return 0; }
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Dienststart 2026-10-28 18:00:00 UTC', result.stdout)
+        self.assertIn('letzte Arbeit am Hub ist noch unbekannt', result.stdout)
+        result = self.admin_fixture(r'''
+user_systemctl() { if [[ $1 == show ]]; then printf '%s\n' 'secret-unparseable'; else return 0; fi; }
+hub_loopback() { return 0; }
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('secret-unparseable', result.stdout)
+
+    def test_listener_identity_and_loopback_fail_closed(self):
+        fixture = r'''
+UID_NUM=20001
+PORT=8801
+UNIT=cocopi-hub@account01.service
+user_systemctl() {
+    if [[ $1 == show ]]; then printf '123\n'; fi
+}
+stat() { printf '%s\n' "$MOCK_UID"; }
+ss() { printf '%s\n' "$MOCK_LISTENERS"; }
+hub_loopback
+'''
+        good = 'LISTEN 0 128 127.0.0.1:8801 0.0.0.0:* users:(("node",pid=123,fd=5))'
+        for listeners, uid, success in (
+            (good, '20001', True), (good, '20002', False), ('', '20001', False),
+            (good.replace('127.0.0.1:8801', '0.0.0.0:8801'), '20001', False),
+            (good.replace('127.0.0.1:8801', '[::]:8801'), '20001', False),
+            (good.replace('pid=123,', 'pid=456,'), '20001', False),
+            (good + '\n' + good.replace('127.0.0.1:8801', '[::1]:8801'), '20001', False),
+            (good + '\n' + good.replace('127.0.0.1:8801', '127.0.0.1:8888'), '20001', False),
+        ):
+            with self.subTest(listeners=listeners, uid=uid):
+                env = dict(self.env, MOCK_LISTENERS=listeners, MOCK_UID=uid)
+                result = subprocess.run(['bash', '-c', 'source "$1/common.sh"; ' + fixture,
+                                         'bash', str(BASE)], env=env, text=True, capture_output=True)
+                self.assertEqual(result.returncode == 0, success, result.stderr)
+                self.assertFalse(self.sentinel.exists())
+
+    def test_quota_usage_text_does_not_hide_limits_or_inode_exhaustion(self):
+        data = QUOTA.Dqblk()
+        data.bhard = data.bsoft = 9765625
+        data.ihard = data.isoft = 200000
+        data.space = 1_000_000_000
+        self.assertEqual(QUOTA.usage_text(data, 9765625, 200000), '1.00/10.00 GB')
+        data.inodes = 200000
+        self.assertIn('(voll)', QUOTA.usage_text(data, 9765625, 200000))
+        data.inodes = 0
+        data.space = 10_000_000_001
+        self.assertIn('(voll)', QUOTA.usage_text(data, 9765625, 200000))
+        data.bhard = 0
+        self.assertIn('Grenze pruefen', QUOTA.usage_text(data, 9765625, 200000))
 
     def test_slice_reader_positive_and_negative(self):
         text = 'CPUQuotaPerSecUSec=1s\nMemoryHigh=2147483648\nMemoryMax=2684354560\nTasksMax=256\n'

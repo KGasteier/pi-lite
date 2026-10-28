@@ -189,6 +189,28 @@ user_systemctl() {
         DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$UID_NUM/bus" systemctl --user "$@"
 }
 
+hub_loopback() {
+    local pid listeners line address count=0 expected
+    user_systemctl is-active --quiet "$UNIT" || return 1
+    pid=$(user_systemctl show "$UNIT" -p MainPID --value) || return 1
+    [[ $pid =~ ^[1-9][0-9]*$ && $(stat -c %u "/proc/$pid") == "$UID_NUM" ]] || return 1
+    listeners=$(ss -H -ltnp) || return 1
+    expected="127.0.0.1:$PORT"
+    while IFS= read -r line; do
+        [[ -n $line ]] || continue
+        address=$(awk '{print $4}' <<< "$line")
+        # Port darf auch nicht zusätzlich einem anderen Listener gehören.
+        if [[ $address == *":$PORT" ]]; then
+            [[ $address == "$expected" && $line == *"pid=$pid,"* ]] || return 1
+            count=$((count + 1))
+        fi
+        if [[ $line == *"pid=$pid,"* ]]; then
+            [[ $address == "$expected" ]] || return 1
+        fi
+    done <<< "$listeners"
+    (( count == 1 ))
+}
+
 check_mounts() {
     local mount type options
     for mount in "$NVME_MOUNT" "$DATA_MOUNT"; do

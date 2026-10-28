@@ -82,9 +82,15 @@ for slot in "${SELECTED[@]}"; do
     if [[ $MODE == apply ]]; then assert_account; fi
     managed_dir "$SLOT_HOME" 700 "$USER_NAME" "$USER_NAME"
     managed_dir "$SLOT_DATA" 700 "$USER_NAME" "$USER_NAME"
-    # Geräte-Register: eigenes Verzeichnis im quotierten privaten Datenbereich.
-    # Bestehenden Inhalt nie öffnen oder überschreiben.
-    managed_dir "$HUB_STATE" 700 "$USER_NAME" "$USER_NAME"
+    # Geräte-Register im quotierten Datenbereich. Nie als Root in ein vom Slot
+    # beschreibbares Unterverzeichnis schreiben (auch bei Pfadtausch/Symlinkrennen).
+    # Das Slotkonto erstellt/korrigiert nur sein eigenes Verzeichnis; Inhalt bleibt.
+    run runuser -u "$USER_NAME" -- env -i HOME="$SLOT_HOME" PATH=/usr/bin:/bin \
+        /usr/bin/install -d -m 700 -- "$HUB_STATE"
+    if [[ $MODE == apply ]]; then
+        [[ -d $HUB_STATE && ! -L $HUB_STATE &&
+           $(stat -c '%a:%U:%G' -- "$HUB_STATE") == "700:$USER_NAME:$USER_NAME" ]] || fail "Geräte-Register für $SLOT nicht privat. Kein Dienststart."
+    fi
     managed_dir "$SLOT_ETC" 755 root root
     # Root schreibt nie in vom Slot beschreibbare Home-Unterverzeichnisse.
     # Die Werkzeugumgebung für Login-Shells kommt aus /etc/profile.d.

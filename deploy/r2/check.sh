@@ -63,27 +63,6 @@ token_private() {
         # Nur Länge testen; kein Tokeninhalt und kein Token als Prozessargument.
         as_slot '[[ $(wc -c < "$1") -ge 41 ]]' "$SLOT_ETC/token"
 }
-hub_loopback() {
-    local pid listeners line address count=0 expected
-    user_systemctl is-active --quiet "$UNIT" || return 1
-    pid=$(user_systemctl show "$UNIT" -p MainPID --value) || return 1
-    [[ $pid =~ ^[1-9][0-9]*$ && $(stat -c %u "/proc/$pid") == "$UID_NUM" ]] || return 1
-    listeners=$(ss -H -ltnp) || return 1
-    expected="127.0.0.1:$PORT"
-    while IFS= read -r line; do
-        [[ -n $line ]] || continue
-        address=$(awk '{print $4}' <<< "$line")
-        # Port darf auch nicht zusätzlich einem anderen Listener gehören.
-        if [[ $address == *":$PORT" ]]; then
-            [[ $address == "$expected" && $line == *"pid=$pid,"* ]] || return 1
-            count=$((count + 1))
-        fi
-        if [[ $line == *"pid=$pid,"* ]]; then
-            [[ $address == "$expected" ]] || return 1
-        fi
-    done <<< "$listeners"
-    (( count == 1 ))
-}
 
 if [[ $MODE == apply ]]; then
     require_commands runuser sudo systemctl loginctl ss findmnt python3 numfmt quotaon stat

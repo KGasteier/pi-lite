@@ -1,5 +1,5 @@
 I1-S4-a4 · lokaler Dry-Run, keine Systemänderung
-2026-10-28T18:48:40.653295+01:00
+2026-10-28T18:55:33.432338+01:00
 
 $ bash deploy/r2/provision.sh --dry-run --slots account01,account02
 Provisionierung: dry-run; Slots: account01,account02. Keine Pakete, Mountänderungen oder Modellaufrufe.
@@ -19,7 +19,7 @@ PLAN: groupadd --gid 20001 account01
 PLAN: useradd --create-home --uid 20001 --gid account01 --groups cocopi-slots --shell /bin/bash --home-dir /home/account01 --comment cocopi\ managed\ slot\ account01 --key UMASK=077 --key HOME_MODE=0700 account01
 PLAN: install -d -m 700 -o account01 -g account01 -- /home/account01
 PLAN: install -d -m 700 -o account01 -g account01 -- /mnt/data/cocopi/account01
-PLAN: install -d -m 700 -o account01 -g account01 -- /mnt/data/cocopi/account01/hub-state
+PLAN: runuser -u account01 -- env -i HOME=/home/account01 PATH=/usr/bin:/bin /usr/bin/install -d -m 700 -- /mnt/data/cocopi/account01/hub-state
 PLAN: install -d -m 755 -o root -g root -- /etc/cocopi/slots/account01
 PLAN: verwaltete Datei /etc/profile.d/cocopi-slots.sh (644, root:root), nur bei Änderung schreiben
 PLAN: verwaltete Datei /etc/sudoers.d/cocopi-account01 (440, root:root), nur bei Änderung schreiben
@@ -40,7 +40,7 @@ PLAN: groupadd --gid 20002 account02
 PLAN: useradd --create-home --uid 20002 --gid account02 --groups cocopi-slots --shell /bin/bash --home-dir /home/account02 --comment cocopi\ managed\ slot\ account02 --key UMASK=077 --key HOME_MODE=0700 account02
 PLAN: install -d -m 700 -o account02 -g account02 -- /home/account02
 PLAN: install -d -m 700 -o account02 -g account02 -- /mnt/data/cocopi/account02
-PLAN: install -d -m 700 -o account02 -g account02 -- /mnt/data/cocopi/account02/hub-state
+PLAN: runuser -u account02 -- env -i HOME=/home/account02 PATH=/usr/bin:/bin /usr/bin/install -d -m 700 -- /mnt/data/cocopi/account02/hub-state
 PLAN: install -d -m 755 -o root -g root -- /etc/cocopi/slots/account02
 PLAN: verwaltete Datei /etc/profile.d/cocopi-slots.sh (644, root:root), nur bei Änderung schreiben
 PLAN: verwaltete Datei /etc/sudoers.d/cocopi-account02 (440, root:root), nur bei Änderung schreiben
@@ -76,6 +76,18 @@ PLAN: effektive Account-Slice: CPUQuota=100%, MemoryHigh=2G, MemoryMax=2560M, Ta
 PLAN: Linger=yes, Token 0600 ohne Inhalt, Dienst/PID-Besitzer und ausschließlich 127.0.0.1:8802 via ss prüfen
 PLAN: Werkzeuge via runuser auffindbar; Hub-Vertrag prüfen (kein Session-/Lasttest, keine Modellaufrufe)
 DRY-RUN: nichts geprüft oder geändert; keine OK-Aussagen über die echte Maschine.
+
+$ bash deploy/r2/admin-check.sh --dry-run --slots account01,account02
+R2: Vorschau der Betriebsübersicht. Nichts geprüft oder geändert.
+Konto       Eingerichtet    Verbindung      Zugang          Speicher belegt / Grenze (GB dezimal)                                   Letzte Aktivität (Quelle beachten)
+account01   nicht geprueft  nicht geprueft  nicht geprueft  nicht geprueft                                                          nicht geprueft
+account02   nicht geprueft  nicht geprueft  nicht geprueft  nicht geprueft                                                          nicht geprueft
+Plan: Konto prüfen, Verbindungsdienst abfragen, lokalen Port und Speicherbelegung lesen.
+Zum späteren Lesen braucht die Administration --apply mit Rootrechten und eine geprüfte Skriptkopie.
+Letzte Aktivität: vorerst nur Dienststart, falls bekannt; die letzte Arbeit am Hub ist noch unbekannt.
+Ein aktiver Verbindungsdienst bedeutet nicht, dass jemand gerade arbeitet. Dies ist kein Anwesenheitsnachweis.
+Speicherbelegung ist kein Nachweis aktiver Quoten: Die technische Abnahme bleibt erforderlich.
+Es werden keine Gesprächsinhalte, Dateinamen, Gerätekennungen oder Zugangsdaten angezeigt.
 
 $ bash deploy/r2/teardown.sh --dry-run --slots account01,account02
 Rückbau: dry-run; Slots: account01,account02; purge=false. Nur ausdrücklich verwaltete Konten.

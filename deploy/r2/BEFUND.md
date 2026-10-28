@@ -1,5 +1,13 @@
 # R2-Befund · I1-S4-provision
 
+**Einordnung I1-S4-a4:** Die folgende Aufnahme ist historisch und wurde nicht
+neu am System ausgeführt. Verbindliche Namen sind jetzt `account01`…`account10`
+(Unix-Konto = Slot-ID); alte Kontonamen unten sind nur der damalige Prüfbefehl,
+kein heutiges Deploymentziel. `HUB_STATE` ist im neuen Vertrag ein privates
+Verzeichnis 0700 für das Geräte-Register statt `off`; der alte Hub ist damit
+nicht kompatibel. `HUB_CONTRACT=unconfirmed` bleibt bis K nach S3-Review freigibt.
+Keine Migration oder Aktualisierung realer Dienste durch diese Textkorrektur.
+
 Lesend geprüft am 28.10.2026, etwa 18:08–18:35 +01:00, als
 `uid=1000(medienhaus)`. Keine Konten, Dienste, Quoten oder Mounts verändert.
 Worktree `v3/s4`, Ausgangspunkt `eb534bb`; pi-hub read-only bei `3dae8ca`.

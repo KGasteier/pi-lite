@@ -13,6 +13,9 @@ Administration; Studierende benötigen später nur ihre bestätigte Anmeldung.
   Datenpfade, Account-Slice, Linger und getrennte Hub-Userdienste einrichten.
 - `check.sh`: pro Punkt `OK` / `FEHLER`; `--apply` bedeutet hier ausschließlich
   lesende Abnahme und unprivilegierte Negativversuche (kein Lasttest).
+- `admin-check.sh`: ruhige Lehrenden-Tabelle (Entwurf), rein lesend: Konto,
+  Verbindungsdienst, lokaler Port, Speicherbelegung und belegter Dienststart.
+  Kein Zugriff auf Gespräche, Dateien oder Token; Arbeitsaktivität noch unbekannt.
 - `teardown.sh`: ausdrücklich ausgewählte Konten sperren, Dienste geordnet
   anhalten, Home/Daten/Konfiguration archivieren. Nur `--purge` löscht Nutzdaten.
 - `common.sh`, `quota-read.py`, `slice-read.py`: gemeinsame sichere Hilfen,
@@ -36,6 +39,7 @@ Im Repository-Root:
 ```bash
 bash deploy/r2/provision.sh --slots account01,account02
 bash deploy/r2/check.sh --slots account01,account02
+bash deploy/r2/admin-check.sh --slots account01,account02
 bash deploy/r2/teardown.sh --slots account01,account02
 PYTHONDONTWRITEBYTECODE=1 python3 deploy/r2/test_scripts.py
 for f in deploy/r2/*.sh deploy/r2/slots.conf; do bash -n "$f" || exit 1; done
@@ -147,7 +151,8 @@ Root und das Slotkonto können den eigenen Token lesen; nicht vor seinem eigenen
 Agenten geschützt. Keine fremden Home-Konfigurationen werden gelesen/kopiert.
 `HUB_STATE=/mnt/data/cocopi/accountNN/hub-state` ist im Vertrag
 `cocopi-slots-v1` ein **Verzeichnis**, nicht eine JSON-Datei und nicht `off`.
-Es wird mit 0700 und Slotkonto als Besitzer/Gruppe angelegt; es zählt zur SATA-Quote
+Es wird als Slotkonto (nicht als Root innerhalb des beschreibbaren Datenbereichs)
+mit 0700 angelegt; Besitzer/Gruppe werden danach geprüft. Es zählt zur SATA-Quote
 und enthält das Geräte-Register des Slots. Vorhandene Inhalte bleiben unberührt.
 Der Startwrapper prüft Pfad und Rechte vor dem Tokenlesen.
 
@@ -160,6 +165,43 @@ Ein Verzeichnis beweist weder sichere Persistenz noch verbotenen Auto-Resume;
 beides ist im Hubreview und in Mocktests gesondert abzunehmen.
 
 ## 6. Abnahme und Negativtests
+
+### Kurze Lehrenden-Sicht (Aylin; Entwurf)
+
+```bash
+bash deploy/r2/admin-check.sh --slots account01,account02  # nur Vorschau
+# Erst später, separat freigegeben, als Root aus der geprüften Skriptkopie:
+bash /usr/local/lib/cocopi-r2/admin-check.sh --apply --slots account01,account02
+```
+
+`--apply` liest hier **nur**; es startet/stoppt keinen Dienst, schreibt keine Datei
+und fragt keinen Hub über das Netzwerk ab. Keine zusätzlichen Lehrendenrechte
+auf private Konten: Die Administration führt den Bericht aus. Die Tabelle zeigt:
+
+- **Eingerichtet:** Konto vorhanden und eindeutig verwaltet, fehlt oder bitte prüfen.
+- **Verbindung:** persönlicher Hubdienst aktiv oder nicht aktiv. Aktiv heißt nicht
+  „Studentin arbeitet“, sondern nur „Verbindungsdienst läuft“.
+- **Zugang:** „nur lokal“ nur nach gleicher Dienst-/PID-/Portprüfung wie `check.sh`;
+  zusätzliche Wildcard-/IPv6-/fremde Listener werden nicht als sicher ausgegeben.
+  Das ist kein Test der Erreichbarkeit vom Mac oder Handy.
+- **Speicher:** belegte/harte GB je SSD aus lesendem Q_GETQUOTA (NVMe 10 + SATA 70).
+  Falsche Grenzen heißen „Grenze pruefen“, erschöpfte Byte- **oder Inodequote**
+  heißt „voll“. Kein Lesen oder Summieren privater Dateinamen.
+- **Letzte Aktivität:** vorerst ausdrücklich **Dienststart** aus systemd mit
+  Datum/Uhrzeit/Zeitzone, nicht letzte Anmeldung, Nachricht oder Agentenarbeit.
+  Fehlende/ungültige Messung bleibt „unbekannt“. Für echte Arbeitsaktivität fehlt
+  eine geprüfte, inhaltsfreie Hubquelle; Änderungsbitte an S3 bleibt offen.
+
+Die Vorschau zeigt ausschließlich „nicht geprueft“. Fehlende/falsche Konten,
+inaktive Dienste, fehlender Loopbacknachweis, fehlende Quotenabfrage sowie volle
+oder abweichende Quoten ergeben Exitcode 1, sonst 0. Eine unbekannte letzte
+Arbeitsaktivität ist eine erklärte Entwurfsgrenze, kein Anwesenheitsnachweis.
+Der Dienststart ist auch bei ruhenden Sessions kein Beleg für einen KI-Auftrag.
+Kein Journal, keine `/proc`-Argumente, Home-/Sessioninhalte, Geräte-IDs oder Token
+werden gelesen. Nur für die Listenerzuordnung wird der Besitzer von `/proc/PID`
+per `stat` abgefragt. Kein Ersatz für die technische Abnahme unten oder den Pilot.
+
+### Technische Abnahme
 
 `check.sh --apply` verlangt Root und prüft ohne Inhalte fremder Homes zu lesen:
 
