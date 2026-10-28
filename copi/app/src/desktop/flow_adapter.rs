@@ -1,19 +1,24 @@
 //! Empfang in App-Workern. Fehlende Sync-HTTP-APIs werden nicht umgangen.
 //! Ohne bestätigten Empfangsschlüssel und eigenen Archivschlüssel kein Check-in.
-use super::{Account, DesktopApi, InviteError, Reply, Request, checkin::*, hub::HubAdapter};
-use pi_backend::hub_v1::{DeviceKey, empfang::Empfang, oidc};
-use serde_json::{Value, json};
+use super::{checkin::*, hub::HubAdapter, Account, DesktopApi, InviteError, Reply, Request};
+use pi_backend::hub_v1::{empfang::Empfang, oidc, DeviceKey};
+use serde_json::{json, Value};
 use std::{
     path::PathBuf,
     sync::{
-        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
-        mpsc,
+        mpsc, Arc, Mutex,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 type Sha256 = fn(&[u8]) -> [u8; 32];
+
+/// Geprüfte SHA-256-Implementierung (RustCrypto `sha2`, bereits über pi-sync im Lockfile).
+pub fn sha256(data: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(data).into()
+}
 /// Bereits ausdrücklich bestätigte Konfiguration; niemals aus Peer-JSON ableiten.
 pub struct Config {
     pub origin: String,
@@ -423,7 +428,9 @@ mod tests {
                 eprintln!("SKIP: node fehlt; Empfang/Fake-OIDC nicht gestartet.");
                 return None;
             }
-            let source = PathBuf::from("/home/medienhaus/Work/pi-hub");
+            let source = std::env::var_os("COCOPI_PI_HUB")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/home/medienhaus/Work/pi-hub"));
             assert!(
                 source.join("empfang/test/fake-oidc.mjs").is_file(),
                 "Read-only Testquellen fehlen"
@@ -455,14 +462,15 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 origin='http://127.0.0.1:'+server.address().port;
 const work=path.join(root,'home/arbeit'); fs.mkdirSync(work,{recursive:true,mode:0o700});
 const calls=[];
-reception=createEmpfang({dir:path.join(root,'empfang'),origin,slots:{account01:origin},
+fs.mkdirSync(path.join(root,'epochen'),{recursive:true}); fs.writeFileSync(path.join(root,'epochen/account01.epoche'),'0\n');
+reception=createEmpfang({dir:path.join(root,'empfang'),origin,slots:{account01:origin},epochenDir:path.join(root,'epochen'),
  oidc:new Oidc({issuer:fake.issuer,clientId:fake.clientId,allowHttp:true}),
  adapter:{register:async(_slot,belegung)=>{ if(fs.existsSync(path.join(root,'delay'))){fs.writeFileSync(path.join(root,'registering'),'yes');await new Promise(resolve=>setTimeout(resolve,200));} const response=await fetch(origin+'/slot/account01/v1/belegung',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({protokoll:1,belegung})}); if(!response.ok)throw Error('register'); },
  release:async()=>{throw Error('Freigabe ohne Import verboten');},
  archive:async()=>{calls.push('archiv');fs.writeFileSync(path.join(root,'calls.json'),JSON.stringify(calls));return {archiv_id:crypto.randomUUID(),sha256:'a'.repeat(64),bytes:0};}},
  clearSlot:async()=>{throw Error('Echtes Leeren verboten');}});
 hub=createV1({dir:path.join(root,'hub'),slot:'account01',hubUrl:origin,roots:[work],inRoots:p=>p===work?p:null,
- empfangPubkey:reception.ausweis.pubkey,createInstance:()=>{throw Error('Modellstart verboten');}});
+ empfangPubkey:reception.ausweis.pubkey,epochFile:path.join(root,'epochen/account01.epoche'),createInstance:()=>{throw Error('Modellstart verboten');}});
 const codes=['test-invitation-one','test-invitation-two'];
 fs.writeFileSync(path.join(root,'empfang/nachweise.json'),JSON.stringify({tokens:[],einladungen:codes.map(code=>({hash:crypto.createHash('sha256').update(code).digest('hex'),person:'Mira',bis:Date.now()+300000}))}),{mode:0o600});
 const archive=crypto.generateKeyPairSync('x25519');
@@ -624,11 +632,9 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
             state.receipt.is_some(),
             "No fake release without server confirmation"
         );
-        assert!(
-            std::fs::read_to_string(f.root.join("calls.json"))
-                .unwrap()
-                .contains("archiv")
-        );
+        assert!(std::fs::read_to_string(f.root.join("calls.json"))
+            .unwrap()
+            .contains("archiv"));
     }
     #[test]
     fn ambiguous_checkin_never_retries_or_claims_cancelled() {

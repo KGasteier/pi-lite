@@ -7,7 +7,7 @@ description = "Natives egui-Frontend für pi (Nachfolger-Prototyp von pi-lite)"
 
 [features]
 default = []
-cocopi = ["dep:pi-net", "dep:qrcodegen"]
+cocopi = ["dep:pi-net", "dep:qrcodegen", "dep:pi-sync", "dep:sha2"]
 
 [[bin]]
 name = "cocopi"
@@ -22,6 +22,8 @@ egui.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 pi-backend = { path = "../crates/pi-backend" }
+pi-sync = { path = "../crates/pi-sync", optional = true }
+sha2 = { version = "0.11", optional = true }
 md-egui = { path = "../crates/md-egui" }
 md-core = { path = "../crates/md-core" }
 base64 = "0.22"

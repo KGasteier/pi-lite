@@ -38,7 +38,7 @@ impl Desktop {
                 key_dir: pi_backend::copi_config_dir()
                     .unwrap_or_default()
                     .join("devices"),
-                sha256: None,
+                sha256: Some(flow_adapter::sha256),
             };
             match flow_adapter::FlowAdapter::new(config) {
                 Ok(api) => self.set_api(Arc::new(api)),

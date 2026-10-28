@@ -528,10 +528,12 @@ dependencies = [
  "md-egui",
  "pi-backend",
  "pi-net",
+ "pi-sync",
  "png 0.17.16",
  "qrcodegen",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
