@@ -54,6 +54,15 @@ export function createSSEParser(onEvent) {
   };
 }
 
+// Anmeldung bindet den Geräteschlüssel an das bewusst gespeicherte Konto.
+export function loginSignaturePayload({ hub_origin, slot, geraet_id, challenge_id, nonce }) {
+  if (new URL(hub_origin).origin !== hub_origin || !/^account(?:0[1-9]|10)$/.test(slot)
+      || ![geraet_id, challenge_id, nonce].every(value => typeof value === 'string' && value.length > 0 && !/[\r\n]/.test(value))) {
+    throw new Error('Die Anmeldedaten sind unvollständig. Kopple dieses Handy erneut.');
+  }
+  return ['cocopi-v1-anmelden', hub_origin, slot, geraet_id, challenge_id, nonce].join('\n');
+}
+
 export function createTransport({ baseUrl, getToken, pulseTimeoutMs = 45_000, reconnectMs = 1_000 }) {
   const base = new URL(baseUrl, globalThis.location?.href);
   if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
@@ -158,37 +167,42 @@ export function createTransport({ baseUrl, getToken, pulseTimeoutMs = 45_000, re
     handle.done = run();
     return handle;
   }
+  async function redeem(code, { signal, onPending = () => {} } = {}) {
+    let result = await request('/v1/einloesen', { method: 'POST', body: { ...code, typ: 'einloesen' }, auth: code.art === 'b', signal });
+    if (result.typ === 'koppeln_wartet') onPending(result);
+    const deadline = Date.now() + 5 * 60_000;
+    while (result.typ === 'koppeln_wartet') {
+      await new Promise((resolve, reject) => {
+        const cancel = () => { clearTimeout(timer); reject(new DOMException('Abgebrochen', 'AbortError')); };
+        const timer = setTimeout(() => { signal?.removeEventListener('abort', cancel); resolve(); }, 1000);
+        if (signal?.aborted) cancel(); else signal?.addEventListener('abort', cancel, { once: true });
+      });
+      if (Date.now() > deadline) throw new TransportError('abgelaufen', 'Der Code ist abgelaufen.', 'Bitte um einen neuen Code.');
+      result = await request(`/v1/koppeln/${encodeURIComponent(result.anfrage_id)}`, { auth: false, signal });
+    }
+    if (result.erlauben === false) throw new TransportError('abgelehnt', 'Der Rechner hat abgelehnt. Es wurde nichts gespeichert.');
+    // Ursprung stammt ausschließlich aus der bewusst konfigurierten Adresse.
+    return { ...result, hub_origin: base.origin };
+  }
   return {
     async hallo(device) {
       if (device) deviceId = device.geraet_id;
       const welcome = await request('/v1/hallo', { method: 'POST', auth: false, body: { protokoll: 1, typ: 'hallo', app: 'cocopi-mobil 3.0.0' } });
       if (welcome.protokoll !== 1) throw new TransportError('protokoll_zu_alt', 'cocopi muss aktualisiert werden. R2 spricht eine neuere Sprache.', 'Lade die neue cocopi-Version bei deiner Seminarleitung herunter.');
       if (!device) return welcome;
+      if (device.hub_origin !== base.origin || device.slot !== welcome.slot) {
+        throw new TransportError('fremder_slot', 'Dieses Handy ist nicht für dieses R2-Konto angemeldet.', 'Nutze die gespeicherte R2-Adresse oder kopple es erneut.');
+      }
       const challenge = await request('/v1/anmelden/challenge', { method: 'POST', auth: false, body: { typ: 'anmelden_challenge', geraet_id: device.geraet_id } });
-      const signed = await request('/v1/anmelden', { method: 'POST', auth: false, body: { typ: 'anmelden', challenge_id: challenge.challenge_id, signatur: await device.sign(challenge.nonce) } });
+      if (challenge.slot !== device.slot) throw new TransportError('fremder_slot', 'Die Anmeldung gehört zu einem anderen Konto.', 'Kopple dieses Handy erneut.');
+      const payload = loginSignaturePayload({ hub_origin: base.origin, slot: device.slot, geraet_id: device.geraet_id, challenge_id: challenge.challenge_id, nonce: challenge.nonce });
+      const signed = await request('/v1/anmelden', { method: 'POST', auth: false, body: { typ: 'anmelden', challenge_id: challenge.challenge_id, signatur: await device.sign(payload) } });
       signedOut = false; deviceId = signed.geraet_id;
       return { ...welcome, ...signed };
     },
     sessions: () => request('/v1/sessions'), events,
-    einloesen: code => request('/v1/einloesen', { method: 'POST', body: { ...(typeof code === 'object' ? code : parsePairingCode(code, 'e')), typ: 'einloesen' }, auth: typeof code === 'object' && code.art === 'b' }),
-    async koppeln(code, { signal, onPending = () => {} } = {}) {
-      const body = { ...(typeof code === 'object' ? code : parsePairingCode(code)), typ: 'einloesen' };
-      let result = await request('/v1/einloesen', { method: 'POST', body, auth: false, signal });
-      if (result.typ !== 'koppeln_wartet') return result;
-      onPending(result);
-      const deadline = Date.now() + 5 * 60_000;
-      while (result.typ === 'koppeln_wartet') {
-        await new Promise((resolve, reject) => {
-          const cancel = () => { clearTimeout(timer); reject(new DOMException('Abgebrochen', 'AbortError')); };
-          const timer = setTimeout(() => { signal?.removeEventListener('abort', cancel); resolve(); }, 1000);
-          if (signal?.aborted) cancel(); else signal?.addEventListener('abort', cancel, { once: true });
-        });
-        if (Date.now() > deadline) throw new TransportError('abgelaufen', 'Der Code ist abgelaufen.', 'Tippe am Rechner noch einmal auf ‚Handy koppeln‘.');
-        result = await request(`/v1/koppeln/${encodeURIComponent(result.anfrage_id)}`, { auth: false, signal });
-      }
-      if (result.erlauben === false) throw new TransportError('abgelehnt', 'Der Rechner hat abgelehnt. Es wurde nichts gespeichert.');
-      return result;
-    },
+    einloesen: (code, options) => redeem(typeof code === 'object' ? code : parsePairingCode(code, 'e'), options),
+    koppeln: (code, options) => redeem(typeof code === 'object' ? code : parsePairingCode(code), options),
     async abmelden() {
       try {
         if (!deviceId) throw new TransportError('nicht_angemeldet', 'Dieses Gerät ist nicht mehr angemeldet.');
