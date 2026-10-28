@@ -324,6 +324,72 @@ mod tests {
         assert!(verify_signed(&bad, &pk).is_err());
     }
     #[test]
+    fn checkin_acceptance_binds_pin_device_role_path_and_expiry() {
+        let dir = std::env::temp_dir().join(format!("cocopi-empfang-bind-{}", random_test_id()));
+        let mut key = DeviceKey::at(&dir, "test").unwrap();
+        let signer = SigningKey::from_bytes(&[0; 32]);
+        let pk = B64.encode(signer.verifying_key().as_bytes());
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../shared/protocol/v1/examples/empfang_eingecheckt.json"
+        ))
+        .unwrap();
+        let mut b = verify_signed(&fixture["belegung"], &pk).unwrap();
+        let mut a = verify_signed(&fixture["geraeteausweis"], &pk).unwrap();
+        b["geraete"][0]["pubkey"] = json!(key.public_key());
+        a["geraet_pubkey"] = json!(key.public_key());
+        let sign = |v: &Value| {
+            let mut v = v.clone();
+            v["signatur"] = json!(
+                B64.encode(
+                    signer
+                        .sign(canonical_json(&v).unwrap().as_bytes())
+                        .to_bytes()
+                )
+            );
+            v
+        };
+        let mut packet = fixture.clone();
+        packet["belegung"] = sign(&b);
+        packet["geraeteausweis"] = sign(&a);
+        let mut client = Empfang::new("https://example.test").unwrap();
+        let now = 1899956800000;
+        assert!(
+            client
+                .uebernehmen(
+                    &packet,
+                    &mut key,
+                    &B64.encode(SigningKey::from_bytes(&[1; 32]).verifying_key().as_bytes()),
+                    now
+                )
+                .is_err()
+        );
+        let mut bad = packet.clone();
+        bad["hub_pfad"] = json!("/slot/account02");
+        assert!(client.uebernehmen(&bad, &mut key, &pk, now).is_err());
+        let mut bad = packet.clone();
+        bad["rolle"] = json!("seminarleitung");
+        assert!(client.uebernehmen(&bad, &mut key, &pk, now).is_err());
+        assert!(
+            client
+                .uebernehmen(&packet, &mut key, &pk, 1900000000001)
+                .is_err()
+        );
+        let mut bad_b = b.clone();
+        bad_b["geraete"][0]["pubkey"] = json!(pk);
+        let mut bad = packet.clone();
+        bad["belegung"] = sign(&bad_b);
+        assert!(client.uebernehmen(&bad, &mut key, &pk, now).is_err());
+        client.uebernehmen(&packet, &mut key, &pk, now).unwrap();
+        assert_eq!(key.geraet_id.as_deref(), Some("test-geraet"));
+        assert!(client.auth.is_some());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    fn random_test_id() -> String {
+        let mut b = [0; 8];
+        super::super::secure_random(&mut b).unwrap();
+        B64.encode(b)
+    }
+    #[test]
     fn authenticated_request_uses_empfang_challenge_headers() {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

@@ -86,7 +86,7 @@ Rust-API `hub_v1::oidc::{Discovery,Login,pkce_challenge}`: Browseröffnen aussch
 
 ### Signierte Nutzdaten und Hub-Belegung
 
-Übertragungsformat des Empfangs: `{inhalt:<Nutzdaten>,signatur:"<Base64url>"}`. Signiert wird nur `inhalt`, rekursiv sortierte Objektschlüssel (UTF-16-Reihenfolge wie JavaScript), keine Leerzeichen, UTF-8, keine abschließende neue Zeile. Zahlen müssen sichere Ganzzahlen im Bereich ±(2^53−1) sein; keine Fließkommazahlen. Arrays behalten ihre Reihenfolge. Keine unsignierten Hüllfelder. Additiv akzeptieren S3-Client und Hub auch das frühe flache Format `{...Nutzdaten,signatur}`; darin wird alles außer `signatur` signiert. Erzeuger verwenden die Hülle. Zeiten sind Unix-Millisekunden, **Ausnahme** Ausweis `iat`/`exp`: Unix-Sekunden.
+Übertragungsformat des Empfangs nach aktuellem S7-Abgleich: flaches `{...Nutzdaten,signatur:"<Base64url>"}`. Signiert wird alles außer `signatur`: rekursiv sortierte Objektschlüssel (UTF-16-Reihenfolge wie JavaScript), keine Leerzeichen, UTF-8, keine abschließende neue Zeile. Zahlen müssen sichere Ganzzahlen im Bereich ±(2^53−1) sein; keine Fließkommazahlen. Arrays behalten ihre Reihenfolge. S3-Client und Hub akzeptieren zusätzlich die zwischenzeitliche S7-Hülle `{inhalt:<Nutzdaten>,signatur}` ohne weitere Hüllfelder; signiert wird dann ausschließlich `inhalt`. Die Beispiele belegen diese alternative Hülle mit echten Node-Testsignaturen. Zeiten sind Unix-Millisekunden, **Ausnahme** Ausweis `iat`/`exp`: Unix-Sekunden.
 
 - Belegung: `{v:1,typ:"belegung",slot,checkin_id,person,rolle,geraete:[{geraet_id,pubkey,name,art}],gueltig_bis}`.
 - Freigabe: `{v:1,typ:"freigabe",slot,checkin_id}`.
