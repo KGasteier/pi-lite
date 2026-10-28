@@ -7,6 +7,7 @@
 //! - [`a2a`]/[`persona`]: Agent2Agent-Dirigent und Nebenagenten.
 //! - [`remote`]: Fernzugriff Seminarleitung → Teilnehmenden-Session.
 //! - [`direct`]: älterer Prototyp (flüchtige Einzelverbindung), bleibt bis zur Ablösung.
+pub mod ausweis;
 pub mod a2a;
 pub mod direct;
 pub mod identity;
@@ -14,6 +15,7 @@ pub mod model;
 pub mod node;
 pub mod persona;
 pub mod remote;
+pub mod seminar;
 pub mod store;
 pub mod wire;
 

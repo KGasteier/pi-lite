@@ -49,6 +49,10 @@ impl Envelope {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum Payload {
+    /// Additiver A6-Handshake; fehlend/ungültig bleibt unbestätigt.
+    Geraeteausweis { ausweis: crate::ausweis::Ausweis },
+    /// A9 Eingabe; identische Consent-Prüfung wie RemoteInput (v2 bleibt gültig).
+    Steuern { req: String, text: String },
     /// Einladung in einen Chat (ohne Verlauf). Annahme nur nach Bestätigung durch die Person.
     Invite { chat: Chat, space: Option<Space>, note: String },
     /// Annahme bzw. Ablehnung einer Einladung.
