@@ -394,5 +394,114 @@ hub_loopback
         self.assertFalse(QUOTA.limits_match(data, 9765625, 200000))
 
 
+class SlotctlTests(unittest.TestCase):
+    def setUp(self):
+        if os.geteuid() == 0:
+            self.skipTest('Fake-Root ist absichtlich nur unprivilegiert erlaubt')
+        self.temp = tempfile.TemporaryDirectory(prefix='cocopi-pool-test-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        for path in ('home/account01', 'mnt/data/account01', 'etc/cocopi/skel/arbeit/Projekte',
+                     'etc/cocopi/skel/arbeit/Ergebnisse', 'etc/cocopi/skel/.pi/agent/skills',
+                     'etc/cocopi/skel/.pi/agent/sessions', 'var/lib/cocopi-slots', 'run'):
+            (self.root / path).mkdir(parents=True, exist_ok=True)
+        (self.root / 'etc/cocopi/skel/.profile').write_text('umask 077\n')
+        self.fixture()
+        self.env = dict(os.environ, COCOPI_ROOT=str(self.root), HOME=str(self.root),
+                        XDG_CONFIG_HOME=str(self.root), PYTHONDONTWRITEBYTECODE='1')
+
+    def fixture(self, **values):
+        import json
+        (self.root / 'run/cocopi-test.json').write_text(json.dumps(values))
+
+    def run_slot(self, *args, success=True):
+        result = subprocess.run([sys.executable, '-I', str(BASE / 'cocopi-slotctl'), *args],
+                                env=self.env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
+        return result
+
+    def test_default_does_not_delete_or_write_lock(self):
+        secret = self.root / 'home/account01/privat'
+        secret.write_text('synthetisch')
+        result = self.run_slot('leeren', 'account01')
+        self.assertIn('nicht_geprueft', result.stdout)
+        self.assertEqual(secret.read_text(), 'synthetisch')
+        self.assertFalse((self.root / 'var/lib/cocopi-slots/pool.lock').exists())
+
+    def test_clear_proof_and_repeat_are_idempotent(self):
+        import json
+        (self.root / 'home/account01/.verlauf').write_text('synthetisch')
+        (self.root / 'mnt/data/account01/build').write_bytes(b'x' * 100)
+        result = json.loads(self.run_slot('--ausfuehren', 'leeren', 'account01').stdout)
+        self.assertEqual(result['zustand'], 'leer')
+        self.assertGreaterEqual(result['bytes_geloescht'], 100)
+        self.assertEqual(result['nachweis'], 'vor_hubstart')
+        self.run_slot('pruefen', 'account01')
+        self.run_slot('--ausfuehren', 'leeren', 'account01')
+        self.assertEqual(list((self.root / 'mnt/data/account01').iterdir()), [])
+        self.assertTrue((self.root / 'home/account01/arbeit/Ergebnisse').is_dir())
+
+    def test_slot_traversal_and_additional_commands_rejected(self):
+        for slot in ('../', '../account01', 'account00', 'account11', 'account01/..',
+                     'account01;id', '/etc', 'account01\n', 'ACCOUNT01'):
+            self.run_slot('--ausfuehren', 'leeren', slot, success=False)
+        self.run_slot('leeren', success=False)
+        self.run_slot('start', 'account01', success=False)
+        self.run_slot('--dry-run', '--ausfuehren', 'leeren', 'account01', success=False)
+
+    def test_inner_symlink_to_etc_unlinked_not_followed(self):
+        (self.root / 'home/account01/angriff').symlink_to('/etc', target_is_directory=True)
+        (self.root / 'mnt/data/account01/kaputt').symlink_to('/does-not-exist')
+        self.run_slot('--ausfuehren', 'leeren', 'account01')
+        self.assertFalse((self.root / 'home/account01/angriff').is_symlink())
+        self.assertTrue(Path('/etc/passwd').is_file())  # nur Existenz, keine Inhalte
+
+    def test_slot_root_and_parent_symlinks_rejected(self):
+        path = self.root / 'home/account01'
+        path.rmdir()
+        path.symlink_to('/etc', target_is_directory=True)
+        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+        path.unlink()
+        path.mkdir()
+        (self.root / 'mnt/data/account01').rmdir()
+        (self.root / 'mnt/data').rmdir()
+        (self.root / 'mnt/data').symlink_to('/etc', target_is_directory=True)
+        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+
+    def test_live_processes_prevent_any_deletion(self):
+        path = self.root / 'home/account01/bleibt'
+        path.write_text('synthetisch')
+        self.fixture(prozesse=True)
+        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+        self.assertTrue(path.exists())
+        self.assertFalse((self.root / 'home/account01/.profile').exists())
+
+    def test_skeleton_symlink_prevents_deletion(self):
+        path = self.root / 'home/account01/bleibt'
+        path.write_text('synthetisch')
+        (self.root / 'etc/cocopi/skel/link').symlink_to('/etc')
+        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+        self.assertTrue(path.exists())
+
+    def test_quota_residue_prevents_empty_proof(self):
+        self.fixture(quota_bytes=1048577)
+        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+        self.run_slot('pruefen', 'account01', success=False)
+        result = self.run_slot('status', 'account01')
+        self.assertIn('nicht_leer_oder_unbekannt', result.stdout)
+        self.assertNotIn('"zustand": "leer"', result.stdout)
+
+    def test_special_file_cannot_hang_proof(self):
+        os.mkfifo(self.root / 'home/account01/fifo')
+        self.run_slot('pruefen', 'account01', success=False)
+        self.run_slot('--ausfuehren', 'leeren', 'account01')
+
+    def test_concurrent_clear_is_blocked(self):
+        import fcntl
+        with (self.root / 'var/lib/cocopi-slots/pool.lock').open('w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

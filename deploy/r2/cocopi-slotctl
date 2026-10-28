@@ -1,0 +1,321 @@
+#!/usr/bin/python3 -I
+"""Begrenzter Root-Helfer. Standard ist Vorschau; keine Shell, keine Nutzinhalte im Log.
+
+COCOPI_ROOT ist ausschließlich ein unprivilegierter Fake-Root für Tests. Unter sudo
+wird diese Variable absichtlich abgewiesen. Löschen erfolgt fd-relativ mit
+O_NOFOLLOW und Dateisystemgrenze (entspricht find -P -xdev -mindepth 1 -delete).
+"""
+import argparse
+import datetime
+import fcntl
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import stat
+import subprocess
+import sys
+import time
+
+SLOT = re.compile(r"account(0[1-9]|10)\Z")
+DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def fail(text):
+    raise RuntimeError(text)
+
+
+def command(*args, allowed=(0,)):
+    result = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, timeout=30, check=False,
+                            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"})
+    if result.returncode not in allowed:
+        fail("Systembefehl fehlgeschlagen; Arbeitsplatz bleibt gesperrt: " + args[0])
+    return result.stdout.decode().strip()
+
+
+class Slots:
+    def __init__(self):
+        prefix = os.environ.get("COCOPI_ROOT", "")
+        if prefix and os.geteuid() == 0:
+            fail("COCOPI_ROOT ist als Root nicht erlaubt.")
+        if prefix and (not os.path.isabs(prefix) or '..' in Path(prefix).parts):
+            fail("Fake-Root muss ein absoluter Temp-Pfad ohne .. sein.")
+        self.fake = bool(prefix)
+        self.root = prefix or "/"
+        self.rootfd = os.open("/", DIRECTORY)
+        if prefix:
+            self.rootfd, old = self.open_dir(prefix.lstrip('/')), self.rootfd
+            os.close(old)
+        self.test = self.read_json("run/cocopi-test.json") if self.fake else {}
+
+    def open_dir(self, relative):
+        fd = os.dup(self.rootfd)
+        try:
+            for part in relative.split('/'):
+                if not part or part in ('.', '..'):
+                    fail("Unsicherer Verzeichnispfad.")
+                new = os.open(part, DIRECTORY, dir_fd=fd)
+                os.close(fd)
+                fd = new
+                info = os.fstat(fd)
+                if not self.fake and (info.st_uid != 0 or info.st_mode & 0o022):
+                    # Slotwurzeln werden separat über geprüfte Eltern geöffnet.
+                    fail("Verwaltungspfad nicht ausschließlich rootverwaltet.")
+            return fd
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def read_json(self, relative):
+        parent, name = relative.rsplit('/', 1)
+        fd = self.open_dir(parent)
+        try:
+            value = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+            with os.fdopen(value) as file:
+                return json.load(file)
+        finally:
+            os.close(fd)
+
+    def identity(self, slot):
+        uid = 20000 + int(slot[-2:])
+        if not self.fake:
+            record = pwd.getpwnam(slot)
+            if (record.pw_uid != uid or record.pw_gid != uid
+                    or record.pw_dir != '/home/' + slot
+                    or record.pw_gecos != 'cocopi managed slot ' + slot):
+                fail("Kontozuordnung weicht ab; keine Löschung.")
+            inventory = self.open_dir('var/lib/cocopi-slots')
+            try:
+                value = os.open(slot + '.uid', os.O_RDONLY | os.O_NOFOLLOW, dir_fd=inventory)
+                with os.fdopen(value) as file:
+                    if file.read().strip() != str(uid):
+                        fail("UID-Inventar weicht ab.")
+            finally:
+                os.close(inventory)
+        return uid
+
+    def roots(self, slot):
+        result = []
+        try:
+            for parent in ('home', 'mnt/data'):
+                base = self.open_dir(parent)
+                try:
+                    fd = os.open(slot, DIRECTORY, dir_fd=base)
+                    info = os.fstat(fd)
+                    if not self.fake and (info.st_uid not in (0, self.identity(slot))
+                                          or info.st_mode & 0o077):
+                        fail("Slotwurzel hat unsichere Rechte.")
+                    result.append(fd)
+                finally:
+                    os.close(base)
+            return result
+        except BaseException:
+            for fd in result:
+                os.close(fd)
+            raise
+
+    def processes(self, uid):
+        if self.fake:
+            return self.test.get('prozesse', False)
+        # Echte UND effektive/gespeicherte UIDs; keine Prozessargumente lesen.
+        for entry in Path('/proc').iterdir():
+            if entry.name.isdecimal():
+                try:
+                    for line in (entry / 'status').read_text().splitlines():
+                        if line.startswith('Uid:') and uid in map(int, line.split()[1:]):
+                            return True
+                except FileNotFoundError:
+                    continue
+        return False
+
+    def tree(self, fd, remove=False, device=None, prefix=''):
+        """Kein Link-Folgen; Unter-Mounts und Sonderdateien blockieren den Nachweis."""
+        device = os.fstat(fd).st_dev if device is None else device
+        entries = {}
+        for name in sorted(os.listdir(fd)):
+            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if info.st_dev != device:
+                fail("Unter-Mount gefunden; manuell prüfen, keine Freigabe.")
+            key = prefix + name
+            if stat.S_ISDIR(info.st_mode):
+                child = os.open(name, DIRECTORY, dir_fd=fd)
+                try:
+                    entries[key + '/'] = 'ordner'
+                    entries.update(self.tree(child, remove, device, key + '/'))
+                finally:
+                    os.close(child)
+                if remove:
+                    os.rmdir(name, dir_fd=fd)
+            elif stat.S_ISREG(info.st_mode):
+                if remove:
+                    os.unlink(name, dir_fd=fd)
+                    entries[key] = info.st_size
+                else:
+                    child = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+                    with os.fdopen(child, 'rb') as file:
+                        entries[key] = hashlib.file_digest(file, 'sha256').hexdigest()
+            elif remove:
+                os.unlink(name, dir_fd=fd)  # auch Symlink nach /etc: nur Link entfernen
+                entries[key] = 0
+            else:
+                fail("Link oder Sonderdatei gefunden; nicht leer.")
+        return entries
+
+    def copy_skel(self, source, target, uid):
+        for name in sorted(os.listdir(source)):
+            info = os.stat(name, dir_fd=source, follow_symlinks=False)
+            if stat.S_ISDIR(info.st_mode):
+                os.mkdir(name, 0o700, dir_fd=target)
+                src = os.open(name, DIRECTORY, dir_fd=source)
+                dst = os.open(name, DIRECTORY, dir_fd=target)
+                try:
+                    self.copy_skel(src, dst, uid)
+                    if not self.fake:
+                        os.fchown(dst, uid, uid)
+                finally:
+                    os.close(src)
+                    os.close(dst)
+            elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+                src = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=source)
+                dst = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                              0o600, dir_fd=target)
+                with os.fdopen(src, 'rb') as inp, os.fdopen(dst, 'wb') as out:
+                    while data := inp.read(1024 * 1024):
+                        out.write(data)
+                    if not self.fake:
+                        os.fchown(out.fileno(), uid, uid)
+            else:
+                fail("Skelett enthält Links oder Sonderdateien; keine Freigabe.")
+
+    def quota(self, uid):
+        if self.fake:
+            value = self.test.get('quota_bytes', 0)
+            if not isinstance(value, int) or value < 0:
+                fail("Ungültige Testquote.")
+            return value
+        spec = importlib.util.spec_from_file_location('quota_read',
+                    '/usr/local/lib/cocopi-r2/quota-read.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        total = 0
+        for mount, blocks, inodes in (('/', 9765625, 200000), ('/mnt/data', 68359375, 800000)):
+            device = command('/usr/bin/findmnt', '-n', '-o', 'SOURCE', '--target', mount)
+            data = module.query(device, uid)
+            if not module.limits_match(data, blocks, inodes):
+                fail("Quote nicht aktiv oder Grenzen abweichend.")
+            total += data.space
+        return total
+
+    def execute(self, action, slot, apply):
+        uid = self.identity(slot)
+        roots = self.roots(slot)
+        skel = self.open_dir('etc/cocopi/skel')
+        try:
+            # Skelett vor allen Löschungen vollständig prüfen.
+            expected = self.tree(skel)
+            if action == 'leeren' and not apply:
+                return {'slot': slot, 'zustand': 'nicht_geprueft', 'dry_run': True,
+                        'plan': ['Hub stoppen', 'UID-Prozesse beenden und prüfen',
+                                 'Home und Daten ohne Link-Folgen leeren',
+                                 'Skelett einspielen', 'Quote und Leerzustand prüfen', 'Hub starten']}
+            if action == 'leeren':
+                start = time.monotonic()
+                if not self.fake:
+                    command('/usr/bin/systemctl', 'stop', 'cocopi-hub@' + slot + '.service')
+                    # Neue Zugriffe sperren, bevor Prozessruhe hergestellt wird.
+                    for fd in roots:
+                        os.fchown(fd, 0, 0)
+                        os.fchmod(fd, 0o700)
+                    command('/usr/bin/systemctl', 'stop', f'user@{uid}.service')
+                    command('/usr/bin/pkill', '-TERM', '-U', str(uid), allowed=(0, 1))
+                    for _ in range(30):
+                        if not self.processes(uid):
+                            break
+                        time.sleep(0.1)
+                    if self.processes(uid):
+                        command('/usr/bin/pkill', '-KILL', '-U', str(uid), allowed=(0, 1))
+                        time.sleep(0.2)
+                if self.processes(uid):
+                    fail("Es laufen noch Prozesse. Nichts gelöscht; Arbeitsplatz bleibt gesperrt.")
+                deleted = 0
+                for fd in roots:
+                    deleted += sum(value for value in self.tree(fd, remove=True).values()
+                                   if isinstance(value, int))
+                self.copy_skel(skel, roots[0], uid)
+                result = self.proof(slot, roots, expected, uid)
+                result.update(zeit=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                              dauer_ms=int((time.monotonic() - start) * 1000), bytes_geloescht=deleted)
+                # Kein persistenter Nutzdaten-Backup; Nachweis ausschließlich Slot/Zeit/Zähler.
+                if not self.fake:
+                    for fd in roots:
+                        os.fchown(fd, uid, uid)
+                        os.fchmod(fd, 0o700)
+                    command('/usr/bin/systemctl', 'start', 'cocopi-hub@' + slot + '.service')
+                result['nachweis'] = 'vor_hubstart'
+                return result
+            try:
+                return self.proof(slot, roots, expected, uid)
+            except RuntimeError:
+                if action == 'pruefen':
+                    raise
+                return {'slot': slot, 'zustand': 'nicht_leer_oder_unbekannt'}
+        finally:
+            os.close(skel)
+            for fd in roots:
+                os.close(fd)
+
+    def proof(self, slot, roots, expected, uid):
+        if self.tree(roots[0]) != expected or self.tree(roots[1]):
+            fail("Arbeitsplatz ist nicht leer (nur das Skelett ist erlaubt).")
+        # Kleine Toleranz für Verzeichnisblöcke/Skelett; keine 0-Byte-Lüge bei ext4.
+        used = self.quota(uid)
+        if used > 1024 * 1024:
+            fail("UID-Quote über 1 MiB: Restdateien außerhalb der Slotpfade prüfen.")
+        return {'slot': slot, 'zustand': 'leer', 'quota_bytes': used, 'grenze_bytes': 1048576}
+
+
+def main():
+    os.umask(0o077)
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--dry-run', action='store_true')
+    mode.add_argument('--ausfuehren', action='store_true')
+    parser.add_argument('befehl', choices=('leeren', 'status', 'pruefen'))
+    parser.add_argument('slot', nargs='?')
+    args = parser.parse_args()
+    if args.slot is not None and not SLOT.fullmatch(args.slot):
+        parser.error('Arbeitsplatz muss account01 bis account10 sein.')
+    if args.slot is None and args.befehl != 'status':
+        parser.error('Bitte genau einen Arbeitsplatz angeben.')
+    if not os.environ.get('COCOPI_ROOT') and os.geteuid() != 0:
+        parser.error('Root nötig; Tests nur mit COCOPI_ROOT im Temp-Verzeichnis.')
+    slots = Slots()
+    # Eine gemeinsame, rootverwaltete Sperre für ALLE Empfangsaufrufe.
+    lockdir = slots.open_dir('var/lib/cocopi-slots')
+    lock = None
+    try:
+        if args.ausfuehren and args.befehl == 'leeren':
+            lock = os.open('pool.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW,
+                           0o600, dir_fd=lockdir)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        selected = [args.slot] if args.slot else [f'account{n:02}' for n in range(1, 11)]
+        for slot in selected:
+            print(json.dumps(slots.execute(args.befehl, slot, args.ausfuehren), sort_keys=True))
+    finally:
+        if lock is not None:
+            os.close(lock)
+        os.close(lockdir)
+        os.close(slots.rootfd)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (RuntimeError, OSError, ValueError, KeyError, subprocess.SubprocessError):
+        # Keine fremden Dateinamen/Inhalte oder unbereinigten Systemfehler loggen.
+        print('FEHLER: Arbeitsplatz nicht freigegeben. Pfade, Prozesse, Skelett und Quote administrativ prüfen.', file=sys.stderr)
+        sys.exit(1)
