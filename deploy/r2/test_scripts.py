@@ -153,6 +153,8 @@ set -- --slots account01,account02
                 self.assertIn(line, env_lines)
             self.assertIn(f'PLAN: bei neuem Konto Skelett /etc/cocopi/skel als account{n:02}', result.stdout)
         self.assertNotIn('HUB_STATE=off', result.stdout)
+        preflight = body[:body.index('\n\nif [[ $MODE == apply')]
+        self.assertIn('python3 "$BASE/epoch-read.py" "$SLOT" >/dev/null', preflight)
         self.assertFalse(self.sentinel.exists())
 
     def test_empfang_env_matches_s7_names_without_shell_evaluation(self):

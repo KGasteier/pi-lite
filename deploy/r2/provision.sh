@@ -29,6 +29,7 @@ preflight() {
             [[ $(loginctl show-user "$USER_NAME" -p Linger --value 2>/dev/null || true) != yes ]] || fail "Linger für $SLOT aktiv; Migration separat nötig."
             [[ ! -e /mnt/data/cocopi/$SLOT ]] || fail "Alter I1-Datenpfad für $SLOT vorhanden."
             [[ -f $STATE_BASE/$SLOT.uid && $(< "$STATE_BASE/$SLOT.uid") == "$UID_NUM" ]] || fail "UID-Inventar für $SLOT fehlt / weicht ab. Keine Übernahme fremder Konten."
+            python3 "$BASE/epoch-read.py" "$SLOT" >/dev/null || fail "Epoche für $SLOT fehlt / unsicher; Migration vor allen Änderungen klären."
         else
             [[ ! -e $SLOT_HOME && ! -L $SLOT_HOME && ! -e $SLOT_DATA && ! -L $SLOT_DATA ]] || fail "Verwaiste Slotpfade bei $SLOT; erst Recovery prüfen."
             [[ ! -e $STATE_BASE/$SLOT.uid ]] || fail "Inventar für gelöschten Slot $SLOT vorhanden. Erst Rückbau / Wiedervergabe abschließen."
