@@ -89,7 +89,7 @@ impl Desktop {
                         Stage::Queue { position, .. } => {
                             ui.heading("Ein Arbeitsplatz wird für dich frei");
                             ui.add_space(18.0);
-                            ui.label(format!("Alle 10 Arbeitsplätze sind belegt. Du bist Nr. {position}."));
+                            ui.label(format!("Alle 10 Arbeitsplätze sind belegt. Du bist Nr. {position} in der Warteschlange."));
                             ui.label("Du rückst automatisch nach. Lass dieses Fenster einfach offen.");
                             self.cancel_button(ui);
                         }

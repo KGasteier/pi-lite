@@ -1647,7 +1647,7 @@ mod tests {
             ("v3-checkin", "Warte auf Anmeldung im Browser …"),
             (
                 "v3-warteschlange",
-                "Alle 10 Arbeitsplätze sind belegt. Du bist Nr. 2.",
+                "Alle 10 Arbeitsplätze sind belegt. Du bist Nr. 2 in der Warteschlange.",
             ),
             ("v3-sync-auswahl", "Was möchtest du nach R2 mitnehmen?"),
             ("v3-arbeiten-eingecheckt", "Auschecken …"),
