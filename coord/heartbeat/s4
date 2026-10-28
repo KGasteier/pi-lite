@@ -1,5 +1,0 @@
-2026-10-28T18:08:03+01:00 I1-S4-provision Einstieg: Vorgaben und Maschinenbefund lesen
-2026-10-28T18:16:23+01:00 I1-S4-provision Befund/Grundgerüst geschrieben; Prüfskript und Rückbau in Arbeit
-2026-10-28T18:21:44+01:00 I1-S4-provision Checkpoint 57676e3; Sicherheitsprüfung und isolierte Regressionstests
-2026-10-28T18:33:47+01:00 I1-S4-provision 10 Regressionstests grün; Dry-Run/README und Abschlussprüfung
-2026-10-28T18:38:23+01:00 I1-S4-provision 14 Tests und Syntax grün; Bericht wird abgelegt, kein Apply
