@@ -1,0 +1,21 @@
+[
+  {"pfad":"Projekte/Buch/text.md","bytes":12,"klasse":"persoenlich"},
+  {"pfad":"Projekte/App/target/readme.md","bytes":12,"klasse":"fluechtig"},
+  {"pfad":"Ergebnisse/target/a.exe","bytes":12,"klasse":"persoenlich"},
+  {"pfad":"Skills/mein-skill/SKILL.md","bytes":12,"klasse":"persoenlich"},
+  {"pfad":"Verläufe/sitzung.jsonl","bytes":12,"klasse":"persoenlich"},
+  {"pfad":"Verlaeufe/sitzung.jsonl","bytes":12,"klasse":"persoenlich"},
+  {"pfad":"Projekte/App/a.log","bytes":12,"klasse":"fluechtig"},
+  {"pfad":"Projekte/App/core.123","bytes":12,"klasse":"fluechtig"},
+  {"pfad":"Projekte/App/node_modules/a.js","bytes":12,"klasse":"fluechtig"},
+  {"pfad":"Geheim/notiz.md","bytes":12,"klasse":"fluechtig"},
+  {"pfad":"Ergebnisse/film.mp4","bytes":209715201,"klasse":"gross"},
+  {"pfad":"../Ergebnisse/a.md","bytes":12,"klasse":"nie"},
+  {"pfad":"/Ergebnisse/a.md","bytes":12,"klasse":"nie"},
+  {"pfad":"Projekte/a\\b","bytes":12,"klasse":"nie"},
+  {"pfad":"Projekte/link","bytes":12,"art":"symlink","klasse":"nie"},
+  {"pfad":"Ergebnisse/CON.txt","bytes":12,"klasse":"nie"},
+  {"pfad":"Ergebnisse/notiz. ","bytes":12,"klasse":"nie"},
+  {"pfad":"Skills/LPT1.md","bytes":12,"klasse":"nie"},
+  {"pfad":"Projekte","bytes":12,"klasse":"persoenlich"}
+]

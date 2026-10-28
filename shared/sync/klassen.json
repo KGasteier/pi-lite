@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "max_datei_bytes": 209715200,
+  "max_upload_bytes": 2147483648,
+  "bereiche": ["Projekte", "Ergebnisse", "Skills", "Verlaeufe"],
+  "fluechtige_ordner": ["target", "node_modules", ".cache", "__pycache__", ".venv", "venv", "build", "dist", ".next", ".gradle", "coverage", "tmp", "temp", ".pytest_cache", ".mypy_cache"],
+  "fluechtige_endungen": [".o", ".a", ".so", ".dylib", ".dll", ".exe", ".class", ".pyc", ".log", ".tmp", ".swp", "~"],
+  "fluechtige_namen": [".DS_Store", "core"],
+  "fluechtige_praefixe": ["core."],
+  "regelreihenfolge": ["unsicher_nie", "ausserhalb_fluechtig", "groesse_gross", "ergebnisse_persoenlich", "ordner_fluechtig", "dateiname_fluechtig", "sonst_persoenlich"]
+}

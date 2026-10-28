@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/md-core", "crates/md-egui", "crates/pi-backend", "crates/pi-net", "app"]
+members = ["crates/md-core", "crates/md-egui", "crates/pi-backend", "crates/pi-net", "crates/pi-sync", "app"]
 
 [workspace.package]
 edition = "2021"
