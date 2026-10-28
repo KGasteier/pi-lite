@@ -1500,15 +1500,8 @@ impl Desktop {
 }
 fn chat_message(ui: &mut Ui, message: &ChatMessage, id: impl std::hash::Hash + std::fmt::Debug) {
     ui.add_space(12.0);
-    egui::Frame::new().inner_margin(14.0).show(ui, |ui| {
-        let leader = message.speaker.ends_with(" · Seminarleitung");
-        if leader {
-            ui.painter().vline(
-                ui.min_rect().left(),
-                ui.min_rect().y_range(),
-                egui::Stroke::new(3.0, Color32::from_rgb(0x4f, 0xb8, 0xd8)),
-            );
-        }
+    let leader = message.speaker.ends_with(" · Seminarleitung");
+    let response = egui::Frame::new().inner_margin(14.0).show(ui, |ui| {
         ui.label(RichText::new(&message.speaker).small().color(if leader {
             Color32::from_rgb(0x4f, 0xb8, 0xd8)
         } else {
@@ -1522,6 +1515,13 @@ fn chat_message(ui: &mut Ui, message: &ChatMessage, id: impl std::hash::Hash + s
             id,
         );
     });
+    if leader {
+        ui.painter().vline(
+            response.response.rect.left() + 3.0,
+            response.response.rect.y_range(),
+            egui::Stroke::new(3.0, Color32::from_rgb(0x4f, 0xb8, 0xd8)),
+        );
+    }
 }
 
 /// Vier weiße Randmodule sind Teil der Textur, nicht nur UI-Abstand.
