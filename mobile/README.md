@@ -1,62 +1,64 @@
-# cocopi mobil · I1
+# cocopi mobil · I2
 
-Vanilla-JS-Mobiloberfläche, aus pi-lite `ui/` auf den eingefrorenen Umfang reduziert: Sessionliste (M-LI), lesender Verlauf (M-SE), dieses Gerät/Abmelden (M-EI), Kopplung per eingetipptem oder gescanntem Code (M-QR). Gemeinsamer Tauri-freier Transport: `../ui/transport.js`. Kein lokales pi, keine Telemetrie und keine Paketabhängigkeiten.
+Reduzierte pi-lite-Weboberfläche für den eingecheckten Rechner: Sessions ansehen, kurzen Auftrag senden, Rückfragen beantworten, abbrechen und Ergebnisse ansehen/teilen. Kein lokales pi, kein eigener Handy-Check-in, kein Upload, keine Telemetrie oder neue Abhängigkeit. Gemeinsamer Tauri-freier Transport: `../ui/transport.js`.
 
-## Start lokal – Änderungsbitte an S3, noch keine vorhandene Hubroute
+## Andocken und Zustände
 
-Der v1-Hub soll **auf demselben Ursprung** folgende öffentliche statische Dateien bereitstellen:
+Am eingecheckten Rechner „Handy koppeln“ öffnen und dessen **k-Code** scannen/eintippen. Das Handy übernimmt keine Adresse aus QR-Daten und wartet auf die Zustimmung am Rechner. Kamera nur nach Klick, ohne Audio; bei Navigation/Verbergen stoppen die Tracks. Ohne BarcodeDetector/Kamera bleibt Eintippen verfügbar.
 
-- `/m/` und `/m/index.html` → `mobile/index.html`;
-- `/m/<App-Datei>` → explizite Allowlist aus `sw.js` (plus `sw.js` selbst), **nicht** Tests, README oder beliebige Repositorydateien;
-- `/ui/transport.js` → `ui/transport.js`, MIME `text/javascript`;
-- `/c` → statische Übergabeseite gemäß A3, die **nichts automatisch einlöst**, mit bewusstem Link nach `/m/` (Fragment bleibt erhalten). Keine Code-/Tokenlogs; Query-Variante nicht ins Accesslog schreiben.
+Die Kopplung gilt nur bis zum Check-out. 401 (auch ohne offenen SSE-Stream) oder eigener Widerruf zeigt:
 
-Danach eigenen lokalen **Mock**-Hub auf `127.0.0.1:<freier Port>` mit `HUB_STATE=<Temp-Verzeichnis>` oder `off`, explizitem `HUB_ROOTS=<Temp-Projekt>`, `HUB_SLOT=account03` und Mock-Harness starten (konkrete CLI bei S3). `/m/` öffnen. Über den Admin eine Testeinladung ausstellen oder am Test-Desktop „Handy koppeln“ wählen. Es gibt keine eingebauten Zugangsdaten und keinen Demo-Token-Eingabetrick.
+> Dein Rechner hat ausgecheckt. Dieses Handy ist abgemeldet.
 
-Ein bloßer statischer Server liefert die App-Hülle, aber **keine Anmeldung/Sessions**. Keine Verbindung zum Nutzerdienst, keine echten Sessions oder Modelle für Tests benutzen. Mobil im Betrieb ausschließlich HTTPS; HTTP akzeptiert der Transport nur für localhost/Loopback. Hub bleibt an Loopback gebunden. CSP und `referrer=no-referrer`, keine Fremd-CDNs.
+„Erneut koppeln“ führt zurück. Verlauf, Eingaben, Session-/Ergebnisliste, Vorschau, Blob-URLs, Token und Kontobindung werden verworfen. Eine IDB-Transaktion lässt nur `privateKey`, `publicKey`, `pubkey` zurück; keine Gerätenamen/Slot-/Geräte-ID. Nach bestätigtem manuellem Abmelden wird auch der Schlüssel gelöscht. Speicherfehler werden sichtbar gemeldet, nicht als erfolgreiche Löschung ausgegeben. Ein Netzverlust allein ist **kein** Check-out-Nachweis: letzter Stand bleibt als veraltet markiert. Ohne Netz kann das Handy den Check-out nicht erkennen; bei der nächsten 401 wird geleert.
 
-## Protokoll und Schutz
+## Sessionaktionen
 
-Abgeglichen mit S3 `shared/protocol/v1/PROTOKOLL.md`/`schema.json` vom 28.10.2026:
+- Kurzer Auftrag: maximal 4000 Zeichen, eigener `client_id` (UUID), POST `/v1/sessions/:id/senden`. Keine optimistische Erfolgsmeldung, keine automatische Wiederholung. Knopf und Eingabe bis zur Antwort gesperrt. Netz-/5xx-Fehler sperrt weiteren Versand: „Versand unklar. Nicht erneut senden. Prüfe den Auftrag am Rechner.“ Sessionwechsel hebt diese Sperre nicht auf. Bestätigte 4xx-Ablehnung entsperrt.
+- Rückfragen: `confirm`, `select`, `input`, `editor`; Antwort mit vorhandener Frage-ID über `/antwort{frage_id,wert}`. Keine automatische Zustimmung oder vorgewähltes „Ja“. Unbekannte Frageform am Rechner beantworten.
+- Abbrechen: `/stopp`; „Abbruch angefragt“ ist nicht „fertig“. Nur Hubzustand zählt. Abbruch bleibt auch bei unklarer Prompt-Versandlage möglich.
+- `session_ereignis` mit `von.rolle=seminarleitung` wird als „Name · Seminarleitung“ farbig markiert. S3s `cocopi_absender` ebenso wie attribuierte `message_end` werden unterstützt. Die Rolle muss upstream geprüft sein; diese Anzeige ist keine eigene Rollenprüfung und erlaubt keine Übernahme.
 
-- `POST /v1/hallo`, Einladung/Kopplung über `/v1/einloesen`; auch eine Einladung bei vorhandenem Gerät wartet per `/v1/koppeln/:anfrage_id` auf Bestätigung. Bis dahin kein angemeldetes Gerät und keine lokale Registrierung.
-- Ed25519-Challenge über `/v1/anmelden/challenge` + `/v1/anmelden`; öffentliche Schlüssel/Signaturen Base64url. Signiert wird exakt `cocopi-v1-anmelden\n<hub_origin>\n<slot>\n<geraet_id>\n<challenge_id>\n<nonce>` (LF, kein Schluss-LF). Ursprung aus der bewusst konfigurierten Adresse, Slot aus der gespeicherten Registrierung; `hallo` und Challenge müssen denselben Slot nennen. Fremder Ursprung/Slot und alte Registrierungen ohne Kontext werden vor der Signatur blockiert. Token nur im RAM, ausschließlich im Authorization-Header, auch SSE per fetch-Stream (`/v1/ereignisse`), nie EventSource-URL/Cookies.
-- `Last-Event-ID: <epoch>:<seq>`; Dubletten verworfen. Unangekündigte Sequenzlücke wird sichtbar unterbrochen. `neu_abgleichen` setzt den Cursor zurück; Sessionliste ersetzt die alte. Das ist **keine** Garantie vollständiger alter Chat-Historie.
-- Puls 15 s vom Hub, Überwachung 45 s. Ohne Puls wird der Stand als veraltet angezeigt, selbst wenn Inhalte weiter eintreffen. 401 leert private Anzeige und beendet Streams. Nach erneutem Öffnen/„Jetzt neu verbinden“ neue Challenge, kein neues Koppeln nötig.
-- QR-Parser akzeptiert Fragment `#1.k.<code>`, Query `?c=1.k.<code>`, gruppierten/kompakten Rohcode. Keine Übernahme eines Hosts aus dem QR. Code wird erst nach bewusster Hauptaktion gesendet. Eingangsfragment/-query vor weiteren Requests aus der Adresszeile entfernt.
-- Kamera ausschließlich nach Klick, `BarcodeDetector` + `getUserMedia`, Video ohne Audio, Tracks bei Navigation/Verbergen stoppen. Fehlt die API oder Erlaubnis: Eintippen, **keine** Bibliothek.
-- Gerätewiderruf nur für dieses Handy. Erfolg erst nach Hubbestätigung; bei Funkloch bleibt der Schlüssel für einen erneuten Widerrufsversuch erhalten. Fremde Geräte kann Mobil nicht verwalten.
+## Ergebnisse – read-only
 
-## Ablage / Fallback
+POST `/v1/sync/vorschau`: ausschließlich `persoenlich` mit sicherem `pfad` unter `Ergebnisse/`. Einzeldateien über den vorgeschlagenen additiven Lesepfad `GET /v1/sync/datei?pfad=Ergebnisse/…` mit Authorization-Header. Keine Archive/Uploads. Maximal 25 MiB pro Vorschau, Größe auch während des Lesens begrenzt.
 
-`device.js` erzeugt Ed25519 mit `extractable:false`; privater CryptoKey und öffentlicher Schlüssel werden per strukturiertem Clone in IndexedDB gespeichert. Nur öffentlicher Schlüssel verlässt das Gerät. Gerät-ID, Slot und Hub-Ursprung werden erst nach Hubfreigabe lokal gespeichert, Token nicht persistiert. Alte Registrierungen ohne Slot/Ursprung brauchen bewusstes erneutes Koppeln; kein stilles Übernehmen aus der Challenge. **Kein** localStorage, Inhalts-/Vorschau-/API-Cache. IDB speichert keine Chats.
+Rasterbilder als lokale Blob-URL; PDF im Browser-Viewer plus „PDF im Browser öffnen“; Text/Markdown/HTML/SVG **nur als Text**, niemals aktives HTML. MIME-Prüfung für Rasterbilder/PDF, PDF-Magicsignatur. „Teilen“ nur bei `navigator.share` + `canShare({files})`, durch ausdrücklichen Klick. Textdateien werden als `.txt` geteilt. Teilen verlässt bewusst cocopi; Kopien in anderen Apps oder separat geöffneten Browser-PDF-Tabs kann cocopi nicht zurückrufen. Blob-URLs im cocopi-Tab werden beim Wechsel/Check-out widerrufen.
 
-Wenn WebCrypto-Ed25519, sichere Umgebung oder IDB/Clone fehlen: Anmeldung ist mit Erklärung **gesperrt**. Kein exportierbarer Schlüssel, kein gemeinsames Token, keine eigene Kryptografie als Ersatz. Empfehlung aktueller Browser oder später native Hülle. Nicht-exportierbar heißt nicht gegen bösartigen Code desselben Ursprungs geschützt; XSS könnte Signaturen anfordern. Browser-/OS-Schutz und minimale Auslieferungs-Allowlist bleiben erforderlich.
+**Aktuelle Integrationsgrenze:** S7s Sync-Handler ließ beim letzten Abgleich nur Desktopgeräte zu, S3 hat noch kein eingebundenes Syncobjekt/Einzeldatei-Leseroute. Die Vorschau ist gegen den In-Memory-Vertrag geprüft, nicht als fertiger Hub-Dateifluss abgenommen. Änderungsbitten an S3/S7 stehen im Auftragsbericht.
 
-Service Worker cacht **nur** die feste öffentliche App-Hülle beim Installieren. Kein `cache.put`, kein Laufzeitcache, kein API-Fallback; Header-/Query-Requests werden nicht abgefangen. Neue Shellversion braucht erhöhten Cache-Namen. App startet offline ohne Inhalte und zeigt keinen lokalen Agenten als Ersatz.
+## Authentisierung / Ablage
 
-## Nachweise (Node 22, keine Installation)
+Ed25519-Challenge nach `shared/protocol/v1/PROTOKOLL.md`: exakte UTF-8-Signatur `cocopi-v1-anmelden\n<hub_origin>\n<slot>\n<geraet_id>\n<challenge_id>\n<nonce>`, kein Schluss-LF. Ursprung aus konfigurierter Adresse, Slot aus bewusst gespeicherter Registrierung; Wechsel wird vor Signatur abgewiesen. CryptoKey `extractable:false` per strukturiertem Clone in IndexedDB. Fehlendes WebCrypto/IDB sperrt mit Erklärung; kein exportierbarer/unsicherer Ersatz.
+
+Token nur im RAM/Authorization-Header, nie URL/Cookie/Log. SSE per fetch, `Last-Event-ID`, Dubletten-/Lückenerkennung, Pulsgrenze 45 s. Keine Garantie vollständiger historischer Chats oder serverweiten Exactly-once-Versands. Die serverseitige Deduplizierung von `client_id` ist bei S3 angefragt. 401 führt konservativ immer zur Abmeldung und Neukopplung (auch Tokenablauf).
+
+Keine Chats/Ergebnisse in IDB, localStorage oder Cache. Service Worker speichert nur feste öffentliche Shell-Allowlist, kein Laufzeit-/APIcache. Pfade in Manifest/SW/Transport sind relativ zum Slot; `/slot/account03/m/` bleibt innerhalb `/slot/account03/`. CSP, no-referrer, keine Fremd-CDNs. Nicht-exportierbar schützt nicht vor bösartigem Code desselben Ursprungs: minimale Auslieferung/XSS-Schutz bleiben nötig.
+
+## Auslieferung – Änderungsbitte S3/S4
+
+Auf demselben HTTPS-Ursprung hinter TLS/Tailscale bereitstellen:
+
+- `/slot/accountNN/m/` → `mobile/index.html`;
+- `/slot/accountNN/m/<App-Datei>` → explizite Allowlist aus `sw.js` plus `sw.js` selbst; niemals Tests/README/Repo-Dateien;
+- `/slot/accountNN/ui/transport.js` → `ui/transport.js`, MIME `text/javascript`;
+- `/slot/accountNN/c` → bewusste Übergabe nach `m/`, Fragment erhalten, nichts automatisch einlösen; Querycodes nicht loggen.
+
+Der Proxy entfernt `/slot/accountNN` für Hub-API-Aufrufe. Loopback-Hub, keine CORS-/Legacy-Tokenfreigabe. Statischer Server allein liefert nur die App-Hülle. Keine Nutzerhubs/-sessions als Test verwenden.
+
+## Nachweise
 
 ```sh
-export PATH=$HOME/.local/share/mise/shims:$PATH
+export PATH=$HOME/.cargo/bin:$HOME/.local/share/mise/shims:$PATH
 node --test mobile/test/*.mjs
 for f in ui/transport.js mobile/*.js mobile/test/*.mjs; do node --check "$f" || exit 1; done
 git diff --check
 ```
 
-Integrationstest importiert optional S3s `lib/hub-v1.mjs` aus `/home/medienhaus/Work/pi-hub-wt/s3` (überschreibbar `COCOPI_V1_TEST_MODULE`). Er startet nur seinen eigenen HTTP-Server auf zufälligem Loopbackport, mit temporärer Ablage und einem kleinen Mock-Adapter, **nicht** `server.mjs` oder den Nutzerdienst. Fehlt das Modul, wird der Test ausdrücklich übersprungen.
+32 Tests grün, 0 übersprungen: A1/QR/Signatur/SSE/IDB-Dummy; Prompt-Doppelclick, unklarer Versand, read-only Ergebnisfilter; DOM-Vertragsdummy für Prompt/Rückfrage/Stopp, Seminarleitungsmarke, Textvorschau und Abmeldung. Integration importiert S3 `lib/hub-v1.mjs` (Default `/home/medienhaus/Work/pi-hub-wt/s3`, überschreibbar `COCOPI_V1_TEST_MODULE`), nur zufällige Loopbackports, temporäre Ablage/Mockadapter. Signierte Belegung → k-Kopplung → Prompt/Rückfrage Nein/Stopp → signierte Freigabe → 401/Logout ist gegen S3 `229f68e` geprüft. Kein echtes Modell.
 
-Tests decken QR, SSE-Framing/Replay/Dubletten/Lücken/Neuabgleich/Pulsausfall/401, Challenge/Kopplung/Widerruf, Zustandstexte, Shell-Allowlist und CryptoKey-Vertrag (Node WebCrypto + IDB-Dummy) ab. M3 zusätzlich: deterministischer Protokollvektor mit `device.js`, fremder/fehlender Kontokontext vor Signatur blockiert und Signatur für Hub A von Hub B über echtes lokales HTTP abgewiesen. Gegen S3-Hub `e2eabfa`: H1 wartet ohne neue Registrierung; H2 hält b-Code/URL aus Live-SSE und Replay fern. Das beweist **keinen Browser-IDB-Clone** und keine Kamera-/Layout-/PWA-Funktion auf echten Geräten.
+**Ungeprüft:** Browser-IDB-Clone, PDF-Viewer/Web Share, Kamera, PWA-Installation, Safe Area/Tastatur/Screenreader, echte iOS-/Androidgeräte. Kein Chromium im Arbeitsimage; keine Screenshots/visuelle Abnahme. DOM-Dummy ersetzt keine Browserprüfung (390×800/1100×700). Tippflächen CSS mindestens 44/48 px, Fokus und aria-live vorhanden; reale Bedienbarkeit offen. ntfy, weitere Rechnerbestätigung (`b`), vollständiger Altverlauf und Tauri-Mobile-Hülle weiter offen (`TAURI.md`).
 
-## Grenzen und offene Änderungen
+## Herkunft
 
-- Kein Chromium auf R2: **keine Screenshots und keine Browser-/Geräteabnahme**. S1/S6 müssen 390×800 und 1100×700 sowie Tastatur/Screenreader, Safe Area, Zurück-Geste, installierte PWA und iOS/Android prüfen. Ziele CSS ≥44 px; physische Bedienbarkeit ungeprüft.
-- **Historischer Verlauf unvollständig:** v1 bietet bisher keinen lesenden Verlauf-Endpunkt. Nur seit Verbindung empfangene vollständige `message_end`-Nachrichten erscheinen. Keine erfundene „vollständig“-Anzeige. Änderungsbitte S3: read-only Snapshot mit Cursor, damit Snapshot+SSE ohne Lücken/Dubletten zusammengeführt werden können; S1 entscheidet I1-Abnahme. Ruhende Sessions werden mobil nicht aufgeweckt.
-- M-VO Datei-/PDF-/Bildvorschau, Senden, Rückfragen-Antwort, Stopp, Push/ntfy und Bestätigung eines weiteren Rechners (`b`) **nicht implementiert in I1**. Kein täuschend aktiver Platzhalter. `b` wird geparst, aber mit Erklärung nicht ausgeführt: Der Vertrag liefert noch keine vom Hub authentisierte Aktionsvorschau vor Freigabe (Änderungsbitte S1/S3).
-- Bei bereits vorhandenem Handy liefert eine neue e-Einladung einen b-Code nur in der HTTP-Antwort. Die Mobilansicht wartet ehrlich, bietet dessen Anzeige/Bestätigung jedoch noch nicht an (A3-Aktionsvorschau offen); für ein weiteres Handy den k-Code eines angemeldeten Desktops nutzen. b-Codes werden niemals aus SSE abgeleitet.
-- Kopplungseinladung nicht automatisch wiederholen, auch nicht bei unklarem Versand. Abbruch stoppt lokal das Polling; ein serverseitiger Abbruch für die anfragende Handyseite fehlt (S3 anfragen). Prüfwort I1 optional, nicht vorhanden.
-- Automatisches Tokenerneuern im laufenden 12-h-Tab noch nicht implementiert; 401 zeigt abgemeldet, „Jetzt neu verbinden“ macht Challenge. Keychain/Keystore/Tauri: ausschließlich Plan in `TAURI.md`.
-
-## Herkunft der Darstellung
-
-Farben/ruhige Flächen und Session-/Verlaufsbegriffe aus pi-lite `ui/index.html`/`ui/app.js` reduziert; keine lokale `invoke`-Funktion kopiert. `icons/cocopi.svg` unverändert aus `copi/app/assets/cocopi.svg`, PNGs daraus mit vorhandenem librsvg/Cairo gerendert. Figtree Regular aus vorhandenen Appassets; SIL-OFL unter `fonts/OFL.txt`. Kein Orca-Code übernommen; QR-/Pulsabläufe nach eigenem A1/A3-Vertrag umgesetzt.
+Darstellung/Begriffe aus pi-lite reduziert; kein lokales `invoke` kopiert. Icon aus `copi/app/assets/cocopi.svg`, Figtree Regular aus vorhandenen Assets (OFL unter `fonts/OFL.txt`). Kein Orca-Code übernommen. Nur eigene Pfade dieses Rollenauftrags geändert.

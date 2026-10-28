@@ -4,7 +4,7 @@ export class SessionActions {
   state(id) { return this.states.get(id) || { status: 'idle' }; }
   clear() { this.states.clear(); }
   async run(id, kind, ...args) {
-    if (this.state(id).status !== 'idle') return;
+    if (this.state(id).status !== 'idle' && !(kind === 'stopp' && this.state(id).status === 'uncertain')) return;
     const state = { status: 'pending', kind, client_id: kind === 'senden' ? crypto.randomUUID() : undefined };
     this.states.set(id, state); this.changed();
     try {

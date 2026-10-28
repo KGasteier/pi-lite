@@ -22,7 +22,7 @@ function clearPreview() {
 function signedOut() {
   if (invalidated) return;
   invalidated = true; generation++; token = ''; rows = []; history.clear(); actions.clear(); registered = false;
-  welcome = null; lastSeen = null; selected = null; pairAbort?.abort(); stopCamera(); stream?.close();
+  welcome = null; lastSeen = null; selected = null; questionKey = ''; pairAbort?.abort(); stopCamera(); stream?.close();
   $('code').value = ''; $('prompt').value = ''; $('pair-status').textContent = '';
   $('device-name').textContent = 'Dieses Handy'; $('device-hint').textContent = '';
   $('answer-fields').replaceChildren(); $('question-text').textContent = ''; $('answer-form').hidden = true;
@@ -56,7 +56,7 @@ function renderList() {
   $('connect').hidden = Boolean(token) || registered || invalidated;
   $('repair').hidden = !invalidated;
   $('reconnect').hidden = !registered || (Boolean(token) && connection !== 'unterbrochen');
-  $('settings-pair').hidden = Boolean(token);
+  $('settings-pair').hidden = Boolean(token) || invalidated;
   $('logout').hidden = !token;
   for (const row of rows) {
     const li = document.createElement('li'), link = document.createElement('a');
@@ -98,7 +98,7 @@ function renderControls() {
   $('send').disabled = !ready || !['bereit', 'fertig'].includes(row?.zustand) || state.status !== 'idle';
   $('prompt').disabled = !ready || state.status !== 'idle';
   $('stop').hidden = !['arbeitet', 'wartet'].includes(row?.zustand);
-  $('stop').disabled = !ready || state.status !== 'idle';
+  $('stop').disabled = !ready || state.status === 'pending';
   $('action-status').textContent = state.status === 'pending' ? 'Warte auf Bestätigung von R2 …'
     : state.status === 'uncertain' ? 'Versand unklar. Nicht erneut senden. Prüfe den Auftrag am Rechner.' : '';
   const q = row?.frage, key = q ? `${selected}/${q.id}` : '';
@@ -137,6 +137,9 @@ function receive(msg) {
     if (event?.type === 'message_end' && event.message) {
       const id = event.message?.id;
       if (!id || !list.some(m => m.id === id)) list.push({ ...event.message, ...(msg.von ? { von: msg.von } : {}) });
+    }
+    if (event?.type === 'cocopi_absender' && msg.von?.rolle === 'seminarleitung') {
+      list.push({ role: 'user', content: event.text, von: msg.von });
     }
     // Vollständige message_end-Blöcke vermeiden Delta-Doppelzählung nach Replay.
     history.set(msg.session_id, list);
@@ -259,7 +262,7 @@ $('logout').onclick = async () => {
     $('device-hint').textContent = ''; notice('Dieses Handy ist abgemeldet.');
   } catch (error) {
     // Bei Funkloch nicht vortäuschen, dass der Hub widerrufen hat. Schlüssel für erneuten Versuch behalten.
-    notice(`Die Abmeldung auf R2 wurde nicht bestätigt. ${errorText(error)} Der Geräteschlüssel bleibt für einen erneuten Versuch erhalten.`);
+    if (!invalidated) notice(`Die Abmeldung auf R2 wurde nicht bestätigt. ${errorText(error)} Der Geräteschlüssel bleibt für einen erneuten Versuch erhalten.`);
   } finally { $('logout').disabled = false; }
 };
 $('prompt-form').onsubmit = async event => {
