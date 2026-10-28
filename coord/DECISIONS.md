@@ -6,3 +6,4 @@
 - 28.10.2026 K: Provider-Präfix auf R2 ist `udk2/` (nicht `udk/`). terra nicht registriert.
 - 28.10.2026 K: `coord/` lebt im Haupt-Worktree (Branch `cocopi-v3`); Subagenten schreiben nur `coord/heartbeat/<rolle>` und `coord/runs/<rolle>-*.md` (Berichte), sonst nichts in `coord/`.
 - 28.10.2026 Mensch: Agentenlauf bis Ende I1 freigegeben (D-K1 für I1). S4 nutzt `udk2/cx/gpt-6.1-sol` statt terra (D-T1). Opus (diese Sitzung) koordiniert als K. `coord/` auf `cocopi-v3` committen und pushen erlaubt.
+- 28.10.2026 K: S1-Ergebnis (`fdbde9f`) in `cocopi-v3` gemergt. A1–A5 eingefroren in `coord/FREEZE-I1.md` (Konflikt S1/S4 bei Namen/Port entschieden: `accountNN`, Port 88NN). Crate `qrcodegen 1.8.0` freigegeben. Spawn-Sperre (pi-backend) gehört S3, UI S2.

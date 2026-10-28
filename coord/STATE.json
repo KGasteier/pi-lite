@@ -73,9 +73,9 @@
     },
     "I1-S4-provision": {
       "owner": "s4",
-      "status": "blockiert",
-      "wait": "A4",
-      "tries": 0
+      "status": "offen",
+      "tries": 0,
+      "note": "Skripte dry-run, A4-Vorschlag; Abstimmung A4 mit S3 nach S1"
     },
     "I1-S5-transport": {
       "owner": "s5",
