@@ -36,6 +36,7 @@ struct State {
     hub: Option<Arc<HubAdapter>>,
     checkout: Option<Value>,
     cancelled: bool,
+    checkin_pending: bool,
 }
 pub struct FlowAdapter {
     config: Config,
@@ -63,6 +64,7 @@ impl FlowAdapter {
                 hub: None,
                 checkout: None,
                 cancelled: false,
+                checkin_pending: false,
             }),
         })
     }
@@ -75,6 +77,11 @@ impl FlowAdapter {
         if !self.config.net_pubkey.is_empty() {
             body["net_pubkey"] = json!(self.config.net_pubkey);
         }
+        if s.cancelled || self.cancelled_attempt.load(Ordering::SeqCst) == s.attempt {
+            return Ok(FlowReply::Cancelled);
+        }
+        // Eine verlorene Antwort kann bereits einen Slot belegen: nicht neu versuchen.
+        s.checkin_pending = true;
         let result = s.empfang.checkin(body)?;
         self.accept(s, result)
     }
@@ -82,6 +89,7 @@ impl FlowAdapter {
         if result["typ"] == "warteschlange" {
             let id = field(&result, "warte_id")?;
             s.queue = Some(id.clone());
+            s.checkin_pending = false;
             return Ok(FlowReply::Queue {
                 attempt: s.attempt,
                 id,
@@ -105,6 +113,7 @@ impl FlowAdapter {
             pickup: None,
         };
         s.receipt = Some(receipt.clone());
+        s.checkin_pending = false;
         s.queue = None;
         if s.cancelled || self.cancelled_attempt.load(Ordering::SeqCst) == s.attempt {
             // N6: Rückgabe vor Slot-Login, kein Upload nach Vergabe.
@@ -146,6 +155,9 @@ impl FlowAdapter {
             Request::Checkin { attempt, method } => {
                 if attempt == 0 || self.cancelled_attempt.load(Ordering::SeqCst) == attempt {
                     return Ok(Reply::Flow(FlowReply::Cancelled));
+                }
+                if s.checkin_pending {
+                    return Err("Die vorherige Check-in-Antwort fehlt oder konnte nicht geprüft werden. Prüfe den Empfang; kein zweiter Check-in wird gesendet.".into());
                 }
                 if s.receipt.is_some() || s.queue.is_some() || s.login.is_some() {
                     return Err("Beende zuerst den laufenden Check-in. Es wurde kein zweiter Platz angefordert.".into());
@@ -247,6 +259,9 @@ impl FlowAdapter {
                         return Ok(Reply::Flow(FlowReply::Cancelled));
                     }
                     return Err("Rückgabe ohne weiteren Upload angefordert. Ohne verifiziertes Rückspielen oder explizite Leerfreigabe wird kein Check-out bestätigt.".into());
+                }
+                if s.checkin_pending {
+                    return Err("Der Check-in-Ausgang ist unklar. Ohne Check-in-ID kann keine sichere Rückgabe bestätigt werden; bitte Empfang prüfen.".into());
                 }
                 if s.queue.is_some() || target.transfer_id.is_some() {
                     return Err("Der Empfang bietet noch keinen bestätigten Wartelisten-/Transferabbruch. Die Belegung bleibt sichtbar; es wird keine Freigabe behauptet.".into());
@@ -614,6 +629,39 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
                 .unwrap()
                 .contains("archiv")
         );
+    }
+    #[test]
+    fn ambiguous_checkin_never_retries_or_claims_cancelled() {
+        let Some(f) = Fixture::start() else {
+            return;
+        };
+        let adapter = f.adapter("uncertain");
+        assert!(matches!(
+            adapter.call(Request::Checkin {
+                attempt: 1,
+                method: CheckinMethod::Guest("invalid-code".into())
+            }),
+            Reply::Error(_)
+        ));
+        // Fehlertext wird nicht als Beweis interpretiert, dass kein Slot vergeben wurde.
+        assert!(adapter.state.lock().unwrap().checkin_pending);
+        assert!(matches!(
+            adapter.call(Request::Checkin {
+                attempt: 2,
+                method: CheckinMethod::Guest("test-invitation-one".into())
+            }),
+            Reply::Error(_)
+        ));
+        assert!(matches!(
+            adapter.call(Request::CancelFlow(CancelTarget {
+                attempt: 1,
+                checkin_id: None,
+                transfer_id: None,
+                abandon_checkin: true
+            })),
+            Reply::Error(_)
+        ));
+        assert!(adapter.state.lock().unwrap().receipt.is_none());
     }
     #[test]
     fn local_fake_oidc_proof_is_verified_by_real_empfang() {
