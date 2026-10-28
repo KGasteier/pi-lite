@@ -1,0 +1,40 @@
+I1-S4-a4 · isolierte Regression; temporäres HOME, keine Systemänderung
+2026-10-28T18:55:35.271796+01:00
+$ python3 deploy/r2/test_scripts.py
+test_admin_activity_is_labelled_service_start_not_student_work (__main__.SafeScripts.test_admin_activity_is_labelled_service_start_not_student_work) ... ok
+test_admin_dry_run_is_quiet_and_honest (__main__.SafeScripts.test_admin_dry_run_is_quiet_and_honest) ... ok
+test_admin_fixture_active_and_inactive_slot (__main__.SafeScripts.test_admin_fixture_active_and_inactive_slot) ... ok
+test_admin_fixture_all_observed_checks_pass (__main__.SafeScripts.test_admin_fixture_all_observed_checks_pass) ... ok
+test_admin_fixture_missing_wrong_identity_and_quota_unavailable (__main__.SafeScripts.test_admin_fixture_missing_wrong_identity_and_quota_unavailable) ... ok
+test_all_accounts_map_to_same_unix_name_and_stable_ids (__main__.SafeScripts.test_all_accounts_map_to_same_unix_name_and_stable_ids) ... ok
+test_apply_requires_root_without_mutation (__main__.SafeScripts.test_apply_requires_root_without_mutation) ... ok
+test_bad_arguments_fail_closed (__main__.SafeScripts.test_bad_arguments_fail_closed) ... ok
+test_bash_syntax (__main__.SafeScripts.test_bash_syntax) ... ok
+test_default_is_explicit_dry_run (__main__.SafeScripts.test_default_is_explicit_dry_run) ... ok
+test_generated_hub_contract_and_private_state_directory (__main__.SafeScripts.test_generated_hub_contract_and_private_state_directory) ... ok
+test_hub_contract_unconfirmed_fails_before_any_service (__main__.SafeScripts.test_hub_contract_unconfirmed_fails_before_any_service) ... ok
+test_launcher_rejects_wrong_slot_without_reading_token (__main__.SafeScripts.test_launcher_rejects_wrong_slot_without_reading_token) ... ok
+test_listener_identity_and_loopback_fail_closed (__main__.SafeScripts.test_listener_identity_and_loopback_fail_closed) ... ok
+test_mount_preflight_rejects_unknown_unquotified_and_inactive (__main__.SafeScripts.test_mount_preflight_rejects_unknown_unquotified_and_inactive) ... ok
+test_plan_ports_and_budget (__main__.SafeScripts.test_plan_ports_and_budget) ... ok
+test_preflight_clean_new_accounts_returns_success (__main__.SafeScripts.test_preflight_clean_new_accounts_returns_success) ... ok
+test_quota_reader_exact_split_and_over_budget (__main__.SafeScripts.test_quota_reader_exact_split_and_over_budget) ... ok
+test_quota_usage_text_does_not_hide_limits_or_inode_exhaustion (__main__.SafeScripts.test_quota_usage_text_does_not_hide_limits_or_inode_exhaustion) ... ok
+test_slice_reader_positive_and_negative (__main__.SafeScripts.test_slice_reader_positive_and_negative) ... ok
+test_sudo_listing_rejects_any_allow_rule (__main__.SafeScripts.test_sudo_listing_rejects_any_allow_rule) ... ok
+test_symlink_and_parent_traversal_rejected (__main__.SafeScripts.test_symlink_and_parent_traversal_rejected) ... ok
+test_teardown_needs_explicit_slots (__main__.SafeScripts.test_teardown_needs_explicit_slots) ... ok
+
+----------------------------------------------------------------------
+Ran 23 tests in 1.570s
+
+OK
+
+Exitcode: 0
+bash -n deploy/r2/admin-check.sh: OK
+bash -n deploy/r2/check.sh: OK
+bash -n deploy/r2/common.sh: OK
+bash -n deploy/r2/hub-launch.sh: OK
+bash -n deploy/r2/provision.sh: OK
+bash -n deploy/r2/slots.conf: OK
+bash -n deploy/r2/teardown.sh: OK
