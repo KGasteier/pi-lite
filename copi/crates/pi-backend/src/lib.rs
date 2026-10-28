@@ -8,6 +8,7 @@ pub mod backends;
 pub mod cli;
 pub mod editor;
 pub mod folders;
+pub mod hub_v1;
 pub mod instances;
 pub mod inventory;
 pub mod material;

@@ -1,0 +1,33 @@
+# Sicherheitsstand · cocopi v1 (I1-S3)
+
+**Stand: 2026-10-28, Prototyp, nicht öffentlich freigegeben.**
+
+## Tatsächlich umgesetzt und lokal geprüft
+
+- **RemoteOnly ist der sichere Standard.** Fehlende/beschädigte `mode.json` bleibt RemoteOnly. Die zentrale `winshim::pi_command(purpose,args)`-Sperre greift vor Konstruktion jedes produktiven lokalen pi-Kommandos, einschließlich Version, CLI und Vorschau. Moduswechsel wird erst nach erfolgreicher persistenter Speicherung wirksam. Backendliste bekommt im RemoteOnly-Modus keinen lokalen Eintrag. Das UI muss beim Start `mode::init()` aufrufen und den Wechsel bewusst anbieten (S2, nicht S3).
+- Geräteschlüssel: Ed25519, öffentliche 32 Byte Base64url, frische Nonce mit 60 Sekunden Gültigkeit, einmaliger Challengeverbrauch. Signiert wird die UTF-8-Nonce. Geräteanmeldung nur nach Registrierung/Bestätigung. Token zufällig, serverseitig gehasht, im Client nur Speicher; Ablauf nach 12 Stunden. Keine Tokens in URLs, Protokoll-/Fehlerlogs oder Debug-Darstellungen des Rust-Clients.
+- Einmalcodes: 80 Bit aus Betriebssystemzufall, SHA256 statt Klartext im Hubregister, e=24 Stunden, k=5 Minuten, b=2 Minuten. Einlösung und Registrierung unter einer Registertransaktion mit Dateisperre/0600-Tempdatei/Sync/Rename; paralleles Einlösen genau einmal. Pro Absender höchstens fünf Fehlversuche je Minute, Code nach zehn bekannten Fehlversuchen gesperrt. Neuer Code ersetzt den unbenutzten Vorgänger derselben Aktion. Slotübergriff erzeugt kein Gerät und keinen Token. `person` benennt nur die Anzeige, verleiht keine Rechte.
+- Handy-Kopplung bleibt bis expliziter Desktopzustimmung unregistriert. Ein weiterer Desktop braucht bei vorhandenem Handy dessen Bestätigung. b-Code gehört zu einer gespeicherten Aktion samt vom Hub erzeugter Beschreibung; das bestätigende Handy muss selbst angemeldet sein. Keine Zustimmung durch bloße QR-Anzeige oder Kenntnis der Polling-ID.
+- Widerruf löscht Zugriffsrechte sofort, verwirft Tokens und beendet bereits offene SSE-Verbindungen. Tokenablauf beendet SSE ebenfalls. Handy darf nur sich selbst widerrufen, Gerätelisten/Adminaktionen sind Desktoprechten vorbehalten.
+- Zwei offene Prozesse und ein aktiver Auftrag werden **vor** Start/Prompt reserviert; auch Start und Rückfrage belegen den aktiven Platz. Zweiter aktiver Auftrag wird abgewiesen, nicht still eingereiht. Kein automatisches Löschen. Neustart bewahrt Sessions als `ruht`, ohne Agenten zu starten.
+- Slotbetrieb deaktiviert die alte gemeinsame `/api`-Token-API: kein Umgehen der v1-Grenzen durch universelles RPC. Ohne `HUB_SLOT` bleibt Altbetrieb kompatibel; **dies ist kein abgesicherter v1-Slot**.
+- Rust-Client blockiert Klartext-HTTP außer numerischem Loopback, URLs mit Credentials und Linkwechsel auf einen anderen als den konfigurierten Hub. HTTP-Redirects aus. Request/Antwortgrößen begrenzt; SSE-Pakete begrenzt. Keine automatische Promptwiederholung bei unklarem Ausgang. Nur expliziter `Last-Event-ID`-Replay; bei Lücke Snapshot, keine Exactly-once-Zusage.
+
+## Speicherung / Betriebsregeln
+
+Desktop: `copi_config_dir/devices/<lokaler-name>.json`, Verzeichnis 0700, neue Schlüsseldateien 0600. Unix lädt keine Symlink-/gruppen- oder weltlesbare Schlüsseldatei. Atomarer Ersatz bei Speichern der Geräte-ID. Zufall über `/dev/urandom` (Unix) beziehungsweise BCrypt-System-RNG (Windows); keine selbst entworfene Kryptografie und keine zusätzlichen RNG-Abhängigkeiten. ed25519-dalek 3.0.0 ist die einzige neue direkte Abhängigkeit. Schlüssel müssen wie Zugangsdaten gesichert werden. Die Datei ist **nicht verschlüsselt**; Keychain bleibt offen. Unix-Dateirechte ersetzen keine Prüfung von Eigentümer/Elternpfaden gegen einen bereits kompromittierten lokalen Account. Windows-ACL-/Buildprüfung steht aus.
+
+Hub: privates State-Verzeichnis 0700, Gerätespeicher 0600, getrennt je Slot und Unixkonto. Einmalige Admin-CLI-Ausgabe der Einladungs-URL ist kein Dienstlog und darf nicht im Logsammler landen. Nicht als Shellargument weiterreichen. Dienst nicht mit Diagnoseausgabe von Requestbodys/Headers betreiben. Dateisperre nach Absturz gegebenenfalls manuell prüfen; keine automatische gewaltsame Entsperrung. Für I1 sind Prozess und Admin-CLI desselben privaten Unixkontos die Transaktionsgrenze; kein verteiltes Registry-Backend.
+
+## Vor öffentlichem / echtem Betrieb offen
+
+1. TLS/Reverseproxy oder Tailscale einschließlich Origin-, Proxy- und IP-Ratelimit-Konfiguration real prüfen. Der Hub selbst ist HTTP; I1-Mocks binden nur Loopback. Hinter NAT teilen Geräte dieselbe Sendergrenze, hinter Proxy darf keine unkontrollierte Header-IP vertraut werden. Noch kein gesamthafter Internet-DoS-Schutz.
+2. R2-/Unixkonto-Sandbox, Pfade/Quoten/Owner prüfen; einen Hub je account01–account10. Geräteslots ersetzen keine Betriebssystemisolation. `HUB_GLOBAL_HEAVY_JOBS=1` ist dokumentierter **noch nicht durchgesetzter** systemweiter CPU-Queue-Vertrag.
+3. Schlüssel-Keychain, Host-/Zertifikatspinning, Rotation/Backup/Recovery und verlorenes einziges Gerät klären. Keine automatische Rechtewiederherstellung durch Gerätenamen. TLS schützt derzeit allein die Hubidentität.
+4. UI-Integration und ausdrücklicher Hybridwechsel durch S2, Einladungs-/QR-/Rückfrageanzeigen einschließlich Absender/Aktionsbeschreibung, Telefonbrowser, echtes Funkloch und Wiederverbindung testen. Alte PWA ist kein v1-Client.
+5. Normale PiInstance-RPC-Anbindung mit Fakeprozess wurde lokal getestet (Start, Zustand, Rückfrage, Antwort, Ruhe); **kein echter Modellaufruf, kein echter R2, keine öffentliche Cloudfreigabe**. Windows/macOS-Keyhandling, vollständige gemeinsame Workspace-Abnahme und unabhängiger Security-Review stehen aus.
+6. Auth-Serverzustand (Tokens, Challenges, Streams, Polling) ist instanzlokal. Kein Multiworkerbetrieb oder gemeinsames Loadbalancing ohne gemeinsame Sicherheitszustände. Registereinträge/Sessions werden nicht automatisch gelöscht. Challenge-/Token-Maps sind begrenzt; ein umfassendes Ressourcenbudget für authentifizierte Clients ist noch nötig.
+
+## Nachweise / Grenzen
+
+`node test/v1.mjs`: Hash-only/0600, Codeablauf und Wiederverwendung, Slotübergriff, Ratelimit/Sperre, Parallelität, Challenge/Tokenablauf, Zustimmung, Bestätigungsbeschreibung, Widerruf samt offenem SSE, Sessionlimits, Fake-RPC und keine Loggeheimnisse. `node test/smoke.mjs` bleibt grün. Rust: Mode-Gates und Backendfilter, URL-/Codeparser, Schlüssel-Roundtrip, gestarteter lokaler Node-Mock mit Einladung/Anmeldung/Sessions/SSE/Kopplung/Widerruf; Clippy `-D warnings` für pi-backend. Schema und 21 Beispiele mit lokalem Python-jsonschema Draft 2020-12 validiert. Diese Tests sind Funktionsnachweise, kein Penetrationstest oder formaler Sicherheitsbeweis.

@@ -15,6 +15,7 @@ Basis ist die konfigurierte `hub_url`, im Test ausschließlich `http://127.0.0.1
 | GET | `/v1/sessions` | Gerät | `sessions_liste{sessions:[session_zustand…]}` |
 | POST | `/v1/sessions/oeffnen` | Desktop | `{session_id?,workspace?,titel?}` → `session_zustand` (201 neu, 200 erneut offen) |
 | POST | `/v1/sessions/:id/senden` | Gerät | `{text}` → `session_zustand` (202); keine automatische Wiederholung |
+| POST | `/v1/sessions/:id/antwort` | Gerät | `{frage_id,wert}` → `session_zustand` (202); nur vorhandene Rückfrage, keine automatische Zustimmung |
 | POST | `/v1/sessions/:id/stopp` | Gerät | → `session_zustand` |
 | POST | `/v1/sessions/:id/ruhen` | Desktop | → `session_zustand`; arbeitende Session vorher abbrechen |
 | POST | `/v1/sessions/:id/ansehen` | Gerät | fertig → bereit |

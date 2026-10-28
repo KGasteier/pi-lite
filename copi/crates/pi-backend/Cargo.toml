@@ -9,6 +9,7 @@ description = "GUI-freie Anbindung an `pi --mode rpc` (Prozess, Sessions, CLI, O
 serde.workspace = true
 serde_json.workspace = true
 base64 = "0.22"
+ed25519-dalek = "3.0.0"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # Portable Konfigurations-/Datenverzeichnisse (XDG auf Linux, Known Folders auf Windows,
 # Standardverzeichnisse auf macOS). Fällt in `pi_backend::{config_dir,data_dir}` bei
