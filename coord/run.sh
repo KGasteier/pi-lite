@@ -9,6 +9,8 @@ export PATH=$HOME/.cargo/bin:$HOME/.local/share/mise/shims:$PATH
 cd "$WT" || exit 1
 P="$(cat "$C/prompts/common.md")
 
+$( [ "${T#I2}" != "$T" ] || [ "${T#I3}" != "$T" ] && cat "$C/prompts/I2-common.md")
+
 $(cat "$C/prompts/$T.md")"
 st() { echo "$1" > "$C/runs/$T.status.json.new" && mv "$C/runs/$T.status.json.new" "$C/runs/$T.status.json"; }
 st "{\"state\":\"running\",\"role\":\"$R\",\"model\":\"$MODEL\",\"start\":\"$(date -Is)\",\"pid\":$$}"
