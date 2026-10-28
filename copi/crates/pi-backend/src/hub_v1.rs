@@ -22,7 +22,9 @@ pub fn parse_invitation(input: &str, context: char) -> Result<Invitation, String
     let (payload, hub_url) = if text.starts_with("http://") || text.starts_with("https://") {
         let end = text.find(['?', '#']).unwrap_or(text.len());
         let prefix = &text[..end];
-        let origin = prefix.strip_suffix("/c").ok_or("Dieser Link ist kein cocopi-Einladungslink.")?;
+        let origin = prefix
+            .strip_suffix("/c")
+            .ok_or("Dieser Link ist kein cocopi-Einladungslink.")?;
         validate_url(origin)?;
         let payload = if let Some((_, fragment)) = text.split_once('#') {
             fragment.to_string()
@@ -51,8 +53,16 @@ pub fn parse_invitation(input: &str, context: char) -> Result<Invitation, String
     if !matches!(art, 'e' | 'k' | 'b') {
         return Err("Diese Codeart wird nicht unterstützt.".into());
     }
-    let canonical: String = raw.chars().filter(|c| *c != '-').map(|c| c.to_ascii_uppercase()).collect();
-    if canonical.len() != 16 || !canonical.bytes().all(|b| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(&b)) {
+    let canonical: String = raw
+        .chars()
+        .filter(|c| *c != '-')
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    if canonical.len() != 16
+        || !canonical
+            .bytes()
+            .all(|b| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(&b))
+    {
         return Err("Dieser Code ist unvollständig. Prüfe die 16 Zeichen.".into());
     }
     let code = canonical
@@ -74,10 +84,15 @@ fn validate_url(url: &str) -> Result<(), String> {
         || authority.chars().any(char::is_whitespace)
         || authority.chars().any(char::is_control)
     {
-        return Err("Die Hub-Adresse ist ungültig. Gib nur den Ursprung ohne Zugangsdaten ein.".into());
+        return Err(
+            "Die Hub-Adresse ist ungültig. Gib nur den Ursprung ohne Zugangsdaten ein.".into(),
+        );
     }
     if url.starts_with("http://")
-        && !(authority == "127.0.0.1" || authority.starts_with("127.0.0.1:") || authority == "[::1]" || authority.starts_with("[::1]:"))
+        && !(authority == "127.0.0.1"
+            || authority.starts_with("127.0.0.1:")
+            || authority == "[::1]"
+            || authority.starts_with("[::1]:"))
     {
         return Err("Eine unverschlüsselte Verbindung ist nur im lokalen Test erlaubt.".into());
     }
@@ -98,18 +113,26 @@ struct KeyFile {
 impl DeviceKey {
     /// `name` ist ein lokaler Speichername, niemals ein Pfad aus dem Netzwerk.
     pub fn load_or_create(name: &str) -> Result<Self, String> {
-        let root = crate::copi_config_dir().ok_or("Kein Konfigurationsordner verfügbar.")?.join("devices");
+        let root = crate::copi_config_dir()
+            .ok_or("Kein Konfigurationsordner verfügbar.")?
+            .join("devices");
         Self::at(&root, name)
     }
     pub fn at(root: &Path, name: &str) -> Result<Self, String> {
-        if name.is_empty() || name.len() > 80 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        if name.is_empty()
+            || name.len() > 80
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
             return Err("Ungültiger lokaler Gerätename.".into());
         }
         std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+            std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| e.to_string())?;
         }
         let path = root.join(format!("{name}.json"));
         match std::fs::read(&path) {
@@ -117,13 +140,26 @@ impl DeviceKey {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    if std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?.file_type().is_symlink()
-                        || std::fs::metadata(&path).map_err(|e| e.to_string())?.permissions().mode() & 0o077 != 0
+                    if std::fs::symlink_metadata(&path)
+                        .map_err(|e| e.to_string())?
+                        .file_type()
+                        .is_symlink()
+                        || std::fs::metadata(&path)
+                            .map_err(|e| e.to_string())?
+                            .permissions()
+                            .mode()
+                            & 0o077
+                            != 0
                     {
-                        return Err("Die Schlüsseldatei ist nicht privat. Prüfe ihre Zugriffsrechte.".into());
+                        return Err(
+                            "Die Schlüsseldatei ist nicht privat. Prüfe ihre Zugriffsrechte."
+                                .into(),
+                        );
                     }
                 }
-                let f: KeyFile = serde_json::from_slice(&bytes).map_err(|_| "Die Geräte-Schlüsseldatei ist beschädigt. Sie wurde nicht überschrieben.")?;
+                let f: KeyFile = serde_json::from_slice(&bytes).map_err(|_| {
+                    "Die Geräte-Schlüsseldatei ist beschädigt. Sie wurde nicht überschrieben."
+                })?;
                 let seed: [u8; 32] = B64
                     .decode(f.secret)
                     .map_err(|_| "Ungültiger Geräteschlüssel")?
@@ -168,11 +204,15 @@ impl DeviceKey {
             options.mode(0o600);
         }
         let mut f = options.open(&self.path).map_err(|e| e.to_string())?;
-        f.write_all(&self.data()?).and_then(|_| f.sync_all()).map_err(|e| e.to_string())
+        f.write_all(&self.data()?)
+            .and_then(|_| f.sync_all())
+            .map_err(|e| e.to_string())
     }
     fn remember(&mut self, id: &str) -> Result<(), String> {
         self.geraet_id = Some(id.to_string());
-        let temp = self.path.with_extension(format!("{}.new", std::process::id()));
+        let temp = self
+            .path
+            .with_extension(format!("{}.new", std::process::id()));
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -181,7 +221,9 @@ impl DeviceKey {
             options.mode(0o600);
         }
         let mut f = options.open(&temp).map_err(|e| e.to_string())?;
-        f.write_all(&self.data()?).and_then(|_| f.sync_all()).map_err(|e| e.to_string())?;
+        f.write_all(&self.data()?)
+            .and_then(|_| f.sync_all())
+            .map_err(|e| e.to_string())?;
         std::fs::rename(&temp, &self.path).map_err(|e| e.to_string())
     }
 }
@@ -195,10 +237,22 @@ fn os_random(bytes: &mut [u8]) -> Result<(), String> {
 fn os_random(bytes: &mut [u8]) -> Result<(), String> {
     #[link(name = "bcrypt")]
     unsafe extern "system" {
-        fn BCryptGenRandom(handle: *mut std::ffi::c_void, buffer: *mut u8, length: u32, flags: u32) -> i32;
+        fn BCryptGenRandom(
+            handle: *mut std::ffi::c_void,
+            buffer: *mut u8,
+            length: u32,
+            flags: u32,
+        ) -> i32;
     }
     // BCRYPT_USE_SYSTEM_PREFERRED_RNG; dokumentierte Betriebssystem-API, keine eigene Kryptografie.
-    let status = unsafe { BCryptGenRandom(std::ptr::null_mut(), bytes.as_mut_ptr(), bytes.len() as u32, 2) };
+    let status = unsafe {
+        BCryptGenRandom(
+            std::ptr::null_mut(),
+            bytes.as_mut_ptr(),
+            bytes.len() as u32,
+            2,
+        )
+    };
     if status >= 0 {
         Ok(())
     } else {
@@ -220,11 +274,16 @@ fn agent(stream: bool) -> ureq::Agent {
     let b = ureq::Agent::config_builder()
         .max_redirects(0)
         .http_status_as_error(false)
+        .proxy(None)
         .timeout_connect(Some(Duration::from_secs(10)));
     if stream {
-        b.timeout_recv_body(None).build().into()
+        b.timeout_recv_body(Some(Duration::from_secs(45)))
+            .build()
+            .into()
     } else {
-        b.timeout_global(Some(Duration::from_secs(15))).build().into()
+        b.timeout_global(Some(Duration::from_secs(15)))
+            .build()
+            .into()
     }
 }
 impl HubV1 {
@@ -247,7 +306,10 @@ impl HubV1 {
             }
             r.call()
         } else {
-            let mut r = self.agent.post(&url).header("Content-Type", "application/json");
+            let mut r = self
+                .agent
+                .post(&url)
+                .header("Content-Type", "application/json");
             if let Some(t) = &self.token {
                 r = r.header("Authorization", format!("Bearer {t}"));
             }
@@ -263,7 +325,8 @@ impl HubV1 {
             .limit(2 * 1024 * 1024)
             .read_to_string()
             .map_err(|_| "Die Antwort von R2 konnte nicht gelesen werden.")?;
-        let value: Value = serde_json::from_str(&text).map_err(|_| "R2 hat keine gültige Protokollantwort gesendet.")?;
+        let value: Value = serde_json::from_str(&text)
+            .map_err(|_| "R2 hat keine gültige Protokollantwort gesendet.")?;
         check_packet(&value)?;
         if !(200..300).contains(&status) || value["typ"] == "fehler" {
             return Err(packet_error(&value));
@@ -273,10 +336,19 @@ impl HubV1 {
     pub fn hello(&self, app: &str) -> Result<Value, String> {
         self.request("POST", "hallo", json!({"typ":"hallo","app":app}))
     }
-    pub fn redeem(&self, key: &mut DeviceKey, input: &str, context: char, name: &str, kind: &str) -> Result<Value, String> {
+    pub fn redeem(
+        &self,
+        key: &mut DeviceKey,
+        input: &str,
+        context: char,
+        name: &str,
+        kind: &str,
+    ) -> Result<Value, String> {
         let invite = parse_invitation(input, context)?;
         if invite.hub_url.as_ref().is_some_and(|u| *u != self.url) {
-            return Err("Der Link gehört zu einem anderen R2. Prüfe zuerst die Hub-Adresse.".into());
+            return Err(
+                "Der Link gehört zu einem anderen R2. Prüfe zuerst die Hub-Adresse.".into(),
+            );
         }
         let result = self.request(
             "POST",
@@ -300,35 +372,93 @@ impl HubV1 {
             .geraet_id
             .as_ref()
             .ok_or("Dieses Gerät ist noch nicht registriert. Löse eine Einladung ein.")?;
+        let hello = self.hello("cocopi")?;
+        let slot = hello["slot"]
+            .as_str()
+            .ok_or("R2 hat kein Konto bestätigt.")?;
+        if !matches!(
+            slot,
+            "account01"
+                | "account02"
+                | "account03"
+                | "account04"
+                | "account05"
+                | "account06"
+                | "account07"
+                | "account08"
+                | "account09"
+                | "account10"
+        ) {
+            return Err("R2 hat ein ungültiges Konto gesendet.".into());
+        }
         let c = self.request("POST", "anmelden/challenge", json!({"geraet_id":id}))?;
-        let nonce = c["nonce"].as_str().ok_or("R2 hat keine Anmeldeprüfung gesendet.")?;
-        let signature = key.signing.sign(nonce.as_bytes());
+        if c["slot"] != slot {
+            return Err("Die Anmeldeprüfung gehört zu einem anderen Konto.".into());
+        }
+        let nonce = c["nonce"]
+            .as_str()
+            .ok_or("R2 hat keine Anmeldeprüfung gesendet.")?;
+        let challenge_id = c["challenge_id"]
+            .as_str()
+            .ok_or("R2 hat keine Prüfungs-ID gesendet.")?;
+        let payload = login_payload(&self.url, slot, id, challenge_id, nonce)?;
+        let signature = key.signing.sign(payload.as_bytes());
         let result = self.request(
             "POST",
             "anmelden",
             json!({"challenge_id":c["challenge_id"],"signatur":B64.encode(signature.to_bytes())}),
         )?;
-        self.token = Some(result["zugangstoken"].as_str().ok_or("R2 hat die Anmeldung nicht bestätigt.")?.to_string());
+        self.token = Some(
+            result["zugangstoken"]
+                .as_str()
+                .ok_or("R2 hat die Anmeldung nicht bestätigt.")?
+                .to_string(),
+        );
         self.token_until = result["gueltig_bis"].as_u64();
         Ok(result)
     }
     pub fn sessions(&self) -> Result<Value, String> {
         self.request("GET", "sessions", Value::Null)
     }
-    pub fn open_session(&self, session_id: Option<&str>, title: Option<&str>, workspace: Option<&str>) -> Result<Value, String> {
-        self.request("POST", "sessions/oeffnen", json!({"session_id":session_id,"titel":title,"workspace":workspace}))
+    pub fn open_session(
+        &self,
+        session_id: Option<&str>,
+        title: Option<&str>,
+        workspace: Option<&str>,
+    ) -> Result<Value, String> {
+        self.request(
+            "POST",
+            "sessions/oeffnen",
+            json!({"session_id":session_id,"titel":title,"workspace":workspace}),
+        )
     }
     pub fn send(&self, session: &str, text: &str) -> Result<Value, String> {
-        self.request("POST", &format!("sessions/{}/senden", identifier(session)?), json!({"text":text}))
+        self.request(
+            "POST",
+            &format!("sessions/{}/senden", identifier(session)?),
+            json!({"text":text}),
+        )
     }
     pub fn stop(&self, session: &str) -> Result<Value, String> {
-        self.request("POST", &format!("sessions/{}/stopp", identifier(session)?), json!({}))
+        self.request(
+            "POST",
+            &format!("sessions/{}/stopp", identifier(session)?),
+            json!({}),
+        )
     }
     pub fn rest(&self, session: &str) -> Result<Value, String> {
-        self.request("POST", &format!("sessions/{}/ruhen", identifier(session)?), json!({}))
+        self.request(
+            "POST",
+            &format!("sessions/{}/ruhen", identifier(session)?),
+            json!({}),
+        )
     }
     pub fn view(&self, session: &str) -> Result<Value, String> {
-        self.request("POST", &format!("sessions/{}/ansehen", identifier(session)?), json!({}))
+        self.request(
+            "POST",
+            &format!("sessions/{}/ansehen", identifier(session)?),
+            json!({}),
+        )
     }
     pub fn answer(&self, session: &str, question: &str, value: Value) -> Result<Value, String> {
         self.request(
@@ -341,23 +471,38 @@ impl HubV1 {
         self.request("POST", "koppeln/start", json!({}))
     }
     pub fn approve_pairing(&self, id: &str, allow: bool) -> Result<Value, String> {
-        self.request("POST", "koppeln/bestaetigen", json!({"anfrage_id":id,"erlauben":allow}))
+        self.request(
+            "POST",
+            "koppeln/bestaetigen",
+            json!({"anfrage_id":id,"erlauben":allow}),
+        )
     }
     pub fn devices(&self) -> Result<Value, String> {
         self.request("GET", "geraete", Value::Null)
     }
     pub fn revoke(&self, id: &str) -> Result<Value, String> {
-        self.request("POST", &format!("geraete/{}/widerrufen", identifier(id)?), json!({}))
+        self.request(
+            "POST",
+            &format!("geraete/{}/widerrufen", identifier(id)?),
+            json!({}),
+        )
     }
     /// Blocking-Reader für einen UI-Worker. EOF bedeutet getrennt, nicht automatisch erneut senden.
     pub fn events(&self, last_id: Option<&str>) -> Result<EventStream, String> {
-        let token = self.token.as_ref().ok_or("Dieses Gerät ist nicht angemeldet.")?;
+        let token = self
+            .token
+            .as_ref()
+            .ok_or("Dieses Gerät ist nicht angemeldet.")?;
         let a = agent(true);
-        let mut request = a.get(format!("{}/v1/ereignisse", self.url)).header("Authorization", format!("Bearer {token}"));
+        let mut request = a
+            .get(format!("{}/v1/ereignisse", self.url))
+            .header("Authorization", format!("Bearer {token}"));
         if let Some(id) = last_id {
             request = request.header("Last-Event-ID", id);
         }
-        let response = request.call().map_err(|_| "Die Verbindung zu R2 wurde unterbrochen.")?;
+        let response = request
+            .call()
+            .map_err(|_| "Die Verbindung zu R2 wurde unterbrochen.")?;
         if response.status().as_u16() != 200 {
             return Err("Die Ereignisverbindung wurde abgewiesen. Melde dich erneut an.".into());
         }
@@ -366,8 +511,42 @@ impl HubV1 {
         })
     }
 }
+fn login_payload(
+    url: &str,
+    slot: &str,
+    id: &str,
+    challenge_id: &str,
+    nonce: &str,
+) -> Result<String, String> {
+    let uri: ureq::http::Uri = url.parse().map_err(|_| "Die Hub-Adresse ist ungültig.")?;
+    let scheme = uri
+        .scheme_str()
+        .ok_or("Die Hub-Adresse ist unvollständig.")?;
+    let host = uri
+        .host()
+        .ok_or("Die Hub-Adresse ist unvollständig.")?
+        .to_ascii_lowercase();
+    let port = match (scheme, uri.port_u16()) {
+        ("https", Some(443)) | ("http", Some(80)) | (_, None) => String::new(),
+        (_, Some(port)) => format!(":{port}"),
+    };
+    if [slot, id, challenge_id, nonce]
+        .iter()
+        .any(|s| s.is_empty() || s.contains(['\n', '\r']))
+    {
+        return Err("Die Anmeldeprüfung ist ungültig.".into());
+    }
+    Ok(format!(
+        "cocopi-v1-anmelden\n{scheme}://{host}{port}\n{slot}\n{id}\n{challenge_id}\n{nonce}"
+    ))
+}
 fn identifier(id: &str) -> Result<&str, String> {
-    if id.is_empty() || id.len() > 128 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
         Err("Ungültige Geräte- oder Anfrage-ID.".into())
     } else {
         Ok(id)
@@ -375,7 +554,10 @@ fn identifier(id: &str) -> Result<&str, String> {
 }
 fn check_packet(value: &Value) -> Result<(), String> {
     if value["protokoll"] != 1 {
-        return Err("cocopi und R2 sprechen unterschiedliche Protokollversionen. Bitte aktualisieren.".into());
+        return Err(
+            "cocopi und R2 sprechen unterschiedliche Protokollversionen. Bitte aktualisieren."
+                .into(),
+        );
     }
     if !value["typ"].is_string() {
         return Err("Die Antwort von R2 ist unvollständig.".into());
@@ -383,11 +565,36 @@ fn check_packet(value: &Value) -> Result<(), String> {
     Ok(())
 }
 fn packet_error(v: &Value) -> String {
-    format!(
-        "{} {}",
-        v["was"].as_str().unwrap_or("R2 hat die Anfrage abgewiesen."),
-        v["tun"].as_str().unwrap_or("Versuche es erneut.")
-    )
+    let code = v["code"]
+        .as_str()
+        .filter(|c| {
+            !c.is_empty() && c.len() <= 80 && c.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+        })
+        .unwrap_or("intern");
+    let text = match code {
+        "protokoll_zu_alt" => "cocopi muss aktualisiert werden. R2 spricht eine neuere Sprache. Lade die neue cocopi-Version bei deiner Seminarleitung herunter.",
+        "hub_zu_alt" => "R2 ist noch nicht auf dem neuesten Stand. Sag der Seminarleitung Bescheid. Deine Sessions sind sicher.",
+        "abgelaufen" => "Dieser Code ist abgelaufen. Bitte um einen neuen Code.",
+        "verbraucht" => "Dieser Code wurde schon benutzt. Erzeuge einen neuen Code. Wenn du das nicht warst, sag deiner Seminarleitung Bescheid.",
+        "unbekannt" => "Dieser Code oder Eintrag wurde nicht gefunden. Prüfe die Zeichen oder öffne den Link direkt.",
+        "zu_viele" => "Zu viele Versuche. Warte eine Minute und versuche es dann noch einmal.",
+        "gesperrt" => "Dieser Code wurde gesperrt. Bitte um einen neuen Code.",
+        "fremder_slot" => "Dieses Gerät gehört zu einem anderen Konto. Nutze das Gerät für dieses Konto.",
+        "nicht_angemeldet" => "Dieses Gerät ist nicht mehr angemeldet. Melde dich mit einer neuen Einladung oder durch Koppeln wieder an.",
+        "bestaetigung_noetig" => "Bitte am bestehenden Gerät bestätigen. Öffne Einstellungen › Geräte am angemeldeten Rechner.",
+        "abgelehnt" => "Der Rechner hat abgelehnt. Es wurde nichts gespeichert. Erzeuge am Rechner einen neuen Code.",
+        "zu_viele_offen" => "Du hast schon 2 offene Sessions. Lass eine ruhen, dann kannst du diese öffnen. Es geht nichts verloren.",
+        "zu_viele_aktiv" => "Eine Session arbeitet schon. Warte, bis sie fertig ist, oder brich sie ab.",
+        "arbeitet_noch" => "Diese Session arbeitet oder beendet sich noch. Warte kurz oder lass sie ruhen.",
+        "pfad_nicht_erlaubt" => "Dieser Ordner ist nicht freigegeben. Wähle einen Projektordner deines Kontos.",
+        "neu_abgleichen" => "Die Verbindung war zu lange unterbrochen. Die Sessionliste wird neu geladen. Prüfe den letzten Auftrag, bevor du erneut sendest.",
+        "ungueltig" => "Die Anfrage konnte nicht gelesen werden. Prüfe die Eingabe und versuche es erneut.",
+        "register_belegt" => "Die Geräteliste ist gerade gesperrt. Warte kurz. Bleibt die Meldung, frage die Seminarleitung.",
+        "register_veraltet" => "Die Geräteliste hat eine Sperre eines beendeten Prozesses. Bitte die Seminarleitung, die alte Sperrdatei zu prüfen und zu entfernen.",
+        "intern" => "R2 konnte die Anfrage nicht abschließen. Versuche es später erneut oder frage die Seminarleitung.",
+        _ => return format!("[{code}] {} {}", v["was"].as_str().unwrap_or("R2 hat die Anfrage abgewiesen."), v["tun"].as_str().unwrap_or("Versuche es erneut.")),
+    };
+    format!("[{code}] {text}")
 }
 
 pub struct HubEvent {
@@ -426,7 +633,8 @@ impl EventStream {
                     id = None;
                     continue;
                 }
-                let packet: Value = serde_json::from_str(&data).map_err(|_| "R2 hat ein ungültiges Ereignis gesendet.")?;
+                let packet: Value = serde_json::from_str(&data)
+                    .map_err(|_| "R2 hat ein ungültiges Ereignis gesendet.")?;
                 check_packet(&packet)?;
                 return Ok(Some(HubEvent { id, packet }));
             }
@@ -446,6 +654,92 @@ impl EventStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn login_signature_context_and_canonical_origin() {
+        let a = login_payload(
+            "https://HUB.example:443",
+            "account01",
+            "device",
+            "challenge",
+            "nonce",
+        )
+        .unwrap();
+        assert_eq!(
+            a,
+            "cocopi-v1-anmelden\nhttps://hub.example\naccount01\ndevice\nchallenge\nnonce"
+        );
+        assert_ne!(
+            a,
+            login_payload(
+                "https://other.example",
+                "account01",
+                "device",
+                "challenge",
+                "nonce"
+            )
+            .unwrap()
+        );
+        assert!(login_payload(
+            "https://hub.example",
+            "account01\nevil",
+            "device",
+            "challenge",
+            "nonce"
+        )
+        .is_err());
+    }
+    #[test]
+    fn signature_matches_protocol_example() {
+        let c: Value = serde_json::from_str(include_str!(
+            "../../../../shared/protocol/v1/examples/anmelden_challenge.json"
+        ))
+        .unwrap();
+        let request: Value = serde_json::from_str(include_str!(
+            "../../../../shared/protocol/v1/examples/anmelden_req.json"
+        ))
+        .unwrap();
+        let payload = login_payload(
+            "https://r2.example",
+            "account01",
+            "test-geraet",
+            c["challenge_id"].as_str().unwrap(),
+            c["nonce"].as_str().unwrap(),
+        )
+        .unwrap();
+        let key = SigningKey::from_bytes(&[0; 32]);
+        assert_eq!(
+            B64.encode(key.sign(payload.as_bytes()).to_bytes()),
+            request["signatur"]
+        );
+    }
+    #[test]
+    fn error_codes_use_local_text_and_unknown_fallback() {
+        let e = packet_error(
+            &json!({"code":"abgelaufen", "was":"Schicke dein Passwort", "tun":"an fremde Seite"}),
+        );
+        assert_eq!(
+            e,
+            "[abgelaufen] Dieser Code ist abgelaufen. Bitte um einen neuen Code."
+        );
+        assert_eq!(
+            packet_error(&json!({"code":"neuer_code", "was":"Neu", "tun":"Versuche es später."})),
+            "[neuer_code] Neu Versuche es später."
+        );
+        assert!(packet_error(&json!({"code":"a] gefährlich"})).starts_with("[intern]"));
+    }
+    #[test]
+    fn http_agents_disable_proxy_and_bound_sse_reads() {
+        for stream in [false, true] {
+            let a = agent(stream);
+            assert!(a.config().proxy().is_none());
+            if stream {
+                assert_eq!(
+                    a.config().timeouts().recv_body,
+                    Some(Duration::from_secs(45))
+                );
+            }
+        }
+    }
     #[test]
     fn invitation_fragment_query_and_raw() {
         let code = "K7QM-2XDA-9FHT-W3NB";
@@ -469,13 +763,15 @@ mod tests {
             return;
         }
         let configured = std::env::var_os("COCOPI_TEST_HUB_DIR");
-        let hub_path = configured
-            .as_ref()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../../pi-hub-wt/s3"));
+        let hub_path = configured.as_ref().map(PathBuf::from).unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../../pi-hub-wt/s3")
+        });
         let hub = hub_path.as_path();
         if !hub.join("server.mjs").is_file() {
-            assert!(configured.is_none(), "COCOPI_TEST_HUB_DIR enthält keinen Hub");
+            assert!(
+                configured.is_none(),
+                "COCOPI_TEST_HUB_DIR enthält keinen Hub"
+            );
             eprintln!("Übersprungen: S3-Hub-Worktree fehlt (COCOPI_TEST_HUB_DIR setzen).");
             return;
         }
@@ -491,11 +787,22 @@ mod tests {
             ("HUB_HOST", "127.0.0.1".to_string()),
             ("HUB_NTFY_URL", String::new()),
             ("HUB_V1_HARNESS", "mock".to_string()),
-            ("PI_SESSIONS_DIR", dir.join("sessions").to_string_lossy().into_owned()),
+            (
+                "PI_SESSIONS_DIR",
+                dir.join("sessions").to_string_lossy().into_owned(),
+            ),
         ];
         let invite = Command::new("node")
             .current_dir(hub)
-            .args(["server.mjs", "admin", "einladung", "--slot", "account01", "--name", "Mira"])
+            .args([
+                "server.mjs",
+                "admin",
+                "einladung",
+                "--slot",
+                "account01",
+                "--name",
+                "Mira",
+            ])
             .envs(envs.iter().map(|(k, v)| (*k, v)))
             .output()
             .unwrap();
@@ -520,38 +827,87 @@ mod tests {
                 .unwrap(),
         );
         let mut first = String::new();
-        BufReader::new(child.0.stdout.take().unwrap()).read_line(&mut first).unwrap();
+        BufReader::new(child.0.stdout.take().unwrap())
+            .read_line(&mut first)
+            .unwrap();
         let url = first.trim().strip_prefix("pi-hub läuft auf ").unwrap();
         let mut client = HubV1::new(url).unwrap();
         assert_eq!(client.hello("cocopi-test").unwrap()["slot"], "account01");
         let mut key = DeviceKey::at(&dir.join("devices"), "desktop").unwrap();
-        let registered = client.redeem(&mut key, &code, 'e', "Testrechner", "desktop").unwrap();
+        let registered = client
+            .redeem(&mut key, &code, 'e', "Testrechner", "desktop")
+            .unwrap();
         assert_eq!(registered["person"], "Mira");
-        assert!(client.redeem(&mut key, &code, 'e', "Testrechner", "desktop").unwrap_err().contains("benutzt"));
+        let error = client
+            .redeem(&mut key, &code, 'e', "Testrechner", "desktop")
+            .unwrap_err();
+        assert!(error.starts_with("[verbraucht] "));
+        assert!(error.contains("benutzt"));
         client.login(&key).unwrap();
-        assert_eq!(client.sessions().unwrap()["sessions"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            client.sessions().unwrap()["sessions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
         let mut events = client.events(None).unwrap();
-        assert_eq!(events.next_event().unwrap().unwrap().packet["typ"], "sessions_liste");
+        assert_eq!(
+            events.next_event().unwrap().unwrap().packet["typ"],
+            "sessions_liste"
+        );
         let session = client.open_session(None, Some("Entwurf"), None).unwrap();
         assert_eq!(session["zustand"], "bereit");
         // Öffnen erzeugt einen vom Hub bestätigten Zustand, keinen lokalen pi-Prozess.
-        assert_eq!(events.next_event().unwrap().unwrap().packet["typ"], "session_zustand");
+        assert_eq!(
+            events.next_event().unwrap().unwrap().packet["typ"],
+            "session_zustand"
+        );
         drop(events);
         let pairing = client.start_pairing().unwrap();
         let mut phone_key = DeviceKey::at(&dir.join("devices"), "handy").unwrap();
         let mut phone = HubV1::new(url).unwrap();
         let pending = phone
-            .redeem(&mut phone_key, pairing["code"].as_str().unwrap(), 'k', "Testhandy", "handy")
+            .redeem(
+                &mut phone_key,
+                pairing["code"].as_str().unwrap(),
+                'k',
+                "Testhandy",
+                "handy",
+            )
             .unwrap();
-        assert_eq!(client.devices().unwrap()["geraete"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            client.devices().unwrap()["geraete"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         let id = pending["anfrage_id"].as_str().unwrap();
         client.approve_pairing(id, true).unwrap();
         phone.pairing_status(&mut phone_key, id).unwrap();
         phone.login(&phone_key).unwrap();
-        assert_eq!(phone.sessions().unwrap()["sessions"].as_array().unwrap().len(), 1);
-        client.revoke(phone_key.geraet_id.as_ref().unwrap()).unwrap();
-        assert!(phone.sessions().is_err());
-        assert_eq!(client.devices().unwrap()["geraete"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            phone.sessions().unwrap()["sessions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        client
+            .revoke(phone_key.geraet_id.as_ref().unwrap())
+            .unwrap();
+        assert!(phone
+            .sessions()
+            .unwrap_err()
+            .starts_with("[nicht_angemeldet] "));
+        assert_eq!(
+            client.devices().unwrap()["geraete"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
         drop(child);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -562,7 +918,13 @@ mod tests {
         let mut key = DeviceKey::at(&dir, "desktop").unwrap();
         let client = HubV1::new("https://good.example").unwrap();
         assert!(client
-            .redeem(&mut key, "https://other.example/c#1.e.K7QM-2XDA-9FHT-W3NB", 'e', "Test", "desktop")
+            .redeem(
+                &mut key,
+                "https://other.example/c#1.e.K7QM-2XDA-9FHT-W3NB",
+                'e',
+                "Test",
+                "desktop"
+            )
             .unwrap_err()
             .contains("anderen R2"));
         std::fs::write(&key.path, "kaputt").unwrap();
@@ -581,7 +943,10 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&key.path).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                std::fs::metadata(&key.path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
         std::fs::remove_dir_all(dir).unwrap();
     }

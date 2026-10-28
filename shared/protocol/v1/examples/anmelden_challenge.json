@@ -1,0 +1,8 @@
+{
+  "protokoll": 1,
+  "typ": "challenge",
+  "slot": "account01",
+  "challenge_id": "test-challenge",
+  "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "gueltig_bis": 1800000060000
+}
