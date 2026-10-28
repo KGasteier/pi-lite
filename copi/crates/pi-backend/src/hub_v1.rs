@@ -1,12 +1,21 @@
 //! cocopi HTTP/SSE v1. Keine lokalen Agenten, keine automatische Promptwiederholung.
 //! Privatschlüssel bleiben unter `copi_config_dir/devices/` (I1: Datei, noch keine Keychain).
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+// Additiv; keine Änderung an der gemeinsam verwendeten Crate-Wurzel nötig.
+#[path = "empfang.rs"]
+pub mod empfang;
+#[path = "oidc.rs"]
+pub mod oidc;
+pub(crate) fn secure_random(bytes: &mut [u8]) -> Result<(), String> {
+    os_random(bytes)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invitation {
@@ -25,7 +34,7 @@ pub fn parse_invitation(input: &str, context: char) -> Result<Invitation, String
         let origin = prefix
             .strip_suffix("/c")
             .ok_or("Dieser Link ist kein cocopi-Einladungslink.")?;
-        validate_url(origin)?;
+        HubV1::new(origin)?;
         let payload = if let Some((_, fragment)) = text.split_once('#') {
             fragment.to_string()
         } else {
@@ -73,7 +82,7 @@ pub fn parse_invitation(input: &str, context: char) -> Result<Invitation, String
         .join("-");
     Ok(Invitation { art, code, hub_url })
 }
-fn validate_url(url: &str) -> Result<(), String> {
+pub(crate) fn validate_url(url: &str) -> Result<(), String> {
     // Keine Credentials, Pfade, Steuerzeichen oder Klartext-Verbindungen außer Loopback.
     let authority = url
         .strip_prefix("https://")
@@ -157,9 +166,9 @@ impl DeviceKey {
                         );
                     }
                 }
-                let f: KeyFile = serde_json::from_slice(&bytes).map_err(|_| {
-                    "Die Geräte-Schlüsseldatei ist beschädigt. Sie wurde nicht überschrieben."
-                })?;
+                let f: KeyFile = serde_json::from_slice(&bytes).map_err(
+                    |_| "Die Geräte-Schlüsseldatei ist beschädigt. Sie wurde nicht überschrieben.",
+                )?;
                 let seed: [u8; 32] = B64
                     .decode(f.secret)
                     .map_err(|_| "Ungültiger Geräteschlüssel")?
@@ -208,7 +217,7 @@ impl DeviceKey {
             .and_then(|_| f.sync_all())
             .map_err(|e| e.to_string())
     }
-    fn remember(&mut self, id: &str) -> Result<(), String> {
+    pub(crate) fn remember(&mut self, id: &str) -> Result<(), String> {
         self.geraet_id = Some(id.to_string());
         let temp = self
             .path
@@ -270,7 +279,7 @@ pub struct HubV1 {
     pub token_until: Option<u64>,
     agent: ureq::Agent,
 }
-fn agent(stream: bool) -> ureq::Agent {
+pub(crate) fn agent(stream: bool) -> ureq::Agent {
     let b = ureq::Agent::config_builder()
         .max_redirects(0)
         .http_status_as_error(false)
@@ -289,7 +298,33 @@ fn agent(stream: bool) -> ureq::Agent {
 impl HubV1 {
     pub fn new(url: &str) -> Result<Self, String> {
         let url = url.trim_end_matches('/').to_string();
-        validate_url(&url)?;
+        let origin_end = url
+            .find("://")
+            .map(|i| i + 3)
+            .ok_or("Die Hub-Adresse ist ungültig.")?;
+        let path_start = url[origin_end..]
+            .find('/')
+            .map(|i| origin_end + i)
+            .unwrap_or(url.len());
+        validate_url(&url[..path_start])?;
+        let suffix = &url[path_start..];
+        if !suffix.is_empty()
+            && !matches!(
+                suffix,
+                "/slot/account01"
+                    | "/slot/account02"
+                    | "/slot/account03"
+                    | "/slot/account04"
+                    | "/slot/account05"
+                    | "/slot/account06"
+                    | "/slot/account07"
+                    | "/slot/account08"
+                    | "/slot/account09"
+                    | "/slot/account10"
+            )
+        {
+            return Err("Die Hub-Adresse enthält einen ungültigen Arbeitsplatzpfad.".into());
+        }
         Ok(Self {
             url,
             token: None,
@@ -439,6 +474,19 @@ impl HubV1 {
             json!({"text":text}),
         )
     }
+    pub fn send_with_sender(
+        &self,
+        session: &str,
+        text: &str,
+        person: &str,
+        rolle: &str,
+    ) -> Result<Value, String> {
+        self.request(
+            "POST",
+            &format!("sessions/{}/senden", identifier(session)?),
+            json!({"text":text,"von":{"person":person,"rolle":rolle}}),
+        )
+    }
     pub fn stop(&self, session: &str) -> Result<Value, String> {
         self.request(
             "POST",
@@ -540,7 +588,7 @@ fn login_payload(
         "cocopi-v1-anmelden\n{scheme}://{host}{port}\n{slot}\n{id}\n{challenge_id}\n{nonce}"
     ))
 }
-fn identifier(id: &str) -> Result<&str, String> {
+pub(crate) fn identifier(id: &str) -> Result<&str, String> {
     if id.is_empty()
         || id.len() > 128
         || !id
@@ -552,7 +600,7 @@ fn identifier(id: &str) -> Result<&str, String> {
         Ok(id)
     }
 }
-fn check_packet(value: &Value) -> Result<(), String> {
+pub(crate) fn check_packet(value: &Value) -> Result<(), String> {
     if value["protokoll"] != 1 {
         return Err(
             "cocopi und R2 sprechen unterschiedliche Protokollversionen. Bitte aktualisieren."
@@ -564,7 +612,7 @@ fn check_packet(value: &Value) -> Result<(), String> {
     }
     Ok(())
 }
-fn packet_error(v: &Value) -> String {
+pub(crate) fn packet_error(v: &Value) -> String {
     let code = v["code"]
         .as_str()
         .filter(|c| {
@@ -572,27 +620,78 @@ fn packet_error(v: &Value) -> String {
         })
         .unwrap_or("intern");
     let text = match code {
-        "protokoll_zu_alt" => "cocopi muss aktualisiert werden. R2 spricht eine neuere Sprache. Lade die neue cocopi-Version bei deiner Seminarleitung herunter.",
-        "hub_zu_alt" => "R2 ist noch nicht auf dem neuesten Stand. Sag der Seminarleitung Bescheid. Deine Sessions sind sicher.",
+        "protokoll_zu_alt" => {
+            "cocopi muss aktualisiert werden. R2 spricht eine neuere Sprache. Lade die neue cocopi-Version bei deiner Seminarleitung herunter."
+        }
+        "hub_zu_alt" => {
+            "R2 ist noch nicht auf dem neuesten Stand. Sag der Seminarleitung Bescheid. Deine Sessions sind sicher."
+        }
         "abgelaufen" => "Dieser Code ist abgelaufen. Bitte um einen neuen Code.",
-        "verbraucht" => "Dieser Code wurde schon benutzt. Erzeuge einen neuen Code. Wenn du das nicht warst, sag deiner Seminarleitung Bescheid.",
-        "unbekannt" => "Dieser Code oder Eintrag wurde nicht gefunden. Prüfe die Zeichen oder öffne den Link direkt.",
+        "verbraucht" => {
+            "Dieser Code wurde schon benutzt. Erzeuge einen neuen Code. Wenn du das nicht warst, sag deiner Seminarleitung Bescheid."
+        }
+        "unbekannt" => {
+            "Dieser Code oder Eintrag wurde nicht gefunden. Prüfe die Zeichen oder öffne den Link direkt."
+        }
         "zu_viele" => "Zu viele Versuche. Warte eine Minute und versuche es dann noch einmal.",
         "gesperrt" => "Dieser Code wurde gesperrt. Bitte um einen neuen Code.",
-        "fremder_slot" => "Dieses Gerät gehört zu einem anderen Konto. Nutze das Gerät für dieses Konto.",
-        "nicht_angemeldet" => "Dieses Gerät ist nicht mehr angemeldet. Melde dich mit einer neuen Einladung oder durch Koppeln wieder an.",
-        "bestaetigung_noetig" => "Bitte am bestehenden Gerät bestätigen. Öffne Einstellungen › Geräte am angemeldeten Rechner.",
-        "abgelehnt" => "Der Rechner hat abgelehnt. Es wurde nichts gespeichert. Erzeuge am Rechner einen neuen Code.",
-        "zu_viele_offen" => "Du hast schon 2 offene Sessions. Lass eine ruhen, dann kannst du diese öffnen. Es geht nichts verloren.",
-        "zu_viele_aktiv" => "Eine Session arbeitet schon. Warte, bis sie fertig ist, oder brich sie ab.",
-        "arbeitet_noch" => "Diese Session arbeitet oder beendet sich noch. Warte kurz oder lass sie ruhen.",
-        "pfad_nicht_erlaubt" => "Dieser Ordner ist nicht freigegeben. Wähle einen Projektordner deines Kontos.",
-        "neu_abgleichen" => "Die Verbindung war zu lange unterbrochen. Die Sessionliste wird neu geladen. Prüfe den letzten Auftrag, bevor du erneut sendest.",
-        "ungueltig" => "Die Anfrage konnte nicht gelesen werden. Prüfe die Eingabe und versuche es erneut.",
-        "register_belegt" => "Die Geräteliste ist gerade gesperrt. Warte kurz. Bleibt die Meldung, frage die Seminarleitung.",
-        "register_veraltet" => "Die Geräteliste hat eine Sperre eines beendeten Prozesses. Bitte die Seminarleitung, die alte Sperrdatei zu prüfen und zu entfernen.",
-        "intern" => "R2 konnte die Anfrage nicht abschließen. Versuche es später erneut oder frage die Seminarleitung.",
-        _ => return format!("[{code}] {} {}", v["was"].as_str().unwrap_or("R2 hat die Anfrage abgewiesen."), v["tun"].as_str().unwrap_or("Versuche es erneut.")),
+        "fremder_slot" => {
+            "Dieses Gerät gehört zu einem anderen Konto. Nutze das Gerät für dieses Konto."
+        }
+        "nicht_angemeldet" => {
+            "Dieses Gerät ist nicht mehr angemeldet. Melde dich mit einer neuen Einladung oder durch Koppeln wieder an."
+        }
+        "bestaetigung_noetig" => {
+            "Bitte am bestehenden Gerät bestätigen. Öffne Einstellungen › Geräte am angemeldeten Rechner."
+        }
+        "abgelehnt" => {
+            "Der Rechner hat abgelehnt. Es wurde nichts gespeichert. Erzeuge am Rechner einen neuen Code."
+        }
+        "zu_viele_offen" => {
+            "Du hast schon 2 offene Sessions. Lass eine ruhen, dann kannst du diese öffnen. Es geht nichts verloren."
+        }
+        "zu_viele_aktiv" => {
+            "Eine Session arbeitet schon. Warte, bis sie fertig ist, oder brich sie ab."
+        }
+        "arbeitet_noch" => {
+            "Diese Session arbeitet oder beendet sich noch. Warte kurz oder lass sie ruhen."
+        }
+        "pfad_nicht_erlaubt" => {
+            "Dieser Ordner ist nicht freigegeben. Wähle einen Projektordner deines Kontos."
+        }
+        "neu_abgleichen" => {
+            "Die Verbindung war zu lange unterbrochen. Die Sessionliste wird neu geladen. Prüfe den letzten Auftrag, bevor du erneut sendest."
+        }
+        "ungueltig" => {
+            "Die Anfrage konnte nicht gelesen werden. Prüfe die Eingabe und versuche es erneut."
+        }
+        "register_belegt" => {
+            "Die Geräteliste ist gerade gesperrt. Warte kurz. Bleibt die Meldung, frage die Seminarleitung."
+        }
+        "register_veraltet" => {
+            "Die Geräteliste hat eine Sperre eines beendeten Prozesses. Bitte die Seminarleitung, die alte Sperrdatei zu prüfen und zu entfernen."
+        }
+        "keine_berechtigung" => {
+            "Du darfst diesen Bereich nicht öffnen. Frage deine Seminarleitung."
+        }
+        "ausweis_ungueltig" => "Dein Geräteausweis ist ungültig. Melde dich erneut am Empfang an.",
+        "belegung_ungueltig" => {
+            "Diese Belegung konnte nicht bestätigt werden. Bitte die Seminarleitung, den Empfang zu prüfen."
+        }
+        "nicht_verfuegbar" => "Dieser Bereich ist noch nicht verfügbar. Versuche es später erneut.",
+        "archiv_fehlt" => "Dieses Archiv wurde nicht gefunden. Prüfe den Check-out am Rechner.",
+        "intern" => {
+            "R2 konnte die Anfrage nicht abschließen. Versuche es später erneut oder frage die Seminarleitung."
+        }
+        _ => {
+            return format!(
+                "[{code}] {} {}",
+                v["was"]
+                    .as_str()
+                    .unwrap_or("R2 hat die Anfrage abgewiesen."),
+                v["tun"].as_str().unwrap_or("Versuche es erneut.")
+            );
+        }
     };
     format!("[{code}] {text}")
 }
@@ -679,14 +778,16 @@ mod tests {
             )
             .unwrap()
         );
-        assert!(login_payload(
-            "https://hub.example",
-            "account01\nevil",
-            "device",
-            "challenge",
-            "nonce"
-        )
-        .is_err());
+        assert!(
+            login_payload(
+                "https://hub.example",
+                "account01\nevil",
+                "device",
+                "challenge",
+                "nonce"
+            )
+            .is_err()
+        );
     }
     #[test]
     fn signature_matches_protocol_example() {
@@ -754,6 +855,16 @@ mod tests {
         assert!(parse_invitation("https://evil.example/c#2.e.x", 'e').is_err());
         assert!(parse_invitation("http://evil.example/c#1.e.K7QM-2XDA-9FHT-W3NB", 'e').is_err());
         assert!(HubV1::new("https://user:password@r2.example").is_err());
+        assert!(HubV1::new("https://r2.example/slot/account01").is_ok());
+        assert!(HubV1::new("https://r2.example/slot/account11").is_err());
+        assert!(HubV1::new("https://r2.example/slot/account01?token=x").is_err());
+        assert!(
+            parse_invitation(
+                &format!("https://r2.example/slot/account01/c#1.k.{code}"),
+                'k'
+            )
+            .is_ok()
+        );
     }
     #[test]
     fn client_against_started_node_hub_mock() {
@@ -897,10 +1008,12 @@ mod tests {
         client
             .revoke(phone_key.geraet_id.as_ref().unwrap())
             .unwrap();
-        assert!(phone
-            .sessions()
-            .unwrap_err()
-            .starts_with("[nicht_angemeldet] "));
+        assert!(
+            phone
+                .sessions()
+                .unwrap_err()
+                .starts_with("[nicht_angemeldet] ")
+        );
         assert_eq!(
             client.devices().unwrap()["geraete"]
                 .as_array()
@@ -917,16 +1030,18 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hub-v1-corrupt-{}", std::process::id()));
         let mut key = DeviceKey::at(&dir, "desktop").unwrap();
         let client = HubV1::new("https://good.example").unwrap();
-        assert!(client
-            .redeem(
-                &mut key,
-                "https://other.example/c#1.e.K7QM-2XDA-9FHT-W3NB",
-                'e',
-                "Test",
-                "desktop"
-            )
-            .unwrap_err()
-            .contains("anderen R2"));
+        assert!(
+            client
+                .redeem(
+                    &mut key,
+                    "https://other.example/c#1.e.K7QM-2XDA-9FHT-W3NB",
+                    'e',
+                    "Test",
+                    "desktop"
+                )
+                .unwrap_err()
+                .contains("anderen R2")
+        );
         std::fs::write(&key.path, "kaputt").unwrap();
         assert!(DeviceKey::at(&dir, "desktop").is_err());
         assert_eq!(std::fs::read_to_string(&key.path).unwrap(), "kaputt");

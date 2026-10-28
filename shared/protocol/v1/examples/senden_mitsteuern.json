@@ -1,0 +1,9 @@
+{
+  "protokoll": 1,
+  "typ": "senden",
+  "text": "Bitte ergänze den Titel.",
+  "von": {
+    "person": "Aylin",
+    "rolle": "seminarleitung"
+  }
+}

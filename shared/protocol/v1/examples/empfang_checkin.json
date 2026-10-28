@@ -1,0 +1,15 @@
+{
+  "protokoll": 1,
+  "typ": "checkin",
+  "nachweis": {
+    "art": "einladung",
+    "code": "NUR-TESTDATEN"
+  },
+  "geraet": {
+    "pubkey": "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik",
+    "name": "Testrechner",
+    "art": "desktop"
+  },
+  "net_pubkey": "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik",
+  "archiv_pubkey": "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik"
+}
