@@ -169,7 +169,7 @@ printf 'rustfmt %s\\n' "$*" >> '{calls}'
 [[ ! -f "$PWD/fail-fmt" ]]
 ''')
         executable(tools / "node", f'''#!/bin/bash
-printf 'node %s seminar=%s\n' "$*" "$I2_SEMINAR_DIR" >> '{calls}'
+printf 'node %s seminar=%s module=%s\n' "$*" "$I2_SEMINAR_DIR" "$COCOPI_V1_TEST_MODULE" >> '{calls}'
 for arg in "$@"; do
     if [[ $arg == */abholfach.i2c.test.mjs ]]; then printf '# pass 1\\n# skipped 0\\n# todo 0\\n'; fi
     [[ $arg != *a.js && $arg != *test-a.cjs ]] || [[ ! -f "$PWD/fail-js" ]] || exit 9
@@ -177,6 +177,7 @@ for arg in "$@"; do
     [[ $arg != --test ]] || [[ ! -f "$PWD/fail-mobile" ]] || exit 9
     [[ $arg != empfang/test/*.mjs && $arg != test/sync.mjs ]] || [[ ! -f "$PWD/fail-i2" ]] || exit 9
 done
+if [[ "$*" == *mobile/test/* && -f "$PWD/skip-mobile" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
 if [[ "$*" == *test/i2/*.i2b.test.mjs* && -f "$PWD/skip-i2b" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
 if [[ "$*" == *test/i2/* && "$*" != */abholfach.i2c.test.mjs* && -f "$PWD/skip-i2" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
 exit 0
@@ -326,6 +327,12 @@ exit 0
         self.assertIn("PASS mobile-tests", result.stdout)
         self.assertIn("PASS r2-tests", result.stdout)
         self.assertIn("node --test mobile/test/stub.mjs", calls.read_text())
+        (worktree / "skip-mobile").touch()
+        skipped = self.run_script("v3-gate.sh", worktree)
+        self.assertEqual(skipped.returncode, 0, skipped.stdout + skipped.stderr)
+        self.assertIn("SKIP mobile-tests | Abnahme unvollständig", skipped.stdout)
+        self.assertNotIn("PASS mobile-tests", skipped.stdout)
+        (worktree / "skip-mobile").unlink()
         (worktree / "fail-mobile").touch()
         r2_test.write_text("raise SystemExit(7)\n")
         result = self.run_script("v3-gate.sh", worktree)
@@ -372,7 +379,7 @@ exit 0
         (worktree / "skip-i2").touch()
         result = self.run_script("v3-gate.sh", worktree, hub)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("SKIP i2-szenarien | I2-Abnahme unvollständig", result.stdout)
+        self.assertIn("SKIP i2-szenarien | Abnahme unvollständig", result.stdout)
         self.assertNotIn("PASS i2-szenarien", result.stdout)
 
     def test_gate_i2b_missing_contract_does_not_hide_green_i2(self):
@@ -384,7 +391,7 @@ exit 0
         result = self.run_script("v3-gate.sh", worktree, hub)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PASS i2-szenarien |", result.stdout)
-        self.assertIn("SKIP i2b-szenarien | I2-Abnahme unvollständig", result.stdout)
+        self.assertIn("SKIP i2b-szenarien | Abnahme unvollständig", result.stdout)
         self.assertNotIn("PASS i2b-szenarien", result.stdout)
         self.assertIn("node --test test/i2/base.test.mjs seminar=", calls.read_text())
         self.assertIn("node --test test/i2/contracts.i2b.test.mjs seminar=", calls.read_text())
@@ -421,6 +428,7 @@ exit 0
         subprocess.run(["git", "clone", "-q", str(hub), str(second)], check=True)
         result = self.run_script("v3-gate.sh", worktree, second, V3_GATE_HUBS=str(hub))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"module={hub}/lib/hub-v1.mjs", calls.read_text())
         for line in calls.read_text().splitlines():
             if line.startswith("cargo test"):
                 self.assertIn(f"hub={hub}", line)

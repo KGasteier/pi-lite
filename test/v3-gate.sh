@@ -47,7 +47,9 @@ safe_env=(env -i "PATH=$PATH" "HOME=$logs/home" "USERPROFILE=$logs/home"
     "HUB_ROOTS=$logs/tmp" "HUB_PI_BIN=$logs/no-real-pi" "LC_ALL=C.UTF-8"
     "I2_SEMINAR_DIR=${I2_SEMINAR_DIR:-$worktree}")
 # Der erste V3_GATE_HUBS-Eintrag ist auch für die Rust/Node-Kreuztests maßgeblich.
-if ((${#hubs[@]})); then safe_env+=("COCOPI_PI_HUB=${hubs[0]}"); fi
+if ((${#hubs[@]})); then
+    safe_env+=("COCOPI_PI_HUB=${hubs[0]}" "COCOPI_V1_TEST_MODULE=${hubs[0]}/lib/hub-v1.mjs")
+fi
 failed=0
 run() {
     local id=$1 dir=$2 rc=0; shift 2
@@ -56,8 +58,8 @@ run() {
     if (( rc == 0 )); then
         if [[ "$id" == js-tests ]] && grep -q '^KNOWN ' "$logs/$id.log"; then
             printf 'KNOWN %s | bekannte Basisfehler, keine neuen Fehler; log=%s\n' "$id" "$logs/$id.log"
-        elif [[ "$id" == i2-* || "$id" == i2b-* ]] && grep -Eq '^# (skipped|todo) [1-9][0-9]*$' "$logs/$id.log"; then
-            printf 'SKIP %s | I2-Abnahme unvollständig; log=%s\n' "$id" "$logs/$id.log"
+        elif [[ "$id" == i2-* || "$id" == i2b-* || "$id" == mobile-tests ]] && grep -Eq '^# (skipped|todo) [1-9][0-9]*$' "$logs/$id.log"; then
+            printf 'SKIP %s | Abnahme unvollständig; log=%s\n' "$id" "$logs/$id.log"
         elif [[ "$id" == fmt ]]; then
             printf 'PASS %s | %s log=%s\n' "$id" "$(head -n 1 "$logs/$id.log")" "$logs/$id.log"
         else
