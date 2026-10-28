@@ -14,10 +14,10 @@ const waitFor = async predicate => {
   for (let i = 0; i < 300; i++) { if (predicate()) return; await new Promise(r => setTimeout(r, 5)); }
   assert.fail('Bedingung wurde nicht erreicht');
 };
-function send(res, id, msg) { res.write(`${id ? `id: ${id}\n` : ''}data: ${JSON.stringify(msg)}\n\n`); }
+function send(res, id, msg) { res.write(`${id ? `id: epoch:${id}\n` : ''}data: ${JSON.stringify(msg)}\n\n`); }
 
 test('QR: Fragment, Query und Rohcode, keine Hostübernahme', () => {
-  const expected = { protokoll: 1, art: 'k', code: 'K7QM2XDA9FHTW3NB' };
+  const expected = { protokoll: 1, art: 'k', code: 'K7QM-2XDA-9FHT-W3NB' };
   for (const input of ['https://r2.invalid/c#1.k.K7QM-2XDA-9FHT-W3NB', 'https://r2.invalid/c?c=1.k.K7QM2XDA9FHTW3NB', '?c=1.k.K7QM2XDA9FHTW3NB', 'K7QM-2XDA-9FHT-W3NB']) assert.deepEqual(parsePairingCode(input), expected);
   assert.equal(parsePairingCode('K7QM-2XDA-9FHT-W3NB', 'e').art, 'e');
   for (const input of ['1.x.K7QM2XDA9FHTW3NB', '2.k.K7QM2XDA9FHTW3NB', 'K7QM-2XDA-9FHT-W3NI', 'short', '<script>', '----K7QM2XDA9FHTW3NB']) assert.throws(() => parsePairingCode(input));
@@ -32,7 +32,7 @@ test('SSE-Parser verarbeitet CRLF und mehrzeilige Daten über Chunkgrenzen', () 
 test('Transport: Header statt URL, Handschlag und read-only Sessions', async t => {
   const calls = [];
   const transport = await fake(t, async (req, res) => {
-    assert.equal(req.headers.authorization, 'Bearer demo'); assert.ok(!req.url.includes('demo'));
+    assert.equal(req.headers.authorization, req.url.endsWith('hallo') ? undefined : 'Bearer demo'); assert.ok(!req.url.includes('demo'));
     assert.equal(req.headers['cache-control'], 'no-cache');
     let body = ''; for await (const chunk of req) body += chunk;
     calls.push([req.method, req.url, body && JSON.parse(body)]);
@@ -47,10 +47,10 @@ test('Transport: Header statt URL, Handschlag und read-only Sessions', async t =
 test('SSE: Replay mit Last-Event-ID ohne Dubletten und ohne Lücken', async t => {
   let connections = 0;
   const transport = await fake(t, (req, res) => {
-    assert.equal(req.headers.authorization, 'Bearer demo'); assert.equal(req.url, '/v1/events');
+    assert.equal(req.headers.authorization, 'Bearer demo'); assert.equal(req.url, '/v1/ereignisse');
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     if (++connections === 1) { send(res, null, { typ: 'puls' }); send(res, 1, { typ: 'session.zustand', n: 1 }); send(res, 2, { typ: 'session.zustand', n: 2 }); res.end(); }
-    else { assert.equal(req.headers['last-event-id'], '2'); send(res, 2, { typ: 'session.zustand', n: 2 }); send(res, 3, { typ: 'session.zustand', n: 3 }); }
+    else { assert.equal(req.headers['last-event-id'], 'epoch:2'); send(res, 2, { typ: 'session.zustand', n: 2 }); send(res, 3, { typ: 'session.zustand', n: 3 }); }
   });
   const found = [], stream = transport.events(msg => { if (msg.n) found.push(msg.n); });
   t.after(() => stream.close());
@@ -66,7 +66,7 @@ test('SSE: Sequenzlücke wird sichtbar statt unvollständiger Erfolg', async t =
   const found = [], stream = transport.events(msg => found.push(msg));
   t.after(() => stream.close()); await stream.done;
   assert.ok(found.some(m => m.code === 'replay_luecke'));
-  assert.ok(!found.some(m => m.n === 3)); assert.equal(stream.lastEventId, 1);
+  assert.ok(!found.some(m => m.n === 3)); assert.equal(stream.lastEventId, 'epoch:1');
 });
 
 test('SSE: 45-s-Pulsgrenze (im Test verkürzt), Inhalte ersetzen keinen Puls', async t => {

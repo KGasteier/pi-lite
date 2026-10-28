@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1e2227">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>cocopi mobil</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/cocopi.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="identity"><img src="./icons/cocopi.svg" width="40" height="40" alt=""><div><span id="account">nicht angemeldet</span><small>Nur auf R2 · <span id="connection" role="status">offline</span></small></div><a href="#settings" aria-label="Einstellungen">Einstellungen</a></header>
+  <main id="main" tabindex="-1">
+    <section id="list" aria-labelledby="list-title">
+      <h1 id="list-title">Sessions</h1>
+      <p id="list-hint">Melde dich an, um deine Sessions auf R2 zu sehen.</p>
+      <ul id="sessions" class="session-list"></ul>
+      <button id="connect" class="primary">Mit Rechner koppeln</button>
+      <button id="reconnect" class="primary" hidden>Jetzt neu verbinden</button>
+    </section>
+    <section id="session" hidden aria-labelledby="session-title">
+      <a href="#list" class="back">‹ Sessions</a>
+      <h1 id="session-title">Session</h1><p id="workspace" class="muted"></p>
+      <p id="session-state" role="status"></p>
+      <div id="log" role="log" aria-label="Verlauf"></div>
+      <p class="muted">Du siehst hier den Verlauf. Antworten und kurze Aufträge kommen später.</p>
+    </section>
+    <section id="settings" hidden aria-labelledby="settings-title">
+      <a href="#list" class="back">‹ Sessions</a><h1 id="settings-title">Einstellungen</h1>
+      <h2>Dieses Gerät</h2><p id="device-name">Dieses Handy</p><p id="device-hint" class="muted"></p>
+      <button id="settings-pair">Mit Rechner koppeln</button>
+      <button id="logout" class="danger">Dieses Handy abmelden</button>
+    </section>
+    <section id="pair" hidden aria-labelledby="pair-title">
+      <a href="#list" class="back">‹ Zurück</a><h1 id="pair-title">Handy koppeln</h1>
+      <p id="camera-hint" hidden>Halte die Kamera auf den Code am Rechner.</p>
+      <video id="camera" hidden playsinline muted aria-label="QR-Kamera"></video>
+      <button id="scan" hidden>Kamera öffnen</button>
+      <a id="type-code" href="#pair">Code eintippen</a>
+      <form id="pair-form">
+        <label for="code">Einladungslink oder Code</label>
+        <input id="code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" required placeholder="K7QM-2XDA-9FHT-W3NB">
+        <button id="redeem" class="primary" type="submit">Mit Rechner koppeln</button>
+      </form>
+      <p id="pair-status" role="status"></p>
+      <p class="muted">Keine Einladung? Frag deine Seminarleitung.</p>
+    </section>
+    <p id="notice" role="alert" hidden></p>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
