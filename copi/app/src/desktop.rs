@@ -1,12 +1,15 @@
 //! Seminar-Desktop: eine Oberfläche, ein Modus-Ort, keine lokalen Agentenstarts.
 //! Alle Hub-Aktionen laufen über DesktopApi; Fixtures sind ausschließlich Demo/Tests.
+mod abholfach_flow;
 mod checkin;
 pub mod flow_adapter;
 mod hub;
 pub mod seminar;
 mod sync_flow;
 mod sync_ui;
-pub use checkin::{AuthCallback, CancelTarget, CheckinMethod, FlowReply, MemoryApi, WaitTarget};
+#[cfg(test)]
+use checkin::AuthCallback;
+pub use checkin::{CancelTarget, CheckinMethod, FlowReply, MemoryApi, WaitTarget};
 use checkin::{Flow, Stage, TransferKind};
 use egui::{Color32, RichText, Ui};
 use pi_backend::mode::{self, Mode};
@@ -105,6 +108,7 @@ pub enum Request {
         attempt: u64,
         method: CheckinMethod,
     },
+    #[cfg(test)]
     AuthCallback(AuthCallback),
     Wait(WaitTarget),
     SyncPlan(String),
@@ -116,6 +120,7 @@ pub enum Request {
     Checkout {
         checkin_id: String,
         preview_id: String,
+        large_files: Vec<String>,
     },
     Collect {
         checkin_id: String,
@@ -156,6 +161,7 @@ pub enum Reply {
     Disconnected(String),
     Sent(String, String),
     SentAs(String, String, pi_net::seminar::Von),
+    #[cfg(test)]
     SeminarPrompt {
         session_id: String,
         prompt: seminar::HubPrompt,
@@ -282,7 +288,6 @@ pub struct Desktop {
     hub_url: String,
     oidc_issuer: String,
     empfang_pubkey: String,
-    archiv_pubkey: String,
     confirm_host: Option<String>,
     last_event: Option<Instant>,
     watch_started: bool,
@@ -295,7 +300,6 @@ struct Profile {
     hub_url: String,
     oidc_issuer: String,
     empfang_pubkey: String,
-    archiv_pubkey: String,
     device_name: String,
 }
 impl Default for Profile {
@@ -304,7 +308,6 @@ impl Default for Profile {
             hub_url: String::new(),
             oidc_issuer: String::new(),
             empfang_pubkey: String::new(),
-            archiv_pubkey: String::new(),
             device_name: "Mein Rechner".into(),
         }
     }
@@ -392,7 +395,6 @@ impl Desktop {
             hub_url: profile.hub_url,
             oidc_issuer: profile.oidc_issuer,
             empfang_pubkey: profile.empfang_pubkey,
-            archiv_pubkey: profile.archiv_pubkey,
             confirm_host: None,
             last_event: None,
             watch_started: false,
@@ -403,37 +405,6 @@ impl Desktop {
     pub fn set_api(&mut self, api: Arc<dyn DesktopApi>) {
         self.api = api;
         self.api_configured = true;
-    }
-    /// Produktions-Runtime erst nach bestätigtem Check-in einsetzen.
-    /// `events` liefert epochgebundene Events; fremde cwd sind niemals Session-IDs.
-    pub fn attach_seminar(
-        &mut self,
-        seminar: seminar::Seminar,
-    ) -> Result<mpsc::Sender<Reply>, String> {
-        if self.demo || !self.connected || self.flow.receipt.is_none() {
-            return Err("Das Seminar benötigt einen bestätigten Check-in.".into());
-        }
-        if let Some(previous) = &mut self.seminar {
-            previous.checkout();
-        }
-        self.seminar = Some(seminar);
-        let (tx, rx) = mpsc::channel();
-        let target = self.tx.clone();
-        let epoch = self.connection_epoch;
-        std::thread::spawn(move || {
-            while let Ok(reply) = rx.recv() {
-                if target
-                    .send(Reply::ConnectionEvent {
-                        epoch,
-                        reply: Box::new(reply),
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
-        Ok(tx)
     }
     fn call(&mut self, request: Request) {
         if self.demo {
@@ -541,6 +512,7 @@ impl Desktop {
                     .or_default()
                     .push(ChatMessage::new("Du", text));
             }
+            #[cfg(test)]
             Reply::SeminarPrompt { session_id, prompt } => {
                 self.send_as(&session_id, prompt.von, prompt.text);
             }
@@ -725,7 +697,6 @@ impl Desktop {
                     hub_url: self.hub_url.clone(),
                     oidc_issuer: self.oidc_issuer.clone(),
                     empfang_pubkey: self.empfang_pubkey.clone(),
-                    archiv_pubkey: self.archiv_pubkey.clone(),
                     device_name: self.device_name.clone(),
                 };
                 if let Err(e) = profile.save() {
@@ -1258,7 +1229,7 @@ impl Desktop {
                     ui.label("Bestätigter Empfangsschlüssel · Base64url, 32 Byte");
                     ui.text_edit_singleline(&mut self.empfang_pubkey);
                     ui.label("Eigener X25519-Archivschlüssel · öffentlicher Anteil");
-                    ui.text_edit_singleline(&mut self.archiv_pubkey);
+                    ui.label("Der Archivschlüssel wird vor dem Check-in automatisch lokal erzeugt und sicher aufbewahrt.");
                     ui.label("Nur den öffentlichen Schlüssel eines eigenen, gesichert verwahrten Archivschlüssels eintragen. Erzeugung und Abholfach-Entschlüsselung sind hier noch nicht angebunden. Ohne Schlüssel kein Check-in; niemals einen Empfangsschlüssel automatisch übernehmen.");
                 }
             }
@@ -1958,7 +1929,7 @@ mod tests {
             ("v3-sync-auswahl", "Was möchtest du nach R2 mitnehmen?"),
             ("v3-arbeiten-eingecheckt", "Auschecken …"),
             ("v3-checkout-vorschau", "Auschecken und Dateien holen"),
-            ("v3-checkout-fertig", "Alles zurück in ~/cocopi"),
+            ("v3-checkout-fertig", "Ausgecheckt"),
             ("v3-seminar-platzhalter", "Seminar"),
             ("v3-sync-fortschritt", "Deine Auswahl geht nach R2 …"),
             ("v3-checkout-fortschritt", "Dateien kommen zurück …"),

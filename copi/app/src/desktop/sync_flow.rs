@@ -182,17 +182,20 @@ impl Plan {
                 "Diese Auswahl ist nicht mehr aktuell. Prüfe den Arbeitsordner erneut.".into(),
             );
         }
-        // Die öffentliche Hub-API besitzt noch keinen X-Cocopi-Gross-Parameter.
-        if selection.iter().any(|s| s.starts_with("gross-")) {
-            return Err("Große Dateien sind einzeln ausgewählt, können aber mit dieser Hub-Clientversion noch nicht bestätigt übertragen werden. Wähle sie ab; es wurde nichts gesendet.".into());
-        }
         let mut state = self.folder.load_state().map_err(|e| e.to_string())?;
         state.letzter_checkin = Some(id.into());
         state.auswahl.clear();
         state.manifest.clear();
         let sync = hub.sync_http(hash);
         for (i, entry) in self.entries.iter().enumerate() {
-            if !selection.contains(&format!("eintrag-{i}")) {
+            let large: Vec<String> = entry
+                .gross
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| selection.contains(&format!("gross-{i}-{j}")))
+                .map(|(_, f)| f.pfad.clone())
+                .collect();
+            if !selection.contains(&format!("eintrag-{i}")) && large.is_empty() {
                 continue;
             }
             transfer.check()?;
@@ -205,7 +208,7 @@ impl Plan {
                 .folder
                 .upload_explicit(
                     &chosen,
-                    &[],
+                    &large,
                     Meter {
                         io: &mut temp.file,
                         transfer,
@@ -225,13 +228,14 @@ impl Plan {
                 bytes: 0,
                 total: size,
             });
-            let result = sync.hoch(
+            let result = sync.hoch_explicit(
                 &entry.bereich,
                 &entry.name,
                 Meter {
                     io: &mut temp.file,
                     transfer,
                 },
+                !large.is_empty(),
             )?;
             transfer.check()?;
             state.auswahl.push(chosen);
@@ -263,6 +267,8 @@ pub(super) fn preview(v: &Value, id: String) -> Result<CheckoutPreview, String> 
             path: file["pfad"].as_str().ok_or("Der Dateipfad fehlt.")?.into(),
             bytes: file["bytes"].as_u64().ok_or("Die Dateigröße fehlt.")?,
             status: status.into(),
+            large: false,
+            selected: true,
         });
     }
     for file in v["gross"].as_array().into_iter().flatten() {
@@ -272,7 +278,9 @@ pub(super) fn preview(v: &Value, id: String) -> Result<CheckoutPreview, String> 
                 .ok_or("Der Großdateipfad fehlt.")?
                 .into(),
             bytes: file["bytes"].as_u64().ok_or("Die Dateigröße fehlt.")?,
-            status: "groß · Rückgabe noch nicht freigegeben".into(),
+            status: "groß · einzeln bestätigen".into(),
+            large: true,
+            selected: false,
         });
     }
     Ok(CheckoutPreview {
@@ -437,7 +445,24 @@ mod tests {
         assert!(name.bytes().all(|b| b.is_ascii_hexdigit()));
     }
 }
-fn stamp() -> String {
+pub(super) fn zeitpunkt(ms: u64) -> String {
+    let seconds = ms / 1000;
+    // Unix-Zeit in einen plattformneutralen gregorianischen Kalendertag umrechnen.
+    let z = (seconds / 86400) as i64 + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    format!(
+        "{d:02}.{m:02}. {:02}:{:02} UTC",
+        seconds / 3600 % 24,
+        seconds / 60 % 60
+    )
+}
+pub(super) fn stamp() -> String {
     // libc ist bereits direkte App-Abhängigkeit; keine neue Datumsbibliothek.
     #[cfg(unix)]
     unsafe {

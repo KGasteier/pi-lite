@@ -3,14 +3,6 @@ use super::*;
 use checkin::Progress;
 
 impl Desktop {
-    /// Vom geprüften Loopback-Callback des Empfang-Adapters aufgerufen.
-    /// Niemals Token/Code im UI darstellen oder daraus eine Person ableiten.
-    /// Öffentliches Callback-API für die optionale Harness-Einbettung.
-    pub fn auth_callback(&mut self, callback: AuthCallback) {
-        if self.flow.stage == Stage::Browser && callback.attempt == self.flow.attempt {
-            self.flow_call(Request::AuthCallback(callback));
-        }
-    }
     pub(super) fn flow_call(&mut self, request: Request) {
         if matches!(request, Request::Checkin { .. }) && !self.demo && !self.api_configured {
             // Einen existierenden Adapter niemals bei Wiederholung austauschen:
@@ -32,8 +24,6 @@ impl Desktop {
                 origin: self.hub_url.trim().into(),
                 issuer: self.oidc_issuer.trim().into(),
                 empfang_pubkey: self.empfang_pubkey.trim().into(),
-                archiv_pubkey: self.archiv_pubkey.trim().into(),
-                net_pubkey: String::new(),
                 device_name: self.device_name.clone(),
                 key_dir: pi_backend::copi_config_dir()
                     .unwrap_or_default()
@@ -211,12 +201,14 @@ impl Desktop {
                         Stage::Preview => {
                             ui.heading("Deine Dateien kommen mit");
                             ui.add_space(20.0);
-                            if let Some(preview) = &self.flow.preview {
+                            if let Some(preview) = &mut self.flow.preview {
                                 ui.columns(2, |columns| {
                                     columns[0].label(RichText::new("Kommt zurück auf deinen Rechner").strong());
                                     columns[0].add_space(14.0);
-                                    for file in &preview.personal {
-                                        columns[0].label(&file.path);
+                                    for file in &mut preview.personal {
+                                        if file.large {
+                                            columns[0].checkbox(&mut file.selected, &file.path);
+                                        } else { columns[0].label(&file.path); }
                                         columns[0].label(RichText::new(format!("{} · {}", bytes(file.bytes), file.status)).small().color(QUIET));
                                         columns[0].add_space(10.0);
                                     }
@@ -237,7 +229,9 @@ impl Desktop {
                             ui.label(format!("Danach ist {slot} leer und für andere frei. Auf R2 bleibt nichts."));
                             ui.label("Hast du eine Datei lokal geändert, liegt die R2-Fassung daneben. Nichts wird überschrieben.");
                             ui.add_space(22.0);
-                            if ui.button("Auschecken und Dateien holen").clicked() {
+                            let ready = self.flow.preview.as_ref().is_some_and(|p| p.personal.iter().all(|f| !f.large || f.selected));
+                            if !ready { ui.label("Bestätige jede große Datei einzeln. Ohne Rückgabe aller persönlichen Dateien bleibt der Arbeitsplatz belegt."); }
+                            if ui.add_enabled(ready, egui::Button::new("Auschecken und Dateien holen")).clicked() {
                                 if let Some(request) = self.flow.checkout() { self.flow_call(request); }
                             }
                             if ui.small_button("Zurück zur Arbeit").clicked() { self.cancel_flow(); }
@@ -247,10 +241,10 @@ impl Desktop {
                             ui.label("Bitte warte. Deine Dateien werden nicht aufgrund dieses Klicks gelöscht.");
                         }
                         Stage::Done => {
-                            ui.heading("Alles zurück in ~/cocopi");
+                            ui.heading("Ausgecheckt");
                             ui.add_space(18.0);
                             if let Some(summary) = &self.flow.summary {
-                                ui.label(format!("{} Dateien · {} · Arbeitsplatz ausgecheckt und leer bestätigt.", summary.files, bytes(summary.bytes)));
+                                ui.label(format!("Ausgecheckt. {} Dateien in ~/cocopi · {} Konflikte erhalten. {} ist leer.", summary.files, summary.conflicts, self.flow.receipt.as_ref().map(|r| r.account.slot.as_str()).unwrap_or("Der Arbeitsplatz")));
                                 if summary.conflicts > 0 { ui.add_space(12.0); ui.label(format!("{} Dateien hattest du lokal geändert – die R2-Fassung liegt daneben.", summary.conflicts)); }
                             }
                             ui.add_space(22.0);
@@ -302,6 +296,7 @@ impl Desktop {
             "v3-sync-auswahl" => Stage::Selection,
             "v3-arbeiten-eingecheckt" | "v3-seminar-platzhalter" => Stage::Working,
             "v3-checkout-vorschau" => Stage::Preview,
+            "v3-checkout-konflikt" => Stage::Done,
             "v3-checkout-fertig" => Stage::Done,
             "v3-sync-fortschritt" => Stage::Transfer(TransferKind::Upload),
             "v3-checkout-fortschritt" => Stage::Transfer(TransferKind::Checkout),
@@ -317,6 +312,29 @@ impl Desktop {
         }
         self.flow.plan = MemoryApi::sync_plan();
         self.flow.preview = Some(MemoryApi::checkout_preview());
+        if scene == "v3-sync-auswahl" {
+            self.flow.plan.items.push(checkin::SyncItem {
+                id: "gross-demo".into(),
+                name: "Große Datei · Projekte / Seminar-Handout / Film.mov · einzeln bestätigen"
+                    .into(),
+                bytes: 240_000_000,
+                selected: false,
+            });
+        }
+        if scene == "v3-checkout-vorschau" {
+            self.flow
+                .preview
+                .as_mut()
+                .unwrap()
+                .personal
+                .push(checkin::ReturnFile {
+                    path: "Ergebnisse/Film.mov".into(),
+                    bytes: 240_000_000,
+                    status: "groß · einzeln bestätigen".into(),
+                    large: true,
+                    selected: false,
+                });
+        }
         self.flow.summary = Some(MemoryApi::summary());
         self.flow.browser_url = Some("https://auth.example.invalid/cocopi-demo".into());
         self.flow.progress = if let Stage::Transfer(kind) = stage {

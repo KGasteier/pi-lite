@@ -11,11 +11,13 @@ pub enum CheckinMethod {
 }
 /// Callback wird nur dem Adapter übergeben; die UI leitet daraus keine Identität ab.
 #[derive(Clone)]
+#[cfg(test)]
 pub struct AuthCallback {
     pub attempt: u64,
     pub code: String,
     pub state: String,
 }
+#[cfg(test)]
 impl std::fmt::Debug for AuthCallback {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthCallback")
@@ -54,6 +56,8 @@ pub struct ReturnFile {
     pub path: String,
     pub bytes: u64,
     pub status: String,
+    pub large: bool,
+    pub selected: bool,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckoutPreview {
@@ -227,12 +231,23 @@ impl Flow {
             return None;
         }
         let checkin_id = self.id()?;
-        let preview_id = self.preview.as_ref()?.id.clone();
+        let preview = self.preview.as_ref()?;
+        let preview_id = preview.id.clone();
+        if preview.personal.iter().any(|f| f.large && !f.selected) {
+            return None;
+        }
+        let large_files = preview
+            .personal
+            .iter()
+            .filter(|f| f.large && f.selected)
+            .map(|f| f.path.clone())
+            .collect();
         self.stage = Stage::Transfer(TransferKind::Checkout);
         self.progress = None;
         Some(Request::Checkout {
             checkin_id,
             preview_id,
+            large_files,
         })
     }
     pub fn collect(&mut self) -> Option<Request> {
@@ -406,6 +421,7 @@ struct MemoryState {
     selection: Vec<String>,
 }
 impl MemoryApi {
+    #[cfg(test)]
     pub fn queued(position: usize) -> Self {
         Self {
             state: Mutex::new(MemoryState {
@@ -472,16 +488,22 @@ impl MemoryApi {
                     path: "Ergebnisse/Seminar-Handout.pdf".into(),
                     bytes: 2_100_000,
                     status: "neu".into(),
+                    large: false,
+                    selected: true,
                 },
                 ReturnFile {
                     path: "Projekte/Seminar-Handout/gliederung.md".into(),
                     bytes: 12_000,
                     status: "geändert".into(),
+                    large: false,
+                    selected: true,
                 },
                 ReturnFile {
                     path: "Verläufe/Seminar-Handout.jsonl".into(),
                     bytes: 88_000,
                     status: "neu".into(),
+                    large: false,
+                    selected: true,
                 },
             ],
             volatile_bytes: 326_000_000,
@@ -528,6 +550,7 @@ impl DesktopApi for MemoryApi {
                     _ => return fail(),
                 }
             }
+            #[cfg(test)]
             Request::AuthCallback(callback)
                 if s.attempt == Some(callback.attempt)
                     && callback.code == "mock-code"
@@ -592,6 +615,7 @@ impl DesktopApi for MemoryApi {
             Request::Checkout {
                 checkin_id,
                 preview_id,
+                ..
             } if s.occupied
                 && s.previewed
                 && checkin_id == "demo-checkin"
@@ -718,7 +742,8 @@ mod tests {
         assert!(matches!(
             api.call(Request::Checkout {
                 checkin_id: "demo-checkin".into(),
-                preview_id: "demo-preview".into()
+                preview_id: "demo-preview".into(),
+                large_files: vec![],
             }),
             Reply::Error(_)
         ));

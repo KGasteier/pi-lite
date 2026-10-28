@@ -1,7 +1,8 @@
 //! Empfang in App-Workern. Fehlende Sync-HTTP-APIs werden nicht umgangen.
 //! Ohne bestätigten Empfangsschlüssel und eigenen Archivschlüssel kein Check-in.
 use super::{
-    Account, DesktopApi, InviteError, Reply, Request, checkin::*, hub::HubAdapter, sync_flow,
+    Account, DesktopApi, InviteError, Reply, Request, abholfach_flow, checkin::*, hub::HubAdapter,
+    sync_flow,
 };
 use pi_backend::hub_v1::{DeviceKey, empfang::Empfang, oidc};
 use serde_json::{Value, json};
@@ -27,10 +28,6 @@ pub struct Config {
     pub origin: String,
     pub issuer: String,
     pub empfang_pubkey: String,
-    pub archiv_pubkey: String,
-    /// Legacy-Konfigurationsfeld; die persistente Identität hat Vorrang.
-    #[allow(dead_code)]
-    pub net_pubkey: String,
     pub device_name: String,
     pub key_dir: PathBuf,
     pub sha256: Option<Sha256>,
@@ -49,6 +46,9 @@ struct State {
     receipt_unconfirmed: bool,
     imported: Option<ReturnSummary>,
     cancelled: bool,
+    pickup_imported: Option<(String, String, ReturnSummary)>,
+    pickup_unconfirmed: bool,
+    pickup: Option<Pickup>,
     checkin_pending: bool,
     plan: Option<sync_flow::Plan>,
     preview: Option<(String, Value)>,
@@ -61,19 +61,25 @@ pub struct FlowAdapter {
     cancelled_attempt: AtomicU64,
     current_attempt: AtomicU64,
     transfer: sync_flow::Transfer,
+    archive_key: pi_backend::hub_v1::abholfach::Schluessel,
     identity: pi_net::identity::Identity,
 }
 impl FlowAdapter {
     pub fn new(config: Config) -> Result<Self, String> {
-        if config.empfang_pubkey.is_empty() || config.archiv_pubkey.is_empty() {
-            return Err("Bestätige zuerst den Empfangsschlüssel und richte den eigenen Archivschlüssel ein. Es wurde kein Platz vergeben.".into());
+        if config.empfang_pubkey.is_empty() {
+            return Err(
+                "Bestätige zuerst den Empfangsschlüssel. Es wurde kein Platz vergeben.".into(),
+            );
         }
+        let archive_key =
+            pi_backend::hub_v1::abholfach::Schluessel::laden_oder_erzeugen(&config.key_dir)?;
         let empfang = Empfang::new(&config.origin)?;
         let key = DeviceKey::at(&config.key_dir, "seminar-desktop")?;
         let identity =
             pi_net::identity::Identity::load_or_create(&config.key_dir.join("seminar-net.key"))?;
         Ok(Self {
             config,
+            archive_key,
             identity,
             transfer: sync_flow::Transfer::default(),
             cancelled_attempt: AtomicU64::new(0),
@@ -91,6 +97,9 @@ impl FlowAdapter {
                 receipt_unconfirmed: false,
                 imported: None,
                 cancelled: false,
+                pickup_imported: None,
+                pickup_unconfirmed: false,
+                pickup: None,
                 checkin_pending: false,
                 plan: None,
                 preview: None,
@@ -103,7 +112,7 @@ impl FlowAdapter {
         let mut body = json!({
             "nachweis":proof,
             "geraet":{"pubkey":s.key.public_key(),"name":self.config.device_name,"art":"desktop"},
-            "archiv_pubkey":self.config.archiv_pubkey,
+            "archiv_pubkey":self.archive_key.public_b64url,
         });
         body["net_pubkey"] = json!(self.identity.peer().0);
         if s.cancelled || self.cancelled_attempt.load(Ordering::SeqCst) == s.attempt {
@@ -136,7 +145,7 @@ impl FlowAdapter {
             device_id: s.key.geraet_id.clone().ok_or("Die Geräte-ID fehlt.")?,
             device_name: self.config.device_name.clone(),
         };
-        let receipt = Receipt {
+        let mut receipt = Receipt {
             checkin_id: id,
             account,
             since: "jetzt".into(),
@@ -163,6 +172,10 @@ impl FlowAdapter {
             return Err("Der Platz wurde während des Abbruchs vergeben. Die sichere Rückgabe wurde ohne Upload angefordert; der Empfang hat noch keine archivfreie Freigabe bestätigt.".into());
         }
         // Empfangsignatur und Gerätebindung sind vor Slot-Login geprüft.
+        // Erst nach geprüftem Check-in ist der Empfang mit dem Geräteausweis authentifiziert.
+        receipt.pickup = abholfach_flow::angebot(&s.empfang)?;
+        s.pickup = receipt.pickup.clone();
+        s.receipt = Some(receipt.clone());
         let mut hub = pi_backend::hub_v1::HubV1::new(&format!(
             "{}/slot/{slot}",
             self.config.origin.trim_end_matches('/')
@@ -275,6 +288,7 @@ impl FlowAdapter {
                 s.browser_url = None;
                 self.checkin(&mut s, result?)?
             }
+            #[cfg(test)]
             Request::AuthCallback(callback) => {
                 if callback.attempt != s.attempt {
                     return Err("Diese Anmeldeantwort ist veraltet.".into());
@@ -366,6 +380,7 @@ impl FlowAdapter {
             Request::Checkout {
                 checkin_id,
                 preview_id,
+                large_files,
             } => {
                 require_receipt(&s, &checkin_id)?;
                 if s.receipt_unconfirmed {
@@ -381,15 +396,31 @@ impl FlowAdapter {
                 if current != &preview_id {
                     return Err("Diese Rückgabevorschau ist veraltet.".into());
                 }
-                if preview["gross"].as_array().is_some_and(|a| !a.is_empty()) {
-                    return Err("Auf R2 liegen große Dateien. Ihre sichere Rückgabe braucht eine zusätzliche Bestätigung, die dieser Empfang-Client noch nicht unterstützt. Der Arbeitsplatz bleibt belegt; es wird nichts gelöscht.".into());
+                let allowed: Vec<&str> = preview["gross"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|f| f["pfad"].as_str())
+                    .collect();
+                if large_files.iter().any(|p| !allowed.contains(&p.as_str())) {
+                    return Err(
+                        "Diese Großdateiauswahl gehört nicht zur bestätigten Vorschau.".into(),
+                    );
+                }
+                // Abgewählte persönliche Großdateien niemals durch Check-out verlieren.
+                // Erst mit allen Einzelzustimmungen darf der Empfang leeren.
+                if allowed.iter().any(|p| !large_files.iter().any(|s| s == p)) {
+                    return Err("Bestätige jede große Datei einzeln, bevor der Arbeitsplatz geleert wird. Es wurde nichts gelöscht.".into());
                 }
                 let _transfer = self.transfer.scope(TransferKind::Checkout, &checkin_id, 0);
                 self.transfer.check()?;
                 // Empfang baut das autoritative Archiv; kein zweites, abweichendes Clientarchiv.
                 let meta = match &s.checkout {
                     Some(v) => v.clone(),
-                    None => s.empfang.checkout(&checkin_id)?,
+                    None => s.empfang.checkout_mit_auswahl(
+                        &checkin_id,
+                        json!({"zusaetzlich":large_files,"ausschliessen":[]}),
+                    )?,
                 };
                 s.checkout = Some(meta.clone());
                 if meta["typ"] == "ausgecheckt" {
@@ -446,10 +477,42 @@ impl FlowAdapter {
                 pickup_id,
             } => {
                 require_receipt(&s, &checkin_id)?;
-                if pickup_id.is_empty() {
-                    return Err("Das Abholfach fehlt.".into());
+                if s.pickup.as_ref().is_none_or(|p| p.id != pickup_id) {
+                    return Err("Dieses Abholfach gehört nicht zum geprüften Angebot.".into());
                 }
-                return Err("Die vorhandene Empfangs-API bietet keinen Abholfachabruf. Es wurde nichts als abgeholt bestätigt.".into());
+                if s.pickup_unconfirmed {
+                    return Err("Die Abholbestätigung ist unklar. Die Dateien sind lokal; prüfe den Empfang. Keine erneute Bestätigung oder doppelter Import.".into());
+                }
+                self.transfer.cancel.store(false, Ordering::SeqCst);
+                let _scope = self.transfer.scope(TransferKind::Pickup, &pickup_id, 0);
+                let folder = pi_sync::LocalFolder::create(&self.config.local_root)
+                    .map_err(|e| e.to_string())?;
+                let (sha, summary) = match &s.pickup_imported {
+                    Some((id, sha, summary)) if id == &pickup_id => (sha.clone(), summary.clone()),
+                    _ => {
+                        let (sha, summary) = abholfach_flow::holen(
+                            &s.empfang,
+                            &self.archive_key,
+                            &folder,
+                            &pickup_id,
+                            &self.transfer,
+                        )?;
+                        s.pickup_imported = Some((pickup_id.clone(), sha.clone(), summary.clone()));
+                        (sha, summary)
+                    }
+                };
+                self.transfer.check()?;
+                s.pickup_unconfirmed = true;
+                let ack = s.empfang.abholfach_erhalten(&pickup_id, &sha)?;
+                if ack["typ"] != "abholfach_erhalten" {
+                    return Err("Der Empfang hat die Abholung nicht bestätigt. Deine Dateien sind bereits lokal.".into());
+                }
+                s.pickup = None;
+                if let Some(receipt) = &mut s.receipt {
+                    receipt.pickup = None;
+                }
+                s.pickup_unconfirmed = false;
+                FlowReply::Collected(summary)
             }
             Request::Wait(WaitTarget::Transfer { checkin_id, .. }) => {
                 require_receipt(&s, &checkin_id)?;
@@ -651,6 +714,9 @@ const {createFakeOidc}=await import(pathToFileURL(path.join(source,'empfang/test
 const {createV1}=await import(pathToFileURL(path.join(source,'lib/hub-v1.mjs')));
 const fake=await createFakeOidc(); let reception,hub,origin;
 const server=http.createServer((req,res)=>{
+  if(req.url.startsWith('/fixture/force/')) {
+    reception.forceCheckout(req.url.split('/').at(-1)).then(value=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(value));}).catch(error=>{res.writeHead(500);res.end(String(error));});return;
+  }
   if(req.url.endsWith('/erhalten')&&fs.existsSync(path.join(root,'lose-erhalten'))) {
     fs.appendFileSync(path.join(root,'ack-attempts'),'1\n');
     res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({protokoll:1,typ:'fehler',code:'intern',was:'Antwort unklar',tun:'Empfang prüfen'}));return;
@@ -690,6 +756,7 @@ fs.writeFileSync(path.join(root,'empfang/nachweise.json'),JSON.stringify({tokens
 const archive=crypto.generateKeyPairSync('x25519');
 console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.pubkey,
  archiv_pubkey:archive.publicKey.export({format:'der',type:'spki'}).subarray(-32).toString('base64url'),
+ proof2:{art:'oidc',id_token:fake.token({sub:'rust-adapter',jti:'second-login'}),nonce:fake.nonce},
  proof:{art:'oidc',id_token:fake.token({sub:'rust-adapter'}),nonce:fake.nonce}}));
 "#;
             let child = Command::new("node")
@@ -716,13 +783,24 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
                 serde_json::from_str(&line).expect("Lokaler Empfang muss seine Testadresse melden");
             Some(f)
         }
+        fn force(&self, id: &str) {
+            use std::io::{Read, Write};
+            let origin = self.info["origin"].as_str().unwrap();
+            let mut stream =
+                std::net::TcpStream::connect(origin.strip_prefix("http://").unwrap()).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(20)))
+                .unwrap();
+            write!(stream, "POST /fixture/force/{id} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        }
         fn adapter(&self, name: &str) -> FlowAdapter {
             FlowAdapter::new(Config {
                 origin: field(&self.info, "origin").unwrap(),
                 issuer: field(&self.info, "issuer").unwrap(),
                 empfang_pubkey: field(&self.info, "pubkey").unwrap(),
-                archiv_pubkey: field(&self.info, "archiv_pubkey").unwrap(),
-                net_pubkey: String::new(),
                 device_name: name.into(),
                 key_dir: self.root.join(name),
                 sha256: Some(sha256),
@@ -966,6 +1044,7 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         let reply = adapter.call(Request::Checkout {
             checkin_id: receipt.checkin_id.clone(),
             preview_id: preview.id,
+            large_files: vec![],
         });
         let Reply::Flow(FlowReply::CheckedOut(summary)) = reply else {
             panic!("{reply:?}")
@@ -1018,6 +1097,7 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         let reply = adapter.call(Request::Checkout {
             checkin_id: receipt.checkin_id,
             preview_id: p.id,
+            large_files: vec![],
         });
         assert!(
             matches!(
@@ -1079,6 +1159,7 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         let reply = adapter.call(Request::Checkout {
             checkin_id: r.checkin_id,
             preview_id: p.id,
+            large_files: vec![],
         });
         assert!(matches!(reply, Reply::Error(_)), "{reply:?}");
         assert!(adapter.state.lock().unwrap().receipt.is_some());
@@ -1143,7 +1224,8 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
             assert!(matches!(
                 adapter.call(Request::Checkout {
                     checkin_id: r.checkin_id.clone(),
-                    preview_id: p.id.clone()
+                    preview_id: p.id.clone(),
+                    large_files: vec![],
                 }),
                 Reply::Error(_)
             ));
@@ -1161,6 +1243,204 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         assert!(adapter.state.lock().unwrap().receipt.is_some());
         assert!(!f.root.join("pool-frei").exists());
     }
+    #[test]
+    fn forced_checkout_locker_persistent_key_decrypt_conflict_import_then_ack() {
+        let f = Fixture::start_mode(true).unwrap();
+        std::fs::write(
+            f.root.join("empty-checkout"),
+            b"fixture skips normal checkout assertion",
+        )
+        .unwrap();
+        let first = f.adapter("locker");
+        first.state.lock().unwrap().attempt = 1;
+        let FlowReply::CheckedIn(r) = first
+            .checkin(&mut first.state.lock().unwrap(), f.info["proof"].clone())
+            .unwrap()
+        else {
+            panic!("Check-in fehlt")
+        };
+        let public = first.archive_key.public_b64url.clone();
+        let remote = f.root.join("home/arbeit/Projekte/Buch");
+        std::fs::create_dir_all(&remote).unwrap();
+        std::fs::write(remote.join("text.md"), "Abholfach R2").unwrap();
+        f.force(&r.checkin_id);
+        drop(first);
+        let adapter = f.adapter("locker");
+        assert_eq!(public, adapter.archive_key.public_b64url);
+        adapter.state.lock().unwrap().attempt = 2;
+        let FlowReply::CheckedIn(r) = adapter
+            .checkin(&mut adapter.state.lock().unwrap(), f.info["proof2"].clone())
+            .unwrap()
+        else {
+            panic!("Zweiter Check-in fehlt")
+        };
+        let pickup = r.pickup.unwrap();
+        let boxes = f.root.join("empfang/abholfach");
+        assert_eq!(std::fs::read_dir(&boxes).unwrap().count(), 1);
+        // Später abholen führt nur zur Auswahl: weder Import noch Bestätigung.
+        assert!(matches!(
+            adapter.call(Request::SyncPlan(r.checkin_id.clone())),
+            Reply::Flow(FlowReply::Plan(_))
+        ));
+        assert_eq!(std::fs::read_dir(&boxes).unwrap().count(), 1);
+        assert!(
+            !adapter
+                .config
+                .local_root
+                .join("Projekte/Buch/text.md")
+                .exists()
+        );
+        let local = adapter.config.local_root.join("Projekte/Buch");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::write(local.join("text.md"), "Lokale Änderung").unwrap();
+        // Falscher Schlüssel und unsicheres Ziel dürfen das Abholfach nicht quittieren.
+        let wrong = pi_backend::hub_v1::abholfach::Schluessel::laden_oder_erzeugen(
+            f.root.join("wrong-key"),
+        )
+        .unwrap();
+        let state = adapter.state.lock().unwrap();
+        let folder = pi_sync::LocalFolder::create(&adapter.config.local_root).unwrap();
+        assert!(
+            abholfach_flow::holen(
+                &state.empfang,
+                &wrong,
+                &folder,
+                &pickup.id,
+                &adapter.transfer
+            )
+            .is_err()
+        );
+        drop(state);
+        assert_eq!(std::fs::read_dir(&boxes).unwrap().count(), 1);
+        let reply = adapter.call(Request::Collect {
+            checkin_id: r.checkin_id,
+            pickup_id: pickup.id,
+        });
+        let Reply::Flow(FlowReply::Collected(summary)) = reply else {
+            panic!("{reply:?}")
+        };
+        assert_eq!(summary.files, 1);
+        assert_eq!(summary.conflicts, 1);
+        assert_eq!(
+            std::fs::read_to_string(local.join("text.md")).unwrap(),
+            "Lokale Änderung"
+        );
+        let conflict = std::fs::read_dir(&local)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.file_name().unwrap().to_string_lossy().contains(" (R2 "))
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(conflict).unwrap(), "Abholfach R2");
+        assert_eq!(std::fs::read_dir(&boxes).unwrap().count(), 0);
+        assert!(
+            adapter.state.lock().unwrap().receipt.is_some(),
+            "Neue Belegung bleibt bestehen"
+        );
+        assert!(adapter.transfer.progress().is_none());
+    }
+
+    #[test]
+    fn large_file_requires_individual_upload_and_checkout_confirmation() {
+        let f = Fixture::start_mode(true).unwrap();
+        std::fs::write(
+            f.root.join("empty-checkout"),
+            b"separate large-file assertions",
+        )
+        .unwrap();
+        let adapter = f.adapter("large");
+        let folder = pi_sync::LocalFolder::create(&adapter.config.local_root).unwrap();
+        let project = folder.root.join("Projekte/Film");
+        std::fs::create_dir_all(&project).unwrap();
+        let size = 200 * 1024 * 1024 + 1;
+        std::fs::File::create(project.join("film.mov"))
+            .unwrap()
+            .set_len(size)
+            .unwrap();
+        std::fs::File::create(project.join("nicht-gewaehlt.mov"))
+            .unwrap()
+            .set_len(size)
+            .unwrap();
+        let Reply::Flow(FlowReply::CheckedIn(r)) = adapter.call(Request::Checkin {
+            attempt: 1,
+            method: CheckinMethod::Guest("test-invitation-one".into()),
+        }) else {
+            panic!("Check-in fehlt")
+        };
+        let Reply::Flow(FlowReply::Plan(plan)) =
+            adapter.call(Request::SyncPlan(r.checkin_id.clone()))
+        else {
+            panic!("Plan fehlt")
+        };
+        let large = plan
+            .items
+            .iter()
+            .find(|i| i.id.starts_with("gross-") && i.name.contains(" / film.mov"))
+            .unwrap();
+        assert!(!large.selected);
+        let reply = adapter.call(Request::Upload {
+            checkin_id: r.checkin_id.clone(),
+            selection: vec![large.id.clone()],
+        });
+        assert!(
+            matches!(reply, Reply::Flow(FlowReply::Uploaded)),
+            "{reply:?}"
+        );
+        let remote = f.root.join("home/arbeit/Projekte/Film");
+        assert_eq!(
+            std::fs::metadata(remote.join("film.mov")).unwrap().len(),
+            size
+        );
+        assert!(!remote.join("nicht-gewaehlt.mov").exists());
+        // Eine neue große R2-Datei muss in der Vorschau einzeln bestätigt werden.
+        std::fs::rename(remote.join("film.mov"), remote.join("ergebnis.mov")).unwrap();
+        let Reply::Flow(FlowReply::Preview(p)) =
+            adapter.call(Request::CheckoutPreview(r.checkin_id.clone()))
+        else {
+            panic!("Vorschau fehlt")
+        };
+        assert!(
+            p.personal
+                .iter()
+                .any(|f| f.large && !f.selected && f.path.ends_with("ergebnis.mov"))
+        );
+        assert!(matches!(
+            adapter.call(Request::Checkout {
+                checkin_id: r.checkin_id.clone(),
+                preview_id: p.id.clone(),
+                large_files: vec![]
+            }),
+            Reply::Error(_)
+        ));
+        assert!(remote.join("ergebnis.mov").exists());
+        assert!(!f.root.join("pool-frei").exists());
+        let large_files = p
+            .personal
+            .iter()
+            .filter(|f| f.large)
+            .map(|f| f.path.clone())
+            .collect();
+        let reply = adapter.call(Request::Checkout {
+            checkin_id: r.checkin_id,
+            preview_id: p.id,
+            large_files,
+        });
+        assert!(
+            matches!(reply, Reply::Flow(FlowReply::CheckedOut(_))),
+            "{reply:?}"
+        );
+        assert_eq!(
+            std::fs::metadata(project.join("ergebnis.mov"))
+                .unwrap()
+                .len(),
+            size
+        );
+        assert_eq!(
+            std::fs::metadata(project.join("film.mov")).unwrap().len(),
+            size
+        );
+        assert!(f.root.join("pool-frei").exists());
+    }
+
     #[test]
     fn local_fake_oidc_proof_is_verified_by_real_empfang() {
         let Some(f) = Fixture::start() else {

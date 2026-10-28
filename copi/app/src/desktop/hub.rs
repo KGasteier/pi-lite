@@ -52,7 +52,9 @@ impl HubAdapter {
             .lock()
             .map_err(|_| "Die Verbindung wurde unterbrochen. Melde dich erneut an.")?;
         match request {
-            Request::Checkin { .. } | Request::AuthCallback(_) | Request::Wait(_)
+            #[cfg(test)]
+            Request::AuthCallback(_) => Err("Externe Anmeldeantworten werden nicht angenommen.".into()),
+            Request::Checkin { .. } | Request::Wait(_)
             | Request::SyncPlan(_) | Request::Upload { .. } | Request::CheckoutPreview(_)
             | Request::Checkout { .. } | Request::Collect { .. } | Request::CancelFlow(_) => {
                 Err("Empfang und Datei-Sync sind noch nicht angebunden. Es wurde nichts übertragen, gelöscht oder als ausgecheckt bestätigt.".into())
