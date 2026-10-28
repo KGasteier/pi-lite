@@ -64,55 +64,99 @@ class SafeScripts(unittest.TestCase):
     def test_default_is_explicit_dry_run(self):
         for script in ('provision.sh', 'check.sh', 'teardown.sh'):
             with self.subTest(script=script):
-                default = self.run_script(script, '--slots', 's01,s02')
-                explicit = self.run_script(script, '--dry-run', '--slots', 's01,s02')
+                default = self.run_script(script, '--slots', 'account01,account02')
+                explicit = self.run_script(script, '--dry-run', '--slots', 'account01,account02')
                 self.assertEqual(default.returncode, 0, default.stderr)
                 self.assertEqual(default.stdout, explicit.stdout)
                 self.assertIn('dry-run', default.stdout)
                 self.assertNotIn('OK:', default.stdout)
-                self.assertIn('s01', default.stdout)
-                self.assertIn('s02', default.stdout)
-                self.assertNotIn('--- s10', default.stdout)
+                self.assertIn('account01', default.stdout)
+                self.assertIn('account02', default.stdout)
+                self.assertNotIn('--- account10', default.stdout)
 
     def test_apply_requires_root_without_mutation(self):
         for script in ('provision.sh', 'check.sh', 'teardown.sh'):
             with self.subTest(script=script):
-                result = self.run_script(script, '--apply', '--slots', 's01,s02')
+                result = self.run_script(script, '--apply', '--slots', 'account01,account02')
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('benötigt Root', result.stderr)
 
     def test_bad_arguments_fail_closed(self):
         for script in ('provision.sh', 'check.sh', 'teardown.sh'):
-            for args in (('--slots', ''), ('--slots', 's00'), ('--slots', 's11'),
-                         ('--slots', 's01,s01'), ('--slots', 's01, s02'),
-                         ('--slots', '../../root'), ('--slots', 's01;true'),
+            for args in (('--slots', ''), ('--slots', 'account00'), ('--slots', 'account11'),
+                         ('--slots', 'account01,account01'), ('--slots', 'account01, account02'),
+                         ('--slots', '../../root'), ('--slots', 'account01;true'),
+                         ('--slots', 's01,s02'), ('--slots', 'cocopi-s01'),
                          ('--slots',), ('--dry-run', '--apply'),
-                         ('--slots', 's01', '--slots', 's02'), ('--unknown',)):
+                         ('--slots', 'account01', '--slots', 'account02'), ('--unknown',)):
                 with self.subTest(script=script, args=args):
                     self.assertNotEqual(self.run_script(script, *args).returncode, 0)
 
     def test_teardown_needs_explicit_slots(self):
         self.assertNotEqual(self.run_script('teardown.sh').returncode, 0)
         self.assertNotEqual(self.run_script('provision.sh', '--purge').returncode, 0)
-        result = self.run_script('teardown.sh', '--slots', 's01,s02', '--purge')
+        result = self.run_script('teardown.sh', '--slots', 'account01,account02', '--purge')
         self.assertEqual(result.returncode, 0)
         self.assertIn('erst nach gültigem Archiv', result.stdout)
 
     def test_plan_ports_and_budget(self):
-        result = self.run_script('provision.sh', '--slots', 's01,s02')
+        result = self.run_script('provision.sh', '--slots', 'account01,account02')
         self.assertIn('Port 8801', result.stdout)
         self.assertIn('Port 8802', result.stdout)
         self.assertIn('9765625 KiB NVMe + 68359375 KiB SATA', result.stdout)
         self.assertIn('Inhalt niemals anzeigen', result.stdout)
         result = self.helper('[[ $((NVME_QUOTA_KIB+DATA_QUOTA_KIB)) == 78125000 ]] && '
                              '[[ $((78125000*1024)) == 80000000000 ]] && '
-                             '[[ ${#SLOTS[@]} == 10 && ${SLOTS[9]} == s10 ]]')
+                             '[[ ${#SLOTS[@]} == 10 && ${SLOTS[9]} == account10 ]]')
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_all_accounts_map_to_same_unix_name_and_stable_ids(self):
+        result = self.helper(r'''
+getent() { return 2; }
+for slot in "${SLOTS[@]}"; do
+    slot_vars "$slot"
+    printf '%s:%s:%s:%s:%s:%s\n' "$SLOT" "$USER_NAME" "$EXPECTED_UID" "$PORT" "$UNIT" "$HUB_STATE"
+done
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [
+            f'account{n:02}:account{n:02}:{20000+n}:{8800+n}:'
+            f'cocopi-hub@account{n:02}.service:/mnt/data/cocopi/account{n:02}/hub-state'
+            for n in range(1, 11)
+        ])
+
+    def test_generated_hub_contract_and_private_state_directory(self):
+        # Nur Dateierzeugung abfangen: MODE bleibt dry-run; keine Systemänderung.
+        fixture = r'''
+getent() { return 2; }
+managed_file() {
+    if [[ $1 == */hub.env ]]; then
+        /usr/bin/cat
+    else
+        /usr/bin/cat >/dev/null
+    fi
+}
+set -- --slots account01,account02
+'''
+        body = (BASE / 'provision.sh').read_text()
+        body = body[body.index('parse_args provision'):]
+        result = self.helper(fixture + body)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        env_lines = [line for line in result.stdout.splitlines() if line.startswith('HUB_')]
+        for n in (1, 2):
+            for line in (f'HUB_SLOT=account{n:02}', 'HUB_MAX_OPEN_SESSIONS=2',
+                         'HUB_MAX_ACTIVE_SESSIONS=1', 'HUB_GLOBAL_HEAVY_JOBS=1',
+                         f'HUB_STATE=/mnt/data/cocopi/account{n:02}/hub-state'):
+                self.assertIn(line, env_lines)
+            self.assertIn(f'install -d -m 700 -o account{n:02} -g account{n:02} -- '
+                          f'/mnt/data/cocopi/account{n:02}/hub-state', result.stdout)
+        self.assertNotIn('HUB_STATE=off', result.stdout)
+        self.assertFalse(self.sentinel.exists())
 
     def test_sudo_listing_rejects_any_allow_rule(self):
         fixtures = (
-            ('User cocopi-s01 may run the following commands:\n    (ALL : ALL) !ALL', 0, True),
-            ('User cocopi-s01 is not allowed to run sudo on host.', 1, True),
+            ('User account01 may run the following commands:\n    (ALL : ALL) !ALL', 0, True),
+            ('User account01 is not allowed to run sudo on host.', 1, True),
             ('sudo: configuration error', 1, False),
             ('User x may run:\n    (root) NOPASSWD: /usr/bin/apt', 0, False),
             ('User x may run:\n    (ALL : ALL) !ALL\n    (root) /bin/bash', 0, False),
@@ -122,7 +166,7 @@ class SafeScripts(unittest.TestCase):
             with self.subTest(listing=listing):
                 # Fixture wird als Daten über stdin gelesen, nie evaluiert.
                 code = ('sudo() { printf "%s\\n" "$LISTING"; return "$STATUS"; }; '
-                        'sudo_denied cocopi-s01')
+                        'sudo_denied account01')
                 env = dict(self.env, LISTING=listing, STATUS=str(status))
                 result = subprocess.run(['bash', '-c', 'source "$1/common.sh"; ' + code,
                                          'bash', str(BASE)], env=env, capture_output=True)
@@ -148,7 +192,7 @@ stat() { printf '%s\n' cgroup2fs; }
 command() { printf '%s\n' /usr/bin/true; }
 readlink() { printf '%s\n' /usr/bin/true; }
 getent() { return 2; }
-parse_args provision --slots s01,s02
+parse_args provision --slots account01,account02
 HOME_BASE=$HOME/homes
 DATA_BASE=$HOME/data
 STATE_BASE=$HOME/state
@@ -192,7 +236,7 @@ check_mounts
                 self.assertEqual(result.returncode == 0, good, result.stderr)
 
     def test_launcher_rejects_wrong_slot_without_reading_token(self):
-        for args in ((), ('s00',), ('../../root',), ('s01',)):
+        for args in ((), ('account00',), ('../../root',), ('account01',), ('s01',)):
             result = self.run_script('hub-launch.sh', *args)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(result.stdout, '')

@@ -1,11 +1,12 @@
-I1-S4-provision: lokale Regression, normaler Nutzer, kein --apply als Root
-2026-10-28T18:38:22+01:00
-
-$ PYTHONDONTWRITEBYTECODE=1 python3 deploy/r2/test_scripts.py
+I1-S4-a4 · isolierte Regression; temporäres HOME, keine Systemänderung
+2026-10-28T18:48:42.269066+01:00
+$ python3 deploy/r2/test_scripts.py
+test_all_accounts_map_to_same_unix_name_and_stable_ids (__main__.SafeScripts.test_all_accounts_map_to_same_unix_name_and_stable_ids) ... ok
 test_apply_requires_root_without_mutation (__main__.SafeScripts.test_apply_requires_root_without_mutation) ... ok
 test_bad_arguments_fail_closed (__main__.SafeScripts.test_bad_arguments_fail_closed) ... ok
 test_bash_syntax (__main__.SafeScripts.test_bash_syntax) ... ok
 test_default_is_explicit_dry_run (__main__.SafeScripts.test_default_is_explicit_dry_run) ... ok
+test_generated_hub_contract_and_private_state_directory (__main__.SafeScripts.test_generated_hub_contract_and_private_state_directory) ... ok
 test_hub_contract_unconfirmed_fails_before_any_service (__main__.SafeScripts.test_hub_contract_unconfirmed_fails_before_any_service) ... ok
 test_launcher_rejects_wrong_slot_without_reading_token (__main__.SafeScripts.test_launcher_rejects_wrong_slot_without_reading_token) ... ok
 test_mount_preflight_rejects_unknown_unquotified_and_inactive (__main__.SafeScripts.test_mount_preflight_rejects_unknown_unquotified_and_inactive) ... ok
@@ -18,11 +19,8 @@ test_symlink_and_parent_traversal_rejected (__main__.SafeScripts.test_symlink_an
 test_teardown_needs_explicit_slots (__main__.SafeScripts.test_teardown_needs_explicit_slots) ... ok
 
 ----------------------------------------------------------------------
-Ran 14 tests in 1.031s
+Ran 16 tests in 1.345s
 
 OK
 
-$ bash -n deploy/r2/*.sh deploy/r2/slots.conf
-Exit: 0
-
-Shellcheck: nicht installiert; nicht ausgeführt, keine Installation.
+Exitcode: 0

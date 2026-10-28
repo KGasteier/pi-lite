@@ -8,7 +8,7 @@ Administration; Studierende benötigen später nur ihre bestätigte Anmeldung.
 
 ## 1. Was geliefert ist
 
-- `slots.conf`: zehn Slots, s10 Reserve; Standardauswahl nur **s01,s02**.
+- `slots.conf`: zehn Slots, account10 Reserve; Standardauswahl nur **account01,account02**.
 - `provision.sh`: erst Voraussetzungen prüfen, dann persönliche Konten, private
   Datenpfade, Account-Slice, Linger und getrennte Hub-Userdienste einrichten.
 - `check.sh`: pro Punkt `OK` / `FEHLER`; `--apply` bedeutet hier ausschließlich
@@ -34,11 +34,11 @@ verwendet Docker oder ruft ein Modell auf.
 Im Repository-Root:
 
 ```bash
-bash deploy/r2/provision.sh --slots s01,s02
-bash deploy/r2/check.sh --slots s01,s02
-bash deploy/r2/teardown.sh --slots s01,s02
+bash deploy/r2/provision.sh --slots account01,account02
+bash deploy/r2/check.sh --slots account01,account02
+bash deploy/r2/teardown.sh --slots account01,account02
 PYTHONDONTWRITEBYTECODE=1 python3 deploy/r2/test_scripts.py
-bash -n deploy/r2/common.sh deploy/r2/provision.sh deploy/r2/check.sh deploy/r2/teardown.sh
+for f in deploy/r2/*.sh deploy/r2/slots.conf; do bash -n "$f" || exit 1; done
 ```
 
 Dry-Run beschreibt Schritte; er erfindet weder UIDs noch Erfolgsnachweise.
@@ -49,7 +49,8 @@ absichtlich **keine** Standardauswahl. `--purge` ist nur dort zulässig.
 
 **Diese Schritte benötigen separate menschliche Freigabe. Nicht im I1 ausführen.**
 
-1. A4 von S3 und S1 bestätigen lassen (Vorschlag unten). Identitäts-/Gerätebindung,
+1. A4 aus `coord/FREEZE-I1.md` ist verbindlich. S3 implementiert den Hubvertrag;
+   K muss ihn nach S3-Review freigeben. Identitäts-/Gerätebindung,
    Sessionlimits und Widerruf mit Mock nachweisen. Die alten Hub-Variablen allein
    beweisen diese Funktionen nicht.
 2. Externes, verschlüsseltes Backupziel und Zuständigkeit festlegen; Restore
@@ -69,7 +70,7 @@ absichtlich **keine** Standardauswahl. `--purge` ist nur dort zulässig.
    Slotkonten dürfen eigene Bibliotheken/Buildwerkzeuge ohne sudo nutzen.
 6. Geprüfte, unveränderliche Hubkopie einschließlich benötigter Begleitdateien
    nach `/opt/cocopi/pi-hub` bereitstellen (nicht den Arbeitsbaum eines Nutzers).
-   S3 muss den Vertrag `cocopi-slots-v1` bestätigen. Erst nach dessen Abnahme in
+   K muss den Vertrag `cocopi-slots-v1` nach S3-Review freigeben. Erst danach in
    `slots.conf` `HUB_CONTRACT=cocopi-slots-v1` setzen und den gleichnamigen Text in
    `slots-contract` der geprüften Hubauslieferung bereitstellen. **Der Marker ist
    eine administrative Freigabe, kein automatischer Sicherheitsbeweis.**
@@ -78,16 +79,16 @@ absichtlich **keine** Standardauswahl. `--purge` ist nur dort zulässig.
    `/usr/local/lib/cocopi-r2/`). **Nicht als Root aus dem nutzerbeschreibbaren
    Worktree starten.** `common.sh` prüft Konfiguration/Eltern zusätzlich; diese
    Prüfung ersetzt nicht den Schutz der bereits geladenen Skripte.
-8. Anfangs nur s01,s02; keine automatischen SSH-Schlüssel, Passwörter, Provider-
+8. Anfangs nur account01,account02; keine automatischen SSH-Schlüssel, Passwörter, Provider-
    oder Gerätezutritte. Diese werden in einem separaten begleiteten Enrollment
    vergeben. Konten sind neu mit gesperrtem Passwort angelegt.
 
 Spätere, ausdrücklich freizugebende Root-Befehle (hier NICHT ausgeführt):
 
 ```bash
-bash /usr/local/lib/cocopi-r2/provision.sh --dry-run --slots s01,s02
-bash /usr/local/lib/cocopi-r2/provision.sh --apply --slots s01,s02
-bash /usr/local/lib/cocopi-r2/check.sh --apply --slots s01,s02
+bash /usr/local/lib/cocopi-r2/provision.sh --dry-run --slots account01,account02
+bash /usr/local/lib/cocopi-r2/provision.sh --apply --slots account01,account02
+bash /usr/local/lib/cocopi-r2/check.sh --apply --slots account01,account02
 ```
 
 Jeder Fehler blockiert Freigabe. Prüfung erneut ausführen, nicht blind weitermachen.
@@ -110,8 +111,10 @@ Verbot und effektives Listing; jede erlaubende Regel ist ein Fehler.
 | Schwerer CPU-Job | 1 global über alle Hubinstanzen | **globale S3-Queue nötig**, getrennte Env-Werte erzeugen keinen gemeinsamen Semaphore |
 
 Ext4-Userquoten zählen die UID auf dem gesamten jeweiligen Dateisystem, auch
-Dateien außerhalb Home. Homes liegen auf NVMe unter `/home/cocopi-sNN`, Daten auf
-SATA unter `/mnt/data/cocopi/cocopi-sNN`, beide **0700** mit privater Primärgruppe.
+Dateien außerhalb Home. Homes liegen auf NVMe unter `/home/accountNN`, Daten auf
+SATA unter `/mnt/data/cocopi/accountNN`, beide **0700** mit privater Primärgruppe.
+Unix-Konto und Slot-ID sind gleich; alte Slotbezeichnungen werden abgewiesen.
+Dies ist keine automatische Migration bestehender Konten oder Daten.
 Nur zustandssetzende Abweichungen werden korrigiert; vorhandene Token bleiben
 unverändert, laufende Hubs werden **nicht automatisch neu gestartet**. Änderungen
 an Unit/Umgebung benötigen nach Zustimmung einen getrennten Wartungsneustart;
@@ -126,23 +129,35 @@ technisch erzwingen; Pilotpolicy und Hubqueue haben diese ehrliche Grenze.
 
 ## 5. Hub und Geheimnisse
 
-Pro Slot `cocopi-hub@sNN.service` unter dem eigenen systemd-Usermanager;
+Pro Slot `cocopi-hub@accountNN.service` unter dem eigenen systemd-Usermanager;
 rootverwaltete gemeinsame Unit in `/etc/systemd/user`, Drop-in in
 `/etc/systemd/system/user-UID.slice.d/50-cocopi.conf`. Linger nur bei Bedarf setzen.
-Hubbindung **127.0.0.1**, s01 Port 8801, …, s10 Port 8810. Kein öffentlicher Port,
+Hubbindung **127.0.0.1**, account01 Port 8801, …, account10 Port 8810. Kein öffentlicher Port,
 kein TLS-/Tailscale-/SSH-Setup durch diese Skripte. Ein späterer geprüfter
 Zugang muss auf die richtige Instanz und Geräteberechtigung abbilden.
 
 Der Startwrapper prüft Unixkonto/Slot/Loopback und lädt ein kryptografisch
 zufälliges, 0600 geschütztes Bootstrap-Token aus
-`/etc/cocopi/slots/sNN/token` (Slotkonto-eigen, Eltern root-eigen).
+`/etc/cocopi/slots/accountNN/token` (Slotkonto-eigen, Eltern root-eigen).
 Token nie in Argumenten, URLs, Dry-Run, Git oder Journal. xtrace wird abgeschaltet;
 stdout/stderr des Hubs gehen im konservativen Pilot nicht ins Journal. Daher sind
 Status-/Exitcodes sichtbar, Inhaltslogs aber nicht verfügbar. Der Token wird nicht
 rotiert, wenn er bereits existiert. Es ist **kein Ersatz für Geräte-Token**.
 Root und das Slotkonto können den eigenen Token lesen; nicht vor seinem eigenen
 Agenten geschützt. Keine fremden Home-Konfigurationen werden gelesen/kopiert.
-`HUB_STATE=off` vermeidet ungeprüftes Wiederanlaufen alter Registry-Aufträge.
+`HUB_STATE=/mnt/data/cocopi/accountNN/hub-state` ist im Vertrag
+`cocopi-slots-v1` ein **Verzeichnis**, nicht eine JSON-Datei und nicht `off`.
+Es wird mit 0700 und Slotkonto als Besitzer/Gruppe angelegt; es zählt zur SATA-Quote
+und enthält das Geräte-Register des Slots. Vorhandene Inhalte bleiben unberührt.
+Der Startwrapper prüft Pfad und Rechte vor dem Tokenlesen.
+
+Die Hub-Umgebung verwendet exakt `HUB_SLOT=accountNN`,
+`HUB_MAX_OPEN_SESSIONS=2`, `HUB_MAX_ACTIVE_SESSIONS=1`,
+`HUB_GLOBAL_HEAVY_JOBS=1` und `HUB_STATE` wie oben. Der bisherige Hub deutet
+`HUB_STATE` als Datei; er ist damit **nicht kompatibel**. S3 passt das parallel an.
+`HUB_CONTRACT=unconfirmed` bleibt bis zur Freigabe durch K nach S3-Review bestehen.
+Ein Verzeichnis beweist weder sichere Persistenz noch verbotenen Auto-Resume;
+beides ist im Hubreview und in Mocktests gesondert abzunehmen.
 
 ## 6. Abnahme und Negativtests
 
@@ -170,9 +185,9 @@ abnehmen; niemals 80 GB Testfüllung oder Forkbomben auf dem laufenden R2.
 ### Rückbau (separate Freigabe nötig)
 
 ```bash
-bash /usr/local/lib/cocopi-r2/teardown.sh --slots s01,s02             # nur Plan
-bash /usr/local/lib/cocopi-r2/teardown.sh --apply --slots s01,s02     # sperrt + sichert; behält Daten/Konto
-bash /usr/local/lib/cocopi-r2/teardown.sh --apply --slots s01,s02 --purge  # zusätzlich löscht
+bash /usr/local/lib/cocopi-r2/teardown.sh --slots account01,account02             # nur Plan
+bash /usr/local/lib/cocopi-r2/teardown.sh --apply --slots account01,account02     # sperrt + sichert; behält Daten/Konto
+bash /usr/local/lib/cocopi-r2/teardown.sh --apply --slots account01,account02 --purge  # zusätzlich löscht
 ```
 
 S3 muss Geräte-/Enrollmentzugänge **vor Wiedervergabe** widerrufen. Das Skript
@@ -180,7 +195,7 @@ macht keine Netzwerkanfrage. Es stoppt ausschließlich Dienste der expliziten
 Slotkonten, sperrt Passwort/Accountablauf/Login-Shell und beendet deren
 Usermanager. Bei weiteren Prozessen bricht es ab, statt breit Prozesse zu töten.
 Erst dann Archiv von Home, SATA-Daten, Slotkonfiguration und UID-Inventar unter
-`/var/backups/cocopi-slots/sNN/`, root-only, mit numerischen UIDs, ACLs, xattrs,
+`/var/backups/cocopi-slots/accountNN/`, root-only, mit numerischen UIDs, ACLs, xattrs,
 SHA-256 und Lesbarkeitsprüfung. Symlinks werden nicht dereferenziert, untergeordnete
 Mounts blockieren. Platzmangel/Archivfehler: keine Quelldatenlöschung.
 
@@ -232,7 +247,7 @@ Modelle, keine fremden Prozesse/Windows steuern. Zehnter Slot bleibt Reserve.
 | Stufe | Ablauf | Nachweis / Abbruch |
 |---|---|---|
 | 0 getrennte Testumgebung | kleine Quote füllen, Speicher-/Tasklimit kontrolliert erreichen, Restore/Widerruf | reproduzierbarer Fehler statt fremdem Zugriff; keine Forkbombe auf R2 |
-| 1 zwei Personen s01/s02 | je 2 offene, max. 1 aktive Mocksession; dritte abweisen; Prompt, Rückfrage, Abbruch, Reconnect, Datei, Loginabbruch | keine doppelten Requests, private Homes/Token unerreichbar, verständliche Fehlermeldung |
+| 1 zwei Personen account01/account02 | je 2 offene, max. 1 aktive Mocksession; dritte abweisen; Prompt, Rückfrage, Abbruch, Reconnect, Datei, Loginabbruch | keine doppelten Requests, private Homes/Token unerreichbar, verständliche Fehlermeldung |
 | 2 ein schwerer CPU-Job global | kontrollierter Build oder synthetischer Export; anderer Slot reiht zweiten Job ein | globale Queue über beide Hubs belegen; direkte Shelljobs als Policygrenze separat dokumentieren |
 | 3 schrittweise 3 → 6 → 9 | gleicher Ablauf, ein schwerer Job bleibt global; je Stufe 15 min plus Lastspitze | 9 Personen erst nach stabiler Vorstufe; Reserve unverändert |
 | 4 Neustart-/Recoveryfenster | nur Test-Hub/Slot nach Zustimmung, Replay/Restore/Tokenwiderruf | neue Prozesse korrekt benennen, kein blindes Resume, geprüfte Sicherung |
@@ -249,27 +264,28 @@ keine weitere Last hinzufügen, eigenen Test geordnet abbrechen und zur letzten
 stabilen Belegung zurück. Werte sind vor Test mit Betrieb abzustimmen. Zweiter
 schwerer Job / zwei aktive Sessions erst nach neuer ausdrücklicher Entscheidung.
 
-## 9. A4-Vorschlag (noch nicht eingefroren)
+## 9. A4-Kontomodell (eingefroren)
 
-**An S3/S1 zur Bestätigung.** Slot-ID ist stabil und kein Anzeigename. Person,
+**Verbindlich: `coord/FREEZE-I1.md` §A4. Hubumsetzung noch unbestätigt.**
+Slot-ID ist stabil und kein Anzeigename. Person,
 Unixkonto, Hubinstanz und Geräte-ID werden serverseitig gebunden. Ein Port ist
 keine Autorisierung. Pro Gerät eigener widerrufbarer Token, niemals im Inventar
 als Klartext; Tabelle enthält nur einen symbolischen Verweis.
 
 | Slot | Unixkonto | Hub-Userdienst / Loopbackport | Geräte-Token (nur Verweis) | Grenzen |
 |---|---|---|---|---|
-| s01 | cocopi-s01 | cocopi-hub@s01 / 8801 | s01/<device-id> | G |
-| s02 | cocopi-s02 | cocopi-hub@s02 / 8802 | s02/<device-id> | G |
-| s03 | cocopi-s03 | cocopi-hub@s03 / 8803 | s03/<device-id> | G |
-| s04 | cocopi-s04 | cocopi-hub@s04 / 8804 | s04/<device-id> | G |
-| s05 | cocopi-s05 | cocopi-hub@s05 / 8805 | s05/<device-id> | G |
-| s06 | cocopi-s06 | cocopi-hub@s06 / 8806 | s06/<device-id> | G |
-| s07 | cocopi-s07 | cocopi-hub@s07 / 8807 | s07/<device-id> | G |
-| s08 | cocopi-s08 | cocopi-hub@s08 / 8808 | s08/<device-id> | G |
-| s09 | cocopi-s09 | cocopi-hub@s09 / 8809 | s09/<device-id> | G |
-| s10 Reserve | cocopi-s10 | cocopi-hub@s10 / 8810 | erst bei Vergabe | G |
+| account01 | account01 | cocopi-hub@account01 / 8801 | account01/<device-id> | G |
+| account02 | account02 | cocopi-hub@account02 / 8802 | account02/<device-id> | G |
+| account03 | account03 | cocopi-hub@account03 / 8803 | account03/<device-id> | G |
+| account04 | account04 | cocopi-hub@account04 / 8804 | account04/<device-id> | G |
+| account05 | account05 | cocopi-hub@account05 / 8805 | account05/<device-id> | G |
+| account06 | account06 | cocopi-hub@account06 / 8806 | account06/<device-id> | G |
+| account07 | account07 | cocopi-hub@account07 / 8807 | account07/<device-id> | G |
+| account08 | account08 | cocopi-hub@account08 / 8808 | account08/<device-id> | G |
+| account09 | account09 | cocopi-hub@account09 / 8809 | account09/<device-id> | G |
+| account10 Reserve | account10 | cocopi-hub@account10 / 8810 | erst bei Vergabe | G |
 
-Private Primärgruppen und feste UID/GID **20001…20010** sind vorgeschlagen;
+Private Primärgruppen und feste UID/GID **20001…20010** sind eingefroren;
 `SLOT_UID_BASE=20000` muss vor Apply gegen lokale/NSS-Kollisionen geprüft werden.
 Zwischen Slots werden keine UIDs automatisch wiederverwendet. Hostweite
 Administrationswerkzeuge müssen diesen Bereich separat reservieren; ein
@@ -282,7 +298,8 @@ Grenzen sind keine garantierten Ressourcen, Änderungen nur nach Lastbefund.
 ### Konkrete Änderungsbitten an S3
 
 - Vertrag/Variablennamen bestätigen: `HUB_SLOT`, `HUB_MAX_OPEN_SESSIONS=2`,
-  `HUB_MAX_ACTIVE_SESSIONS=1`, `HUB_GLOBAL_HEAVY_JOBS=1`, Loopback/Port/ROOTS.
+  `HUB_MAX_ACTIVE_SESSIONS=1`, `HUB_GLOBAL_HEAVY_JOBS=1`, `HUB_STATE` als
+  privates Verzeichnis 0700 für das Geräte-Register, Loopback/Port/ROOTS.
   Aktueller Hub ignoriert die neuen Grenzen; deshalb Apply-Sperre nicht entfernen.
 - Geräte-Token dem authentifizierten Slot binden; fremde Slots/Roots/IDs abweisen;
   Ablauf/Widerruf inklusive bestehender Streams abnehmen. Bootstrap-Token nicht als
@@ -290,7 +307,7 @@ Grenzen sind keine garantierten Ressourcen, Änderungen nur nach Lastbefund.
 - Prozessübergreifende globale Schwerlastqueue definieren (neun Hubs!), ohne
   gemeinsame vertrauliche Sessions. Direkter Unix-Shellzugriff kann sie umgehen;
   keine stärkere Garantie behaupten, als tatsächlich erzwungen wird.
-- Vertrag `cocopi-slots-v1` erst nach Negativtests freigeben; Pfad/Registry/Persistenz,
+- Vertrag `cocopi-slots-v1` nach Negativtests K zum Review/Freigeben vorlegen; Pfad/Registry/Persistenz,
   Restart/Schlafmodus und Queue-Autorisierung schriftlich festlegen.
 
 Tutorial bleibt in I1 unverändert; Überarbeitung erst I3 nach Freigabe von S1.

@@ -95,7 +95,7 @@ for slot in "${SELECTED[@]}"; do
     slot_vars "$slot"
     note "--- $SLOT ($USER_NAME), Port $PORT ---"
     if [[ $MODE == dry-run ]]; then
-        note "PLAN: Konto/UID/Primärgruppe und Inventar prüfen; Home $SLOT_HOME und Daten $SLOT_DATA 0700"
+        note "PLAN: Konto/UID/Primärgruppe und Inventar prüfen; Home $SLOT_HOME, Daten $SLOT_DATA und Geräte-Register $HUB_STATE 0700"
         note 'PLAN: via runuser alle anderen vorhandenen Slot-Homes sowie medienhaus-HOME auf fehlendes Lese-/Suchrecht prüfen'
         note 'PLAN: effektives sudo-Listing + sudo -n true müssen verweigert werden; keine docker-/anderen Zusatzgruppen und kein Docker-Socketzugriff'
         note "PLAN: aktive ext4-Userquote + Q_GETQUOTA lesend: NVMe $NVME_QUOTA_KIB KiB, SATA $DATA_QUOTA_KIB KiB; Soft=Hard und Inodes"
@@ -113,10 +113,11 @@ for slot in "${SELECTED[@]}"; do
     point "$SLOT: UID-Inventar stimmt" bash -c '[[ -f $1 && $(< "$1") == "$2" ]]' bash "$STATE_BASE/$SLOT.uid" "$UID_NUM"
     point "$SLOT: Home privat (0700)" private_path "$SLOT_HOME"
     point "$SLOT: Daten privat (0700)" private_path "$SLOT_DATA"
+    point "$SLOT: Geräte-Register privat (0700)" private_path "$HUB_STATE"
     for other in "${SLOTS[@]}"; do
         [[ $other != "$SLOT" ]] || continue
-        other_home=$HOME_BASE/cocopi-$other
-        if getent passwd "cocopi-$other" >/dev/null; then
+        other_home=$HOME_BASE/$other
+        if getent passwd "$other" >/dev/null; then
             point "$SLOT: fremdes Home $other nicht lesbar / betretbar" foreign_home_denied "$other_home"
         fi
     done

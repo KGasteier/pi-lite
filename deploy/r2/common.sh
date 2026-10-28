@@ -43,14 +43,14 @@ parse_args() {
                 [[ $seen_mode == false ]] || fail 'Bitte genau einen Ausführungsmodus wählen.'
                 MODE=${arg#--}; seen_mode=true; shift ;;
             --slots)
-                (($# >= 2)) || fail 'Nach --slots fehlt die Liste (z. B. s01,s02).'
+                (($# >= 2)) || fail 'Nach --slots fehlt die Liste (z. B. account01,account02).'
                 [[ $EXPLICIT_SLOTS == false ]] || fail '--slots nur einmal verwenden.'
                 SLOT_LIST=$2; EXPLICIT_SLOTS=true; shift 2 ;;
             --purge)
                 [[ $operation == teardown ]] || fail '--purge gehört nur zum Rückbau.'
                 PURGE=true; shift ;;
             --help|-h)
-                printf 'Aufruf: %s [--dry-run|--apply] [--slots s01,s02]' "$0"
+                printf 'Aufruf: %s [--dry-run|--apply] [--slots account01,account02]' "$0"
                 [[ $operation != teardown ]] || printf ' [--purge] (Rückbau: --slots zwingend)'
                 printf '\nStandard: Dry-Run; Apply benötigt Root und separate menschliche Freigabe.\n'
                 exit 0 ;;
@@ -61,7 +61,7 @@ parse_args() {
         fail 'Rückbau benötigt ausdrücklich --slots; es gibt dafür keine Standardauswahl.'
     fi
     if [[ $EXPLICIT_SLOTS == false ]]; then SLOT_LIST=$DEFAULT_SLOTS; fi
-    [[ $SLOT_LIST =~ ^s(0[1-9]|10)(,s(0[1-9]|10))*$ ]] || fail 'Slots müssen s01 bis s10 sein, getrennt durch Komma, ohne Leerzeichen.'
+    [[ $SLOT_LIST =~ ^account(0[1-9]|10)(,account(0[1-9]|10))*$ ]] || fail 'Slots müssen account01 bis account10 sein, getrennt durch Komma, ohne Leerzeichen.'
     IFS=, read -r -a SELECTED <<< "$SLOT_LIST"
     local seen=' '
     for arg in "${SELECTED[@]}"; do
@@ -75,11 +75,12 @@ parse_args() {
 
 slot_vars() {
     SLOT=$1
-    USER_NAME=cocopi-$SLOT
+    USER_NAME=$SLOT
     SLOT_HOME=$HOME_BASE/$USER_NAME
     SLOT_DATA=$DATA_BASE/$USER_NAME
-    PORT=$((HUB_PORT_BASE + 10#${SLOT#s}))
-    EXPECTED_UID=$((SLOT_UID_BASE + 10#${SLOT#s}))
+    HUB_STATE=$SLOT_DATA/hub-state
+    PORT=$((HUB_PORT_BASE + 10#${SLOT#account}))
+    EXPECTED_UID=$((SLOT_UID_BASE + 10#${SLOT#account}))
     SLOT_ETC=/etc/cocopi/slots/$SLOT
     UNIT=cocopi-hub@$SLOT.service
     UID_NUM=

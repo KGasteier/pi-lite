@@ -82,6 +82,9 @@ for slot in "${SELECTED[@]}"; do
     if [[ $MODE == apply ]]; then assert_account; fi
     managed_dir "$SLOT_HOME" 700 "$USER_NAME" "$USER_NAME"
     managed_dir "$SLOT_DATA" 700 "$USER_NAME" "$USER_NAME"
+    # Geräte-Register: eigenes Verzeichnis im quotierten privaten Datenbereich.
+    # Bestehenden Inhalt nie öffnen oder überschreiben.
+    managed_dir "$HUB_STATE" 700 "$USER_NAME" "$USER_NAME"
     managed_dir "$SLOT_ETC" 755 root root
     # Root schreibt nie in vom Slot beschreibbare Home-Unterverzeichnisse.
     # Die Werkzeugumgebung für Login-Shells kommt aus /etc/profile.d.
@@ -89,7 +92,7 @@ for slot in "${SELECTED[@]}"; do
     managed_file /etc/profile.d/cocopi-slots.sh 644 root root <<PROFILE
 # Für persönliche cocopi-Slotkonten; kein Zugriff auf fremde Home-Toolchains.
 case \$(id -un) in
-    cocopi-s0[1-9]|cocopi-s10)
+    account0[1-9]|account10)
         export PATH="\$HOME/.local/bin:$TOOL_PATH"
         umask 077
         ;;
@@ -135,15 +138,16 @@ HUB_NODE=$HUB_NODE
 HUB_DIR=$HUB_DIR
 HUB_PI_BIN=$HUB_PI
 HUB_ROOTS=$SLOT_HOME:$SLOT_DATA
-HUB_STATE=off
+HUB_STATE=$HUB_STATE
 HUB_MAX_OPEN_SESSIONS=$HUB_MAX_OPEN_SESSIONS
 HUB_MAX_ACTIVE_SESSIONS=$HUB_MAX_ACTIVE_SESSIONS
-HUB_GLOBAL_HEAVY_JOBS=$GLOBAL_HEAVY_JOBS
+HUB_GLOBAL_HEAVY_JOBS=$HUB_GLOBAL_HEAVY_JOBS
 PATH=$TOOL_PATH
 TMPDIR=$SLOT_HOME
 DO_NOT_TRACK=1
 ENV
     if [[ $MODE == dry-run ]]; then
+        note "PLAN: Hub-Umgebung: HUB_SLOT=$SLOT HUB_MAX_OPEN_SESSIONS=$HUB_MAX_OPEN_SESSIONS HUB_MAX_ACTIVE_SESSIONS=$HUB_MAX_ACTIVE_SESSIONS HUB_GLOBAL_HEAVY_JOBS=$HUB_GLOBAL_HEAVY_JOBS HUB_STATE=$HUB_STATE (Verzeichnis 0700)"
         note "PLAN: $SLOT_ETC/token nur falls fehlend kryptografisch erzeugen (0600, $USER_NAME); Inhalt niemals anzeigen"
     else
         no_symlinks "$SLOT_ETC/token" || fail "Symlink an Token von $SLOT."
