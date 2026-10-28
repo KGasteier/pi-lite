@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getDevice, saveRegistration, forgetDevice, signLogin } from '../device.js';
+import { getDevice, saveRegistration, clearRegistration, forgetDevice, signLogin } from '../device.js';
 import { loginSignaturePayload } from '../../ui/transport.js';
 
 // Kleiner IndexedDB-Vertrags-Dummy, keine Browser-/Keychainprüfung.
@@ -18,7 +18,8 @@ function memoryIDB() {
             else if (kind === 'add' && data.has(key)) throw new DOMException('Vorhanden', 'ConstraintError');
             else if (kind === 'clear') data.clear();
             else data.set(key, structuredClone(value));
-            tx.oncomplete?.();
+            request.onsuccess?.();
+            queueMicrotask(() => tx.oncomplete?.());
           } catch (error) { tx.error = error; tx.onerror?.(); }
         });
         return request;
@@ -50,6 +51,12 @@ test('Geräteschlüssel: Ed25519 nicht exportierbar, IDB-Clone, Base64url und lo
   await assert.rejects(signLogin(saved, payload.replace('https://r2.example', 'https://fremd.example')), /gespeicherten Konto/);
   await assert.rejects(signLogin(saved, 'nonce-vom-hub'), /gespeicherten Konto/);
   await assert.rejects(saveRegistration({ geraet_id: 'fehlender-kontext' }), /nicht vollständig/);
+  await clearRegistration();
+  const cleaned = await getDevice();
+  assert.equal(cleaned.pubkey, device.pubkey);
+  assert.deepEqual(Object.keys(globalThis.indexedDB.data.get('identity')).sort(), ['privateKey', 'publicKey', 'pubkey'].sort());
+  assert.equal(cleaned.geraet_id, undefined); assert.equal(cleaned.slot, undefined); assert.equal(cleaned.hub_origin, undefined);
+  await assert.rejects(signLogin(cleaned, payload), /gespeicherten Konto/);
   await forgetDevice(); assert.equal(globalThis.indexedDB.data.size, 0);
 });
 

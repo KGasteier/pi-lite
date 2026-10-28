@@ -1,7 +1,7 @@
 // Ausschließlich öffentliche, explizit aufgelistete App-Dateien. Niemals Laufzeit-Caching.
-const CACHE = 'cocopi-mobil-shell-v2';
+const CACHE = 'cocopi-mobil-shell-v3';
 const SHELL = [
-  '/m/', '/m/index.html', '/m/app.js', '/m/state.js', '/m/device.js', '/m/style.css',
+  '/m/', '/m/index.html', '/m/app.js', '/m/state.js', '/m/workflow.js', '/m/device.js', '/m/style.css',
   '/m/manifest.webmanifest', '/m/icons/cocopi.svg', '/m/icons/cocopi-192.png',
   '/m/icons/cocopi-512.png', '/m/fonts/Figtree-Regular.ttf', '/ui/transport.js',
 ];

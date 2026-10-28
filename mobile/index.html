@@ -5,20 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#1e2227">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src blob:; font-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>cocopi mobil</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icons/cocopi.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <header class="identity"><img src="./icons/cocopi.svg" width="40" height="40" alt=""><div><span id="account">nicht angemeldet</span><small>Nur auf R2 · <span id="connection" role="status">offline</span></small></div><a href="#settings" aria-label="Einstellungen">Einstellungen</a></header>
+  <header class="identity"><img src="./icons/cocopi.svg" width="40" height="40" alt=""><div><span id="account">nicht angemeldet</span><small>Nur auf R2 · <span id="connection" role="status" aria-live="polite">offline</span></small></div><a href="#settings" aria-label="Einstellungen">Einstellungen</a></header>
   <main id="main" tabindex="-1">
+    <nav aria-label="Bereiche"><a href="#list">Sessions</a><a href="#results">Ergebnisse</a></nav>
     <section id="list" aria-labelledby="list-title">
       <h1 id="list-title">Sessions</h1>
       <p id="list-hint">Melde dich an, um deine Sessions auf R2 zu sehen.</p>
       <ul id="sessions" class="session-list"></ul>
       <button id="connect" class="primary">Mit Rechner koppeln</button>
+      <button id="repair" class="primary" hidden>Erneut koppeln</button>
       <button id="reconnect" class="primary" hidden>Jetzt neu verbinden</button>
     </section>
     <section id="session" hidden aria-labelledby="session-title">
@@ -26,7 +28,25 @@
       <h1 id="session-title">Session</h1><p id="workspace" class="muted"></p>
       <p id="session-state" role="status"></p>
       <div id="log" role="log" aria-label="Verlauf"></div>
-      <p class="muted">Du siehst hier den Verlauf. Antworten und kurze Aufträge kommen später.</p>
+      <form id="answer-form" hidden aria-labelledby="question-title">
+        <h2 id="question-title">Rückfrage</h2><p id="question-text"></p>
+        <div id="answer-fields"></div><button id="answer-send" class="primary" type="submit">Antwort senden</button>
+      </form>
+      <form id="prompt-form">
+        <label for="prompt">Kurzer Auftrag</label>
+        <textarea id="prompt" rows="3" maxlength="4000" required placeholder="Was soll der Agent tun?"></textarea>
+        <button id="send" class="primary" type="submit">Senden</button>
+      </form>
+      <button id="stop" class="danger">Auftrag abbrechen</button>
+      <p id="action-status" role="status" aria-live="polite"></p>
+    </section>
+    <section id="results" hidden aria-labelledby="results-title">
+      <h1 id="results-title">Ergebnisse</h1><p>Ergebnisse deines eingecheckten Rechners · nur ansehen, nichts hochladen.</p>
+      <button id="results-reload">Liste aktualisieren</button>
+      <p id="results-status" role="status" aria-live="polite"></p>
+      <ul id="results-list" class="session-list"></ul>
+      <h2 id="preview-title" hidden></h2><div id="preview"></div>
+      <button id="share" hidden>Teilen</button>
     </section>
     <section id="settings" hidden aria-labelledby="settings-title">
       <a href="#list" class="back">‹ Sessions</a><h1 id="settings-title">Einstellungen</h1>
@@ -41,12 +61,12 @@
       <button id="scan" hidden>Kamera öffnen</button>
       <a id="type-code" href="#pair">Code eintippen</a>
       <form id="pair-form">
-        <label for="code">Einladungslink oder Code</label>
+        <label for="code">Kopplungslink oder Code vom Rechner</label>
         <input id="code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" required placeholder="K7QM-2XDA-9FHT-W3NB">
         <button id="redeem" class="primary" type="submit">Mit Rechner koppeln</button>
       </form>
       <p id="pair-status" role="status"></p>
-      <p class="muted">Keine Einladung? Frag deine Seminarleitung.</p>
+      <p class="muted">Öffne am eingecheckten Rechner „Handy koppeln“. Die Kopplung gilt nur bis zum Check-out.</p>
     </section>
     <p id="notice" role="alert" hidden></p>
   </main>

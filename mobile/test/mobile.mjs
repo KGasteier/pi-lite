@@ -51,7 +51,8 @@ test('App-Hülle ist lokal vollständig und Manifest enthält keine Einladung', 
   for (const icon of manifest.icons) await fs.access(new URL(`../${icon.src}`, import.meta.url));
   const html = await fs.readFile(new URL('../index.html', import.meta.url), 'utf8');
   for (const id of ['list', 'session', 'settings', 'pair']) assert.ok(html.includes(`id="${id}"`));
-  assert.ok(!html.includes('id="prompt"')); assert.ok(!html.includes('id="send"'));
+  assert.ok(html.includes('id="prompt"')); assert.ok(html.includes('id="send"'));
+  assert.ok(html.includes('id="results"')); assert.ok(html.includes('aria-live="polite"'));
   const app = await fs.readFile(new URL('../app.js', import.meta.url), 'utf8');
   assert.ok(!app.includes('.innerHTML')); assert.ok(!app.includes('localStorage'));
   assert.ok(!app.includes('EventSource'));
