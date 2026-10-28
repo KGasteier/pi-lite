@@ -1,6 +1,6 @@
 {
   "iteration": 1,
-  "phase": "I1-start",
+  "phase": "I1-bauen",
   "base": {
     "pi-lite": "cocopi-v2@eb534bb",
     "pi-hub": "master@3dae8ca"
@@ -14,44 +14,46 @@
   "tasks": {
     "I1-S1-inventar": {
       "owner": "s1",
-      "status": "offen",
+      "status": "fertig",
       "heartbeat": null,
       "tries": 0,
       "worktree": "../pi-lite-wt/s1",
-      "checkpoint": "eb534bb"
+      "checkpoint": "eb534bb",
+      "commit": "fdbde9f",
+      "merged": "c9135c9"
     },
     "I1-A1-protokoll": {
       "owner": "s3",
-      "status": "blockiert",
-      "wait": "I1-S1-inventar",
+      "status": "eingefroren",
       "tries": 0,
       "worktree": "../pi-lite-wt/s3 + ../pi-hub-wt/s3",
-      "checkpoint": "eb534bb"
+      "checkpoint": "eb534bb",
+      "ref": "coord/FREEZE-I1.md"
     },
     "I1-A2-modus": {
       "owner": "s3",
-      "status": "blockiert",
-      "wait": "I1-S1-inventar",
-      "tries": 0
+      "status": "eingefroren",
+      "tries": 0,
+      "ref": "coord/FREEZE-I1.md"
     },
     "I1-A3-qr": {
       "owner": "s3",
-      "status": "blockiert",
-      "wait": "I1-S1-inventar",
-      "tries": 0
+      "status": "eingefroren",
+      "tries": 0,
+      "ref": "coord/FREEZE-I1.md"
     },
     "I1-A4-konten": {
       "owner": "s4",
-      "status": "blockiert",
-      "wait": "I1-S1-inventar",
+      "status": "eingefroren",
       "tries": 0,
-      "worktree": "../pi-lite-wt/s4"
+      "worktree": "../pi-lite-wt/s4",
+      "ref": "coord/FREEZE-I1.md"
     },
     "I1-A5-inventar": {
       "owner": "s1",
-      "status": "blockiert",
-      "wait": "I1-S1-inventar",
-      "tries": 0
+      "status": "eingefroren",
+      "tries": 0,
+      "ref": "coord/FREEZE-I1.md"
     },
     "I1-T1-remoteonly": {
       "owner": "s2+s3",
@@ -73,9 +75,10 @@
     },
     "I1-S4-provision": {
       "owner": "s4",
-      "status": "offen",
+      "status": "review",
       "tries": 0,
-      "note": "Skripte dry-run, A4-Vorschlag; Abstimmung A4 mit S3 nach S1"
+      "note": "A4: Umbenennung accountNN als Folgeauftrag",
+      "commit": "0b98b19"
     },
     "I1-S5-transport": {
       "owner": "s5",
@@ -89,6 +92,22 @@
       "status": "offen",
       "tries": 0,
       "worktree": "../pi-lite-wt/s6"
+    },
+    "I1-S3-netz": {
+      "owner": "s3",
+      "status": "läuft",
+      "model": "udk2/cx/gpt-6.1-sol"
+    },
+    "I1-S2-desktop": {
+      "owner": "s2",
+      "status": "läuft",
+      "model": "udk2/cx/gpt-6.1-sol",
+      "wait_soft": "S3 A2"
+    },
+    "I1-S5-mobil": {
+      "owner": "s5",
+      "status": "läuft",
+      "model": "udk2/cx/gpt-6.1-sol"
     }
   },
   "modelle": {
