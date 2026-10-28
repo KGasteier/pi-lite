@@ -1,6 +1,6 @@
 {
   "iteration": 1,
-  "phase": "I1-bauen",
+  "phase": "I1-abgeschlossen",
   "base": {
     "pi-lite": "cocopi-v2@eb534bb",
     "pi-hub": "master@3dae8ca"
@@ -57,56 +57,56 @@
     },
     "I1-T1-remoteonly": {
       "owner": "s2+s3",
-      "status": "blockiert",
+      "status": "fertig",
       "wait": "A2",
       "tries": 0
     },
     "I1-T2-qrlogin": {
       "owner": "s2+s3",
-      "status": "blockiert",
+      "status": "fertig",
       "wait": "A3",
       "tries": 0
     },
     "I1-T3-sessions": {
       "owner": "s3+s2",
-      "status": "blockiert",
+      "status": "fertig",
       "wait": "A1",
       "tries": 0
     },
     "I1-S4-provision": {
       "owner": "s4",
-      "status": "review",
+      "status": "fertig",
       "tries": 0,
       "note": "A4: Umbenennung accountNN als Folgeauftrag",
       "commit": "0b98b19"
     },
     "I1-S5-transport": {
       "owner": "s5",
-      "status": "blockiert",
+      "status": "fertig",
       "wait": "A1",
       "tries": 0,
       "worktree": "../pi-lite-wt/s5"
     },
     "I1-S6-gates": {
       "owner": "s6",
-      "status": "offen",
+      "status": "fertig",
       "tries": 0,
       "worktree": "../pi-lite-wt/s6"
     },
     "I1-S3-netz": {
       "owner": "s3",
-      "status": "läuft",
+      "status": "fertig",
       "model": "udk2/cx/gpt-6.1-sol"
     },
     "I1-S2-desktop": {
       "owner": "s2",
-      "status": "läuft",
+      "status": "fertig",
       "model": "udk2/cx/gpt-6.1-sol",
       "wait_soft": "S3 A2"
     },
     "I1-S5-mobil": {
       "owner": "s5",
-      "status": "läuft",
+      "status": "fertig",
       "model": "udk2/cx/gpt-6.1-sol"
     }
   },
@@ -118,5 +118,22 @@
     "s4": "udk2/cx/gpt-6.1-sol (statt terra)",
     "s5": "udk2/cx/gpt-6.1-sol",
     "s6": "udk2/openai/gpt-6.1-sol-pro (+Persona sonnet)"
+  },
+  "gate_I1": {
+    "commit": "cocopi-v3 HEAD",
+    "fmt": "PASS",
+    "clippy": "PASS 20<24",
+    "rust": "PASS",
+    "js": "KNOWN B1",
+    "mobile": "PASS 25",
+    "r2": "PASS",
+    "hub": "PASS smoke + 43 v1",
+    "no_local_spawn": "PASS 4 Szenen"
+  },
+  "hub_branch": {
+    "repo": "~/Work/pi-hub-wt/s3",
+    "branch": "v3/s3",
+    "commit": "e2eabfa",
+    "gemergt": false
   }
 }
