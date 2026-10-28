@@ -121,6 +121,10 @@ https://<r2-host>/c#1.<art>.<code>
   <code> = 16 Zeichen Crockford-Base32 (80 Bit Zufall), angezeigt als K7QM-2XDA-9FHT-W3NB
 ```
 
+- **Risiko, Prüfung durch S5:**
+  - Orca setzt den Code bewusst in die Query (`orca://pair?code=`). Begründung in `src/shared/pairing.ts:25`: Android-Kamera-Intents erhalten Query-Parameter zuverlässiger als Fragmente.
+  - Falls S5 das mit Tauri-Mobile bestätigt, gilt `?c=` statt `#`.
+  - Der Code ist ohnehin einmalig und kurzlebig. Der Hub darf ihn dann aber **nicht loggen**; das ist ein Testfall.
 - Wer die URL ohne cocopi öffnet, sieht eine statische Seite. Diese Seite schickt nichts ab und sagt nur: „Öffne diesen Link in cocopi.“
 - Der `<r2-host>` ist ein Platzhalter. Laut Tutorial ist „R2“ kein verifizierter DNS-Name. S3/S4 legen den Host fest.
 

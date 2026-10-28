@@ -48,7 +48,7 @@ Allgemein für I1:
 | T2.10 | Widerruf: Das Token ist danach ungültig (401), und eine offene Ereignisverbindung des Geräts wird innerhalb von 2 s geschlossen. | `revoke_invalidates_token`, `revoke_closes_open_stream` |
 | T2.11 | Fünf Fehlversuche pro Minute: Der sechste wird mit `code:"zu_viele"` abgewiesen. | `redeem_rate_limited` |
 | T2.12 | D-SZ zeigt nach dem Login „Mira · account03 @ R2“. | Screenshot `shots/t2-angemeldet.png`, dazu Test `status_line_shows_person_slot_host` |
-| T2.13 | Die QR-URL trägt den Code im Fragment (`#`), nicht im Pfad oder in der Query. | `qr_url_code_in_fragment` |
+| T2.13 | Der Code der QR-URL taucht in keinem Hub-Log und in keiner Zugriffs-Logzeile auf. Ort: Fragment `#`; Query `?c=` nur, wenn S5 die Android-Grenze aus KONZEPT A3 bestätigt. | `qr_code_never_logged` |
 
 ## T3 · Sessiongrenzen (KONZEPT A1)
 
