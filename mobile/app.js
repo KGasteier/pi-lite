@@ -58,6 +58,7 @@ function renderList() {
   $('reconnect').hidden = !registered || (Boolean(token) && connection !== 'unterbrochen');
   $('settings-pair').hidden = Boolean(token) || invalidated;
   $('logout').hidden = !token;
+  $('key-renew').hidden = Boolean(token) || registered;
   for (const row of rows) {
     const li = document.createElement('li'), link = document.createElement('a');
     link.href = `#session/${encodeURIComponent(row.session_id)}`;
@@ -99,6 +100,8 @@ function renderControls() {
   $('prompt').disabled = !ready || state.status !== 'idle';
   $('stop').hidden = !['arbeitet', 'wartet'].includes(row?.zustand);
   $('stop').disabled = !ready || state.status === 'pending';
+  $('send').setAttribute('aria-busy', String(state.status === 'pending' && state.kind === 'senden'));
+  $('answer-send').setAttribute('aria-busy', String(state.status === 'pending' && state.kind === 'antwort'));
   $('action-status').textContent = state.status === 'pending' ? 'Warte auf Bestätigung von R2 …'
     : state.status === 'uncertain' ? 'Versand unklar. Nicht erneut senden. Prüfe den Auftrag am Rechner.' : '';
   const q = row?.frage, key = q ? `${selected}/${q.id}` : '';
@@ -224,6 +227,7 @@ $('pair-form').onsubmit = async event => {
     if (signal.aborted) return;
     if (!result.geraet_id) throw new Error('Die Anmeldung wurde noch nicht bestätigt. Prüfe den Rechner.');
     await saveRegistration(result);
+    if (signal.aborted) { await clearRegistration(); return; }
     invalidated = false;
     await login(await getDevice());
     $('code').value = '';
@@ -254,6 +258,15 @@ $('scan').onclick = async () => {
     };
     scanFrame = requestAnimationFrame(scan);
   } catch { stopCamera(); notice('Die Kamera ist nicht verfügbar. Tippe den Code ein.'); $('code').focus(); }
+};
+$('key-renew').onclick = async () => {
+  if (token || registered) return;
+  $('key-renew').disabled = true;
+  try {
+    await registrationClear; await forgetDevice(); await getDevice();
+    $('device-hint').textContent = 'Ein neuer Geräteschlüssel wurde auf diesem Handy erzeugt. Du kannst erneut koppeln.';
+  } catch (error) { notice(errorText(error)); }
+  finally { $('key-renew').disabled = false; }
 };
 $('logout').onclick = async () => {
   $('logout').disabled = true;

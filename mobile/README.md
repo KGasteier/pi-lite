@@ -10,7 +10,7 @@ Die Kopplung gilt nur bis zum Check-out. 401 (auch ohne offenen SSE-Stream) oder
 
 > Dein Rechner hat ausgecheckt. Dieses Handy ist abgemeldet.
 
-„Erneut koppeln“ führt zurück. Verlauf, Eingaben, Session-/Ergebnisliste, Vorschau, Blob-URLs, Token und Kontobindung werden verworfen. Eine IDB-Transaktion lässt nur `privateKey`, `publicKey`, `pubkey` zurück; keine Gerätenamen/Slot-/Geräte-ID. Nach bestätigtem manuellem Abmelden wird auch der Schlüssel gelöscht. Speicherfehler werden sichtbar gemeldet, nicht als erfolgreiche Löschung ausgegeben. Ein Netzverlust allein ist **kein** Check-out-Nachweis: letzter Stand bleibt als veraltet markiert. Ohne Netz kann das Handy den Check-out nicht erkennen; bei der nächsten 401 wird geleert.
+„Erneut koppeln“ führt zurück. Verlauf, Eingaben, Session-/Ergebnisliste, Vorschau, Blob-URLs, Token und Kontobindung werden verworfen. Eine IDB-Transaktion lässt nur `privateKey`, `publicKey`, `pubkey` zurück; keine Gerätenamen/Slot-/Geräte-ID. Nach bestätigtem manuellem Abmelden wird auch der Schlüssel gelöscht. Ohne aktive Registrierung lässt sich unter „Einstellungen“ der Geräteschlüssel bewusst neu erzeugen. Speicherfehler werden sichtbar gemeldet, nicht als erfolgreiche Löschung ausgegeben. Ein Netzverlust allein ist **kein** Check-out-Nachweis: letzter Stand bleibt als veraltet markiert. Ohne Netz kann das Handy den Check-out nicht erkennen; bei der nächsten 401 wird geleert.
 
 ## Sessionaktionen
 
@@ -55,7 +55,7 @@ for f in ui/transport.js mobile/*.js mobile/test/*.mjs; do node --check "$f" || 
 git diff --check
 ```
 
-32 Tests grün, 0 übersprungen: A1/QR/Signatur/SSE/IDB-Dummy; Prompt-Doppelclick, unklarer Versand, read-only Ergebnisfilter; DOM-Vertragsdummy für Prompt/Rückfrage/Stopp, Seminarleitungsmarke, Textvorschau und Abmeldung. Integration importiert S3 `lib/hub-v1.mjs` (Default `/home/medienhaus/Work/pi-hub-wt/s3`, überschreibbar `COCOPI_V1_TEST_MODULE`), nur zufällige Loopbackports, temporäre Ablage/Mockadapter. Signierte Belegung → k-Kopplung → Prompt/Rückfrage Nein/Stopp → signierte Freigabe → 401/Logout ist gegen S3 `229f68e` geprüft. Kein echtes Modell.
+34 Tests grün, 0 übersprungen: A1/QR/Signatur/SSE/IDB-Dummy; Prompt-Doppelclick, unklarer Versand, read-only Ergebnisfilter; DOM-Vertragsdummy für Prompt/Rückfrage/Stopp, Seminarleitungsmarke, Textvorschau und Abmeldung. Integration importiert S3 `lib/hub-v1.mjs` (Default `/home/medienhaus/Work/pi-hub-wt/s3`, überschreibbar `COCOPI_V1_TEST_MODULE`), nur zufällige Loopbackports, temporäre Ablage/Mockadapter. Signierte Belegung → k-Kopplung → Prompt/Rückfrage Nein/Stopp → signierte Freigabe → 401/Logout ist gegen S3 `229f68e` geprüft. Kein echtes Modell.
 
 **Ungeprüft:** Browser-IDB-Clone, PDF-Viewer/Web Share, Kamera, PWA-Installation, Safe Area/Tastatur/Screenreader, echte iOS-/Androidgeräte. Kein Chromium im Arbeitsimage; keine Screenshots/visuelle Abnahme. DOM-Dummy ersetzt keine Browserprüfung (390×800/1100×700). Tippflächen CSS mindestens 44/48 px, Fokus und aria-live vorhanden; reale Bedienbarkeit offen. ntfy, weitere Rechnerbestätigung (`b`), vollständiger Altverlauf und Tauri-Mobile-Hülle weiter offen (`TAURI.md`).
 

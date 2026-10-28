@@ -20,6 +20,8 @@ test('I2: Funkloch/5xx bleibt gesperrt, bestätigte Ablehnung entsperrt, späte 
   const actions = new SessionActions({ senden: async () => { throw new Error('Funkloch'); } });
   await assert.rejects(actions.run('s', 'senden', 'Text'));
   assert.equal(actions.state('s').status, 'uncertain');
+  let stopped = false; actions.transport.stopp = async () => { stopped = true; return {}; };
+  await actions.run('s', 'stopp'); assert.equal(stopped, true); assert.equal(actions.state('s').status, 'idle');
   actions.clear(); actions.transport.senden = async () => { throw new TransportError('zu_viele_aktiv', '', '', 409); };
   await assert.rejects(actions.run('s', 'senden', 'Text')); assert.equal(actions.state('s').status, 'idle');
   const gate = deferred(); actions.transport.senden = () => gate.promise;

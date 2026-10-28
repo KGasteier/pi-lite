@@ -84,14 +84,14 @@ export function createTransport({ baseUrl, getToken, onLogout = () => {}, pulseT
     onLogout();
     for (const stream of streams) stream.close('abgemeldet');
   }
-  async function request(path, { method = 'GET', body, auth = true, signal, binary = false } = {}) {
+  async function request(path, { method = 'GET', body, auth = true, signal, binary = false, allowSignedOut = false } = {}) {
     const response = await fetch(url(path), {
       method, headers: { ...await headers(auth), ...(body ? { 'Content-Type': 'application/json' } : {}) },
       body: body ? JSON.stringify({ protokoll: 1, ...body }) : undefined, signal, cache: 'no-store',
       credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
     });
     if (response.status === 401) logout();
-    if (response.ok && auth && signedOut) throw new TransportError('nicht_angemeldet', 'Dieses Handy ist abgemeldet.', '', 401);
+    if (response.ok && auth && signedOut && !allowSignedOut) throw new TransportError('nicht_angemeldet', 'Dieses Handy ist abgemeldet.', '', 401);
     if (response.ok && binary) {
       const max = 25 * 1024 * 1024;
       if (Number(response.headers.get('content-length')) > max) { await response.body.cancel(); throw new Error('Dieses Ergebnis ist zu groß für die Handyvorschau. Öffne es am Rechner.'); }
@@ -110,6 +110,7 @@ export function createTransport({ baseUrl, getToken, onLogout = () => {}, pulseT
     }
     let payload;
     try { payload = await response.json(); } catch { payload = {}; }
+    if (response.ok && auth && signedOut && !allowSignedOut) throw new TransportError('nicht_angemeldet', 'Dieses Handy ist abgemeldet.', '', 401);
     if (!response.ok) {
       const error = payload.fehler || payload;
       throw new TransportError(error.code || `http_${response.status}`, error.was || 'R2 konnte die Anfrage nicht bearbeiten.', error.tun || 'Versuche es noch einmal.', response.status);
@@ -233,7 +234,7 @@ export function createTransport({ baseUrl, getToken, onLogout = () => {}, pulseT
     async abmelden() {
       try {
         if (!deviceId) throw new TransportError('nicht_angemeldet', 'Dieses Gerät ist nicht mehr angemeldet.');
-        const result = await request(`/v1/geraete/${encodeURIComponent(deviceId)}/widerrufen`, { method: 'POST', body: { typ: 'widerrufen' } });
+        const result = await request(`/v1/geraete/${encodeURIComponent(deviceId)}/widerrufen`, { method: 'POST', body: { typ: 'widerrufen' }, allowSignedOut: true });
         logout(); return result;
       } catch (error) {
         if (error.status === 401) logout();

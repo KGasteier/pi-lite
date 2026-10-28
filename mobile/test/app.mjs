@@ -10,6 +10,7 @@ class Element {
   constructor(tag = 'div') { this.tag = tag; this.children = []; this.hidden = false; this.disabled = false; this.value = ''; this.dataset = {}; this.textContent = ''; this.className = ''; }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
+  setAttribute(name, value) { this[name] = value; }
   focus() { this.focused = true; }
   get classList() { return { toggle() {}, add() {} }; }
   get firstChild() { return this.children[0]; }
@@ -66,6 +67,13 @@ test('I2 DOM: Promptknopf bis Bestätigung gesperrt, Rückfrage Nein/Ja explizit
   assert.deepEqual(a.calls[1], ['antwort', 's1', 'q1', false]);
   await a.$('stop').onclick(); assert.equal(a.calls[2][0], 'stopp');
   assert.match(a.$('notice').textContent, /Abbruch angefragt/);
+});
+test('I2 DOM: späte Promptbestätigung kann nach Check-out keine Inhalte zurückholen', async t => {
+  const a = await appFixture(t); a.route('#session/s1'); a.$('prompt').value = 'Nicht behalten';
+  const pending = a.$('prompt-form').onsubmit(submit); a.logout();
+  a.resolveSend({ typ: 'session_zustand', session_id: 's1', titel: 'Privater Titel', zustand: 'arbeitet' }); await pending;
+  assert.equal(a.$('sessions').children.length, 0); assert.equal(a.$('prompt').value, '');
+  assert.equal(a.$('notice').textContent, 'Dein Rechner hat ausgecheckt. Dieses Handy ist abgemeldet.');
 });
 test('I2 DOM: Seminarleitung markiert, Ergebnisse read-only, 401 leert DOM und Registrierung sofort', async t => {
   const a = await appFixture(t); a.route('#session/s1');
