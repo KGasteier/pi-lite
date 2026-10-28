@@ -1062,6 +1062,31 @@ mod tests {
                 .len(),
             1
         );
+        let sid = session["session_id"].as_str().unwrap();
+        // N1-Review: Mobil darf keinen fremden Anzeigenamen einschleusen.
+        assert!(
+            phone
+                .send_with_sender(sid, "Falsche Zuordnung", "Aylin", "seminarleitung")
+                .unwrap_err()
+                .starts_with("[fremder_slot]")
+        );
+        assert_eq!(
+            client.sessions().unwrap()["sessions"][0]["zustand"],
+            "bereit"
+        );
+        assert_eq!(
+            client
+                .send_with_sender(sid, "Mitsteuern", "Aylin", "seminarleitung")
+                .unwrap()["zustand"],
+            "arbeitet"
+        );
+        client.stop(sid).unwrap();
+        // Ohne von bleibt der ausdrücklich erlaubte Mobil-Prompt nutzbar.
+        assert_eq!(
+            phone.send(sid, "Eigener Handyauftrag").unwrap()["zustand"],
+            "arbeitet"
+        );
+        client.stop(sid).unwrap();
         client
             .revoke(phone_key.geraet_id.as_ref().unwrap())
             .unwrap();
