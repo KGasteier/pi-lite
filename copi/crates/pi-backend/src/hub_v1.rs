@@ -551,6 +551,21 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_key_not_replaced_and_foreign_link_rejected() {
+        let dir = std::env::temp_dir().join(format!("hub-v1-corrupt-{}", std::process::id()));
+        let mut key = DeviceKey::at(&dir, "desktop").unwrap();
+        let client = HubV1::new("https://good.example").unwrap();
+        assert!(client
+            .redeem(&mut key, "https://other.example/c#1.e.K7QM-2XDA-9FHT-W3NB", 'e', "Test", "desktop")
+            .unwrap_err()
+            .contains("anderen R2"));
+        std::fs::write(&key.path, "kaputt").unwrap();
+        assert!(DeviceKey::at(&dir, "desktop").is_err());
+        assert_eq!(std::fs::read_to_string(&key.path).unwrap(), "kaputt");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn device_key_private_roundtrip_and_path_guard() {
         let dir = std::env::temp_dir().join(format!("hub-v1-key-{}", std::process::id()));
         let key = DeviceKey::at(&dir, "rechner").unwrap();
