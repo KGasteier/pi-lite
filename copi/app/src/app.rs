@@ -192,6 +192,8 @@ struct Pending {
 
 pub struct App {
     #[cfg(feature = "cocopi")]
+    pub(crate) desktop: crate::desktop::Desktop,
+    #[cfg(feature = "cocopi")]
     pub(crate) coco: crate::coco::Coco,
     pub(crate) ctx: egui::Context,
     pub(crate) demo: bool,
@@ -331,6 +333,8 @@ impl App {
         let mut app = Self {
             #[cfg(feature = "cocopi")]
             #[cfg(feature = "cocopi")]
+            desktop: crate::desktop::Desktop::new(demo),
+            #[cfg(feature = "cocopi")]
             coco: crate::coco::Coco::new(demo),
             ctx,
             demo,
@@ -423,9 +427,14 @@ impl App {
         };
         #[cfg(feature = "cocopi")]
         { if !demo { app.store.net_visible = true; } }
-        let resume = if demo { None } else { pi_backend::folders::resume_session() };
-        app.start(resume, None);
-        app.load_media_routes();
+        // cocopi öffnet zuerst die Einladung; niemals beim Fensterstart einen Agenten.
+        if !cfg!(feature = "cocopi") {
+            let resume = if demo { None } else { pi_backend::folders::resume_session() };
+            app.start(resume, None);
+            app.load_media_routes();
+        } else if demo {
+            app.fill_demo();
+        }
         app
     }
 
@@ -2454,6 +2463,11 @@ impl App {
     }
 
     pub fn demo_scene(&mut self, scene: &str) {
+        #[cfg(feature = "cocopi")]
+        if scene.starts_with("v3-") {
+            self.desktop.scene(scene);
+            return;
+        }
         #[cfg(feature = "cocopi")]
         if self.coco_demo(scene) {
             return;

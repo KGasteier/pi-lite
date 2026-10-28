@@ -1,5 +1,7 @@
 // copi – native Oberfläche für pi (Rust + egui).
 #[cfg(feature = "cocopi")]
+mod desktop;
+#[cfg(feature = "cocopi")]
 mod coco;
 #[cfg(feature = "cocopi")]
 mod coco_view;
@@ -209,6 +211,8 @@ fn main() {
         }
         return;
     }
+    // Initialisieren erst im interaktiven Betrieb; Shots/Tests lesen keine echte Konfiguration.
+    if !demo_env { pi_backend::mode::init(); }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_app_id(app_name()).with_title(app_name()).with_inner_size([1280.0, 800.0]).with_min_inner_size([640.0, 420.0]),
         ..Default::default()

@@ -584,8 +584,8 @@ impl NetState {
         let list = match backends::load() {
             Ok(l) => l,
             Err(e) => {
-                self.notice(e, true);
-                vec![BackendCfg::local()]
+                self.notice(format!("Verbindungsliste unlesbar: {e}"), true);
+                Vec::new()
             }
         };
         self.backends = list.into_iter().map(Backend::new).collect();
