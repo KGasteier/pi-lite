@@ -28,10 +28,10 @@ quota_usage() {
 
 admin_row() {
     local account=vorhanden service=unbekannt access=unbekannt usage=unbekannt activity
-    local nvme data
+    local nvme data epoch=unbekannt
     if [[ $MODE == dry-run ]]; then
         account='nicht geprueft'; service='nicht geprueft'; access='nicht geprueft'
-        usage='nicht geprueft'; activity='nicht geprueft'
+        usage='nicht geprueft'; activity='nicht geprueft'; epoch='nicht geprueft'
     elif [[ -z $UID_NUM ]]; then
         account=fehlt; service='kein Konto'; access='kein Konto'; activity=unbekannt
         ISSUES=$((ISSUES + 1))
@@ -61,10 +61,12 @@ admin_row() {
         else
             ISSUES=$((ISSUES + 1))
         fi
+        if epoch=$(python3 "$BASE/epoch-read.py" "$SLOT" 2>/dev/null); then :
+        else epoch='bitte pruefen'; ISSUES=$((ISSUES + 1)); fi
         activity=$(last_activity)
     fi
-    printf '%-10s  %-14s  %-14s  %-14s  %-70s  %s\n' \
-        "$SLOT" "$account" "$service" "$access" "$usage" "$activity"
+    printf '%-10s  %-14s  %-14s  %-14s  %-14s  %-70s  %s\n' \
+        "$SLOT" "$account" "$service" "$access" "$epoch" "$usage" "$activity"
 }
 
 pool_checks() {
@@ -101,8 +103,8 @@ else
     note 'R2: Vorschau der Betriebsübersicht. Nichts geprüft oder geändert.'
 fi
 pool_checks
-printf '%-10s  %-14s  %-14s  %-14s  %-70s  %s\n' \
-    'Konto' 'Eingerichtet' 'Verbindung' 'Zugang' 'Speicher belegt / Grenze (GB dezimal)' 'Letzte Aktivität (Quelle beachten)'
+printf '%-10s  %-14s  %-14s  %-14s  %-14s  %-70s  %s\n' \
+    'Konto' 'Eingerichtet' 'Verbindung' 'Zugang' 'Epoche' 'Speicher belegt / Grenze (GB dezimal)' 'Letzte Aktivität (Quelle beachten)'
 for slot in "${SELECTED[@]}"; do
     slot_vars "$slot"
     admin_row

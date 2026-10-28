@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import secrets
 import stat
 import subprocess
 import sys
@@ -194,6 +195,44 @@ class Slots:
             else:
                 fail("Skelett enthält Links oder Sonderdateien; keine Freigabe.")
 
+    def epoch(self, slot, advance=False):
+        """Rootverwalteter Replay-Zähler außerhalb der flüchtigen Homes (N3)."""
+        fd = self.open_dir('var/lib/cocopi/slots')
+        temporary = None
+        try:
+            name = slot + '.epoche'
+            value = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            with os.fdopen(value) as file:
+                info = os.fstat(file.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or stat.S_IMODE(info.st_mode) != 0o644
+                        or (not self.fake and info.st_uid != 0)):
+                    fail('Epochen-Datei nicht eindeutig rootverwaltet (0644).')
+                text = file.read(32)
+            if not re.fullmatch(r'(0|[1-9][0-9]{0,15})\n?', text):
+                fail('Ungültige Epoche.')
+            current = int(text)
+            if current > 9007199254740991 or (advance and current == 9007199254740991):
+                fail('Epoche außerhalb des sicheren Ganzzahlbereichs.')
+            if not advance:
+                return current
+            temporary = '.' + name + '.' + secrets.token_hex(16)
+            value = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                            0o600, dir_fd=fd)
+            with os.fdopen(value, 'w') as file:
+                file.write(str(current + 1) + '\n')
+                os.fchmod(file.fileno(), 0o644)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary, name, src_dir_fd=fd, dst_dir_fd=fd)
+            temporary = None
+            os.fsync(fd)
+            return current + 1
+        finally:
+            if temporary is not None:
+                os.unlink(temporary, dir_fd=fd)
+            os.close(fd)
+
     def receipt(self, slot, result):
         fd = self.open_dir('var/lib/cocopi-slots')
         name = slot + '.leer.json'
@@ -256,6 +295,7 @@ class Slots:
 
     def execute(self, action, slot, apply):
         uid = self.identity(slot)
+        epoch = self.epoch(slot)
         if action == 'pruefen' and self.processes(uid):
             fail("Es laufen Prozesse; kein Leer-Nachweis.")
         roots = self.roots(slot)
@@ -272,8 +312,9 @@ class Slots:
                         if any(mount == path or mount.startswith(path + '/') for path in paths):
                             fail("Mount im Slot/Skelett; kein automatisches Leeren.")
             if action == 'leeren' and not apply:
-                return {'slot': slot, 'zustand': 'nicht_geprueft', 'dry_run': True,
+                return {'slot': slot, 'epoche': epoch, 'zustand': 'nicht_geprueft', 'dry_run': True,
                         'plan': ['Hub stoppen', 'UID-Prozesse beenden und prüfen',
+                                 'Epoche atomar erhöhen (Replay sperren)',
                                  'Home und Daten ohne Link-Folgen leeren',
                                  'Skelett einspielen', 'Quote und Leerzustand prüfen', 'Hub starten']}
             if action == 'leeren':
@@ -304,13 +345,16 @@ class Slots:
                         time.sleep(0.2)
                 if self.processes(uid):
                     fail("Es laufen noch Prozesse. Nichts gelöscht; Arbeitsplatz bleibt gesperrt.")
+                # Vor der ersten Löschung dauerhaft erhöhen. Auch bei späterem
+                # Fehler niemals zurücksetzen; der Pool bleibt dann gesperrt.
+                epoch = self.epoch(slot, advance=True)
                 deleted = 0
                 for fd in roots:
                     deleted += sum(value for value in self.tree(fd, remove=True).values()
                                    if isinstance(value, int))
                 self.copy_skel(skel, roots[0], uid)
                 result = self.proof(slot, roots, expected, uid)
-                result.update(zeit=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                result.update(epoche=epoch, zeit=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                               dauer_ms=int((time.monotonic() - start) * 1000), bytes_geloescht=deleted)
                 # Kein persistenter Nutzdaten-Backup; Nachweis ausschließlich Slot/Zeit/Zähler.
                 # Erst Beleg atomar sichern, dann Hub starten. Fehler => kein Erfolg.
@@ -324,6 +368,7 @@ class Slots:
                 return result
             try:
                 result = self.proof(slot, roots, expected, uid)
+                result['epoche'] = epoch
                 if apply and action == 'pruefen':
                     result.update(zeit=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                                   nachweis='vor_hubstart', dauer_ms=0, bytes_geloescht=0)
@@ -332,7 +377,7 @@ class Slots:
             except RuntimeError:
                 if action == 'pruefen':
                     raise
-                return {'slot': slot, 'zustand': 'nicht_leer_oder_unbekannt'}
+                return {'slot': slot, 'epoche': epoch, 'zustand': 'nicht_leer_oder_unbekannt'}
         finally:
             os.close(skel)
             for fd in roots:
