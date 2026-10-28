@@ -1,0 +1,9 @@
+{
+  "protokoll": 1,
+  "typ": "willkommen",
+  "min_client": 1,
+  "slot": "account01",
+  "person": "Mira",
+  "hub_version": "1.0.0",
+  "vertrag": "cocopi-slots-v1"
+}
