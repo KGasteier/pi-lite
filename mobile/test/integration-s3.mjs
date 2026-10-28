@@ -6,6 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
+import { signLogin } from '../device.js';
 import { createTransport, loginSignaturePayload } from '../../ui/transport.js';
 
 // Optional und ausschließlich importiert: kein produktiver Hubprozess, keine Echtdaten.
@@ -47,6 +48,18 @@ test('Integration S3-v1: Ed25519-Anmeldung, Kopplung, Sessions/SSE und eigener W
   await post('/v1/sessions/oeffnen', { workspace: root, titel: 'Test-Session' }, desktop.token);
   const mobile = await identity('handy');
   const transport = createTransport({ baseUrl, getToken: () => mobile.token, reconnectMs: 5 });
+  // H1 ohne vorhandenes Handy: auch e + geraeteart handy braucht Desktopzustimmung.
+  const deniedCode = v1.devices.issue('e');
+  let desktopPending;
+  const denied = transport.einloesen({ art: 'e', code: deniedCode.code, pubkey: mobile.pubkey, geraeteart: 'handy' }, { onPending: packet => { desktopPending = packet; } });
+  const deniedCheck = assert.rejects(denied, { code: 'abgelehnt' });
+  for (let i = 0; !desktopPending && i < 100; i++) await new Promise(r => setTimeout(r, 5));
+  assert.ok(desktopPending?.anfrage_id);
+  assert.equal(desktopPending.bestaetigung, undefined);
+  assert.equal(v1.devices.list().geraete.length, 1, 'H1: e-Einladung ohne Handy wartet auf Desktop');
+  await post('/v1/koppeln/bestaetigen', { anfrage_id: desktopPending.anfrage_id, erlauben: false }, desktop.token);
+  await deniedCheck;
+  assert.equal(v1.devices.list().geraete.length, 1, 'H1: Ablehnung registriert nichts');
   const code = await post('/v1/koppeln/start', {}, desktop.token);
   let pending;
   const pairing = transport.koppeln({ art: 'k', code: code.code, pubkey: mobile.pubkey, geraetename: mobile.geraetename, geraeteart: 'handy' }, { onPending: packet => { pending = packet; } });
@@ -99,6 +112,7 @@ test('Integration S3-v1: Ed25519-Anmeldung, Kopplung, Sessions/SSE und eigener W
   assert.equal((await transport.sessions()).sessions.length, 1);
   await transport.abmelden(); await stream.done;
   assert.equal(stream.state, 'abgemeldet');
+  await assert.rejects(transport.sessions(), { status: 401 });
 });
 
 test('Integration M3: Signatur für Hub A wird von Hub B abgewiesen', { skip: available ? false : 'S3-v1-Modul liegt noch nicht vor' }, async t => {
@@ -128,7 +142,6 @@ test('M3: Signaturbytes entsprechen dem deterministischen Protokollvektor', asyn
   const expected = JSON.parse(await fs.readFile(new URL('../../shared/protocol/v1/examples/anmelden_req.json', import.meta.url)));
   const payload = loginSignaturePayload({ hub_origin: new URL('https://R2.example:443/path').origin, slot: 'account01', geraet_id: 'test-geraet', ...challenge });
   assert.equal(payload, 'cocopi-v1-anmelden\nhttps://r2.example\naccount01\ntest-geraet\ntest-challenge\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
-  const { createPrivateKey, sign } = await import('node:crypto');
-  const key = createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.alloc(32)]), format: 'der', type: 'pkcs8' });
-  assert.equal(sign(null, Buffer.from(payload), key).toString('base64url'), expected.signatur);
+  const privateKey = await crypto.subtle.importKey('pkcs8', Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.alloc(32)]), 'Ed25519', false, ['sign']);
+  assert.equal(await signLogin({ privateKey, hub_origin: 'https://r2.example', slot: 'account01', geraet_id: 'test-geraet' }, payload), expected.signatur);
 });
