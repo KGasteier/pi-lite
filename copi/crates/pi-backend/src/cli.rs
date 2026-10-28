@@ -50,7 +50,7 @@ impl Cli {
         if self.child.lock().unwrap().is_some() {
             return Err("Es läuft bereits ein pi-Befehl.".into());
         }
-        let mut cmd = crate::winshim::pi_command(&args);
+        let mut cmd = crate::winshim::pi_command(crate::mode::SpawnPurpose::Cli, &args).map_err(|e| e.to_string())?;
         cmd.current_dir(if cwd.is_empty() { ".".into() } else { cwd })
             .env("NO_COLOR", "1")
             .stdin(Stdio::null())
@@ -183,24 +183,21 @@ pub fn extensions(agent: Option<&Path>, cwd: &Path) -> Vec<String> {
 }
 
 static VERSION: OnceLock<String> = OnceLock::new();
-pub fn pi_version() -> String {
-    VERSION
-        .get_or_init(|| {
-            crate::winshim::pi_command(&["--version".to_string()])
-                .stdin(Stdio::null())
-                .output()
-                .ok()
-                .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().last().unwrap_or("").to_string())
-                .unwrap_or_default()
-        })
-        .clone()
+pub fn pi_version() -> Result<String, String> {
+    let mut command = crate::winshim::pi_command(crate::mode::SpawnPurpose::Version, &["--version".to_string()]).map_err(|e| e.to_string())?;
+    if let Some(v) = VERSION.get() { return Ok(v.clone()); }
+    let o = command.stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+    if !o.status.success() { return Err("Die pi-Version konnte nicht gelesen werden.".into()); }
+    let version = String::from_utf8_lossy(&o.stdout).split_whitespace().last().unwrap_or("").to_string();
+    let _ = VERSION.set(version.clone());
+    Ok(version)
 }
 
 /// Version, Kontextdateien und Extensions für die Startkarte (blockiert – im Thread aufrufen).
 pub fn startup_info(cwd: &str) -> StartupInfo {
     let cwd = if cwd.is_empty() { std::env::current_dir().unwrap_or_default() } else { PathBuf::from(cwd) };
     let agent = crate::agent_dir();
-    StartupInfo { version: pi_version(), context: context_files(agent.as_deref(), &cwd), extensions: extensions(agent.as_deref(), &cwd) }
+    StartupInfo { version: pi_version().unwrap_or_else(|e| e), context: context_files(agent.as_deref(), &cwd), extensions: extensions(agent.as_deref(), &cwd) }
 }
 
 fn flag(name: &str) -> bool {

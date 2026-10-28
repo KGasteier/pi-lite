@@ -12,6 +12,7 @@ pub mod instances;
 pub mod inventory;
 pub mod material;
 pub mod media;
+pub mod mode;
 pub mod preview;
 pub mod rpc;
 pub mod sessions;

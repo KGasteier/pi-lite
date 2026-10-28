@@ -22,6 +22,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use crate::mode::{self, Mode, SpawnBlocked, SpawnPurpose};
 
 /// Baut ein `Command` für `pi <args>`, das auch dann funktioniert, wenn `pi` nur als
 /// npm-Shim-Skript (`pi.cmd`/`pi.bat`) vorliegt. Unter Unix und wenn eine echte `pi`/`pi.exe`
@@ -35,8 +36,13 @@ use std::process::Command;
 /// **Nur unter Unix tatsächlich lauffähig getestet** (dort nimmt der `#[cfg(not(windows))]`-
 /// Zweig den einfachen Pfad); der `#[cfg(windows)]`-Zweig ist reiner Conditional-Compile-Code
 /// und in dieser Linux-Umgebung nicht ausführbar – siehe `docs/portability.md`.
+pub fn pi_command(purpose: SpawnPurpose, args: &[String]) -> Result<Command, SpawnBlocked> {
+    if mode::current() != Mode::Hybrid { return Err(SpawnBlocked { purpose }); }
+    Ok(platform_command(args))
+}
+
 #[cfg(windows)]
-pub fn pi_command(args: &[String]) -> Command {
+fn platform_command(args: &[String]) -> Command {
     let path_env = std::env::var("PATH").unwrap_or_default();
     let dirs: Vec<PathBuf> = std::env::split_paths(&path_env).collect();
     let pathext_env = std::env::var("PATHEXT").ok();
@@ -71,7 +77,7 @@ pub fn pi_command(args: &[String]) -> Command {
 }
 
 #[cfg(not(windows))]
-pub fn pi_command(args: &[String]) -> Command {
+fn platform_command(args: &[String]) -> Command {
     let mut c = Command::new("pi");
     c.args(args);
     c

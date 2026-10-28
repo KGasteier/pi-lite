@@ -828,6 +828,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn local_two_instances_independent_with_history_and_restart() {
+        crate::mode::set_for_test(crate::mode::Mode::Hybrid);
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("pi-inst-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
