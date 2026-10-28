@@ -135,6 +135,7 @@ printf 'node %s\n' "$*" >> '{calls}'
 for arg in "$@"; do
     [[ $arg != *a.js && $arg != *test-a.cjs ]] || [[ ! -f "$PWD/fail-js" ]] || exit 9
     [[ $arg != *test-statusline-net.cjs ]] || [[ ! -f "$PWD/fail-known" ]] || exit 9
+    [[ $arg != --test ]] || [[ ! -f "$PWD/fail-mobile" ]] || exit 9
 done
 exit 0
 ''')
@@ -207,6 +208,10 @@ exit 0
                         "-c", "user.email=s6@example.invalid", "-c", "commit.gpgsign=false",
                         "-c", "core.hooksPath=/dev/null", "commit", "-qm", "ahead base"], check=True)
         subprocess.run(["git", "-C", str(worktree), "checkout", "-q", "-"], check=True)
+        subprocess.run(["git", "-C", str(worktree), "add", "copi/main.rs"], check=True)
+        subprocess.run(["git", "-C", str(worktree), "-c", "user.name=S6 test",
+                        "-c", "user.email=s6@example.invalid", "-c", "commit.gpgsign=false",
+                        "-c", "core.hooksPath=/dev/null", "commit", "-qm", "changed Rust"], check=True)
         deleted.unlink()
         (worktree / "new file.rs").write_text("fn new_file() {}\n")
         base, selected, total = checks.fmt_selection(worktree, "cocopi-v3")
@@ -230,7 +235,8 @@ exit 0
         worktree, _, calls = self.setup_gate()
         (worktree / "copi/main.rs").write_text("fn main() {}\n")
         result = self.run_script("v3-gate.sh", worktree)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("PASS fmt | INFO Rust-Dateien gesamt=1; ausgewählt=0;", result.stdout)
         self.assertNotIn("rustfmt ", calls.read_text())
 
     def test_js_baseline_known_new_and_resolved(self):
@@ -243,12 +249,19 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("KNOWN scripts/test-statusline-net.cjs", result.stdout)
         self.assertNotIn("aus Baseline streichen", result.stdout)
+        gate = self.run_script("v3-gate.sh", worktree)
+        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
+        self.assertIn("KNOWN js-tests", gate.stdout)
+        self.assertNotIn("FAIL js-tests", gate.stdout)
         (worktree / "fail-js").touch()
         result = subprocess.run(command, env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 1)
         self.assertIn("FAIL scripts/test-a.cjs", result.stdout)
         self.assertIn("PASS scripts/test-b.cjs", result.stdout)
         self.assertIn("KNOWN scripts/test-statusline-net.cjs", result.stdout)
+        gate = self.run_script("v3-gate.sh", worktree)
+        self.assertEqual(gate.returncode, 1)
+        self.assertIn("FAIL js-tests", gate.stdout)
         (worktree / "fail-js").unlink()
         (worktree / "fail-known").unlink()
         result = subprocess.run(command, env=self.env, capture_output=True, text=True)
@@ -271,9 +284,11 @@ exit 0
         self.assertIn("PASS mobile-tests", result.stdout)
         self.assertIn("PASS r2-tests", result.stdout)
         self.assertIn("node --test mobile/test/stub.mjs", calls.read_text())
+        (worktree / "fail-mobile").touch()
         r2_test.write_text("raise SystemExit(7)\n")
         result = self.run_script("v3-gate.sh", worktree)
         self.assertEqual(result.returncode, 1)
+        self.assertIn("FAIL mobile-tests", result.stdout)
         self.assertIn("FAIL r2-tests", result.stdout)
         self.assertIn("SKIP hub-smoke", result.stdout)
 

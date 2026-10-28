@@ -44,7 +44,13 @@ run() {
     (cd -- "$dir" && "${safe_env[@]}" timeout --kill-after=10s "${V3_GATE_TIMEOUT:-1800}s" "$@") >"$logs/$id.log" 2>&1 || rc=$?
     printf '%s\n' "$rc" >"$logs/$id.exit"
     if (( rc == 0 )); then
-        printf 'PASS %s | log=%s\n' "$id" "$logs/$id.log"
+        if [[ "$id" == js-tests ]] && grep -q '^KNOWN ' "$logs/$id.log"; then
+            printf 'KNOWN %s | bekannte Basisfehler, keine neuen Fehler; log=%s\n' "$id" "$logs/$id.log"
+        elif [[ "$id" == fmt ]]; then
+            printf 'PASS %s | %s log=%s\n' "$id" "$(head -n 1 "$logs/$id.log")" "$logs/$id.log"
+        else
+            printf 'PASS %s | log=%s\n' "$id" "$logs/$id.log"
+        fi
     else
         printf 'FAIL %s | exit=%s log=%s\n' "$id" "$rc" "$logs/$id.log"
         failed=1
