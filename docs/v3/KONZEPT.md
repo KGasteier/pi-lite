@@ -1,6 +1,13 @@
-# cocopi v3 · Konzept (S1, I1)
+# cocopi v3 · Konzept (S1, Fassung 2 · I2)
 
-Stand: I1, Basis `v3/s1` @ `eb534bb`. Die Abschnitte A2 und A3 sind **Entwürfe zur Freigabe**. A1 und A4 sind **Vorschläge** an S3 bzw. S4. Begriffe richten sich nach dem Tutorial: „R2“, „Konto“ = Slot `account01`–`account10`, „Gerät“.
+Stand: Fassung 2 (I2), Basis `v3/s1` @ `e8f000e` (FREEZE-I2).
+- **Teil A** (I1): A1–A4. A2 und A3 gelten weiter. A1 wird in I2 additiv erweitert (`shared/protocol/v1/PROTOKOLL.md` §I2).
+- **A4 ist ersetzt durch E7** (Pool statt fester Konten). Der Abschnitt bleibt als Nachweis stehen.
+- **Teil B** (I2): Pool, Check-in/Check-out, authentik, Sync, No-Retention (E7–E10, A6–A9).
+
+Begriffe: siehe `GLOSSAR.md`. Kurz: „R2“, „Arbeitsplatz“ = eines der Konten `account01`–`account10` aus dem Pool, „Gerät“, „Empfang“.
+
+# Teil A · Grundlagen (I1)
 
 ---
 
@@ -290,7 +297,9 @@ Bei „bereit“ sieht man keine Extra-Markierung: Das ist „fertig“ nach dem
 
 ---
 
-## A4 · Skizze Kontomodell R2 (Vorschlag an S4/S3, Freigabe S1)
+## A4 · Skizze Kontomodell R2 (Vorschlag an S4/S3, Freigabe S1) — **ersetzt durch E7**
+
+> **Ersetzt durch E7 (FREEZE-I2).** Die feste Zuordnung „Person ↔ Slot“ gilt nicht mehr. Niemand besitzt ein Konto; jeder Check-in bekommt einen freien **Arbeitsplatz** aus dem Pool (Teil B, B2). Weiter gültig sind: ein Unix-Konto je Arbeitsplatz, ein Hub je Arbeitsplatz, Geräte-Register je Hub, Sessiongrenzen, CPU-Queue und der Text zur Speichergrenze. Hubs laufen ab I2 als System-Units `cocopi-hub@accountNN` auf `127.0.0.1:88NN` (A8, Port wie FREEZE-I1), nicht mehr als User-Units; Port `87NN` in der Skizze unten ist veraltet. „Wiedervergabe eines Slots“ ist durch das Leeren beim Check-out ersetzt (B5).
 
 ```
 Person (Anzeigename, änderbar)
@@ -318,3 +327,157 @@ Folgen:
 - **Globale CPU-Queue:** Sie gilt über alle Hubs und braucht eine gemeinsame Stelle, etwa `flock` auf `/run/cocopi/cpu.lock` (Gruppe `cocopi`). Die Entscheidung liegt bei S3/S4.
 - **Grenze erreicht** (MemoryMax/TasksMax): Der Hub übersetzt das Kill-Signal in `fehler{code:"speicher_grenze"}`. Text: „**Diese Aufgabe brauchte mehr Speicher, als dein Konto hat.** Teile sie in kleinere Schritte, oder frag die Seminarleitung.“
 - **Wiedervergabe eines Slots:** Daten exportieren, alle Geräte widerrufen, Home leeren, neue Einladung ausstellen (Tutorial Kap. 7).
+
+---
+
+# Teil B · Pool, Check-in/Check-out, authentik, Sync, No-Retention (I2)
+
+Quelle: FREEZE-I2 (E7–E10, A6–A9). Teil B erklärt diese Entscheidungen und verhandelt sie nicht neu. Wörtliche Texte stehen in „…“. Abläufe Schritt für Schritt: FLOWS F5–F9.
+
+## B1 · In einfachen Worten
+
+> **Man leiht sich auf R2 einen leeren Arbeitsplatz, nimmt mit, was man braucht, und gibt ihn leer zurück.**
+
+- **Arbeitsplatz:** Auf R2 gibt es 10 Arbeitsplätze. Keiner gehört jemandem. Wer kommt, bekommt einen freien.
+- **Check-in:** Mira klickt „Einchecken mit UdK-Konto“. Der Browser öffnet sich, sie meldet sich wie gewohnt bei der UdK an und kommt zu cocopi zurück. Gäste ohne UdK-Konto bekommen von der Seminarleitung einen Einladungs-QR.
+- **Warteschlange:** Sind alle 10 belegt, sieht Mira ihren Platz: „Alle 10 Arbeitsplätze sind belegt. Du bist Nr. 2 in der Warteschlange.“ Sie muss nichts tun; sobald ein Platz frei wird, geht es weiter. Niemandem wird ein Platz weggenommen, auch nicht für die Seminarleitung.
+- **Mitnehmen:** Nach dem Check-in fragt cocopi, welche Projekte aus dem Ordner `~/cocopi` mit nach R2 sollen. Vorausgewählt ist nur das Projekt, an dem sie zuletzt gearbeitet hat. Ohne ihre Bestätigung geht nichts nach R2.
+- **Check-out:** Am Ende zeigt cocopi zwei Spalten: „Kommt zurück auf deinen Rechner“ und „Wird gelöscht“. Nach der Bestätigung kommen ihre Ergebnisse zurück in `~/cocopi`. Eine Datei, die sie inzwischen selbst geändert hat, wird nie überschrieben; die R2-Fassung liegt daneben. Danach ist der Arbeitsplatz leer und frei für andere. **Auf R2 bleibt nichts von ihr.**
+- **Abholfach:** Vergisst Mira den Check-out (z. B. Laptop zugeklappt, Tagesende), checkt R2 sie selbst aus. Ihre Dateien liegen dann höchstens 72 Stunden verschlüsselt im **Abholfach**. Nur ihr Rechner kann sie öffnen. Beim nächsten Check-in bietet cocopi das Abholen an.
+- **Seminar:** Im Bereich „Seminar“ gibt es den Seminar-Chat, Direktnachrichten und die Liste der Teilnehmenden. Die Seminarleitung kann eine Session **ansehen** oder **mitsteuern**, aber nur, wenn Mira zustimmt. Solange jemand mitsteuert, hat das Fenster einen blauen Rahmen und eine Leiste mit „Beenden“.
+
+## B2 · Pool und Warteschlange (E7)
+
+- 10 Arbeitsplätze `account01…account10`, alle gleich ausgestattet. Ein Check-in = eine Belegung = genau ein Arbeitsplatz.
+- Freier Arbeitsplatz → sofort zugewiesen. Sonst Warteschlange: **FIFO**, sichtbare Nummer, rückt **ohne Klick** nach. Die Seminarleitung hat keinen Vorrang.
+- Der Platz in der Warteschlange gilt, solange cocopi ihn abfragt. Nach 90 s ohne Abfrage (Fenster zu, offline) verfällt er. Text beim Wiederkommen: siehe B11 `warteschlange_verfallen`.
+- Eine Person hat höchstens eine Belegung. Ein zweiter Check-in derselben Person auf einem anderen Rechner führt zum bestehenden Arbeitsplatz (Vorschlag an S7, siehe Bericht), nicht zu einem zweiten.
+- Während der Belegung gelten die Grenzen aus I1: höchstens 2 offene und 1 arbeitende Session (A1). Das Handy koppelt per QR **am Arbeitsplatz** (F4); die Kopplung endet mit dem Check-out.
+
+## B3 · Check-in mit authentik oder als Gast (E8)
+
+- **UdK-Konto:** Knopf „Einchecken mit UdK-Konto“. cocopi öffnet den **System-Browser** (keine eingebettete Anmeldeseite). Die Anmeldung findet bei authentik statt; cocopi sieht das Passwort nie.
+- **Gast:** „Ich habe einen Einladungscode“ → Code aus dem Einladungs-QR der Seminarleitung. Der Code gilt 5 Minuten und nur einmal. Rolle immer „Gast“.
+- **Rollen:** Seminarleitung, Teilnehmende, Gast. Sie kommen aus den authentik-Gruppen (`cocopi-seminarleitung`, `cocopi-teilnehmende`) oder aus der Einladung. Wer in keiner Gruppe ist, wird abgewiesen (`keine_berechtigung`).
+- **Geräteausweis:** Nach dem Check-in stellt der Empfang einen **Geräteausweis** aus. Er sagt: „Dieses Gerät gehört Mira, Rolle Teilnehmende“, ist 12 h gültig und vom Empfang unterschrieben. Im Seminar zeigt cocopi Namen und Rolle **nur** aus dem Ausweis.
+- **Empfang:** Der Dienst auf R2, der Check-in und Check-out abwickelt, Arbeitsplätze vergibt und Ausweise ausstellt. Beim ersten Check-in zeigt cocopi seinen Fingerabdruck; danach steht er unter Einstellungen › Konto.
+
+## B4 · Sync-Auswahl beim Check-in (E10, A7)
+
+- Lokaler Ordner `~/cocopi/` (Windows `%USERPROFILE%\cocopi`), sichtbar: `Projekte/`, `Ergebnisse/`, `Skills/`, `Verläufe/`. Versteckt: `.sync/` (Zustand, Rückläufer-Archive, Konflikte, lokales Protokoll). Git ist optional (I4).
+- Bei **jedem** Check-in: Häkchenliste je Projekt bzw. Bereich mit Größe. Vorausgewählt: nur das zuletzt benutzte Projekt. Darunter grau: „Builds/Cache werden nicht übertragen (…)“.
+- Hauptaktion „Auswahl senden und starten · {Größe}“. Alternative „Ohne Dateien starten“. Abbruch „Check-in beenden …“.
+- Nie übertragen: Symlinks, Geräte, FIFOs, Pfade außerhalb von `~/cocopi`. Dateien über 200 MB nur mit ausdrücklichem Häkchen; insgesamt höchstens 2 GiB je Check-in.
+- Während der Belegung gibt es keinen Hintergrundabgleich. Was auf R2 entsteht, bleibt dort bis zum Check-out.
+
+## B5 · Check-out, Leeren, Abholfach (E9, A8)
+
+- Ein Ort: „Auschecken …“ oben rechts in der Arbeitsansicht (D-SZ-Zeile). Kein zweiter Weg.
+- **Vorschau** (zwei Spalten): links „Kommt zurück auf deinen Rechner“ (persönlich, neu oder geändert, mit Größe), rechts „Wird gelöscht“ (flüchtig + alles übrige). Unveränderte, hochgeladene Dateien kommen nicht zurück; Mira hat sie schon.
+- **Reihenfolge, nie anders:** Archiv bauen → am Rechner speichern und Prüfsumme prüfen → in `~/cocopi` einspielen (ohne Überschreiben) → Empfang bestätigt Erhalt → Arbeitsplatz leeren → Leere prüfen → Arbeitsplatz frei.
+- **Konflikt:** lokal geänderte Datei bleibt; R2-Fassung als `Name (R2 TT.MM. HH-MM).ext` daneben.
+- **Abbruch** vor der Erhaltsbestätigung: Alles bleibt auf R2, Arbeitsplatz bleibt belegt. Text: „Abgebrochen. Der Arbeitsplatz bleibt belegt; deine Dateien bleiben auf R2, bis du auscheckst.“
+- **Leeren schlägt fehl:** Der Arbeitsplatz bleibt gesperrt, nie wird Erfolg gemeldet (B11 `leeren_unbestaetigt`).
+- **Erzwungener Check-out** (kein Gerät verbunden > 8 h, Tagesende 23:30, oder durch die Seminarleitung): Archiv → mit dem Geräteschlüssel verschlüsselt ins **Abholfach** (≤ 72 h) → gleicher Löschablauf. Abholen beim nächsten Check-in derselben Person (gleiche `pid`), vor der Sync-Auswahl; nach bestätigtem Erhalt wird das Abholfach sofort gelöscht.
+
+## B6 · Datenklassen: persönlich / flüchtig
+
+Eine Quelle für Rust und Node: `shared/sync/klassen.json` (S7). Erste passende Regel gewinnt. **Unter `Ergebnisse/` ist alles persönlich.** Im Zweifel innerhalb der vier Bereiche: persönlich (kommt zurück). Außerhalb der vier Bereiche: flüchtig.
+
+| Klasse | Bedeutung | Kunst | Design | Code |
+|---|---|---|---|---|
+| **persönlich** | gehört der Person; kommt beim Check-out zurück | `Ergebnisse/Bildreihe/serie-03.png`, `Projekte/Ausstellung/konzept.md`, `Ergebnisse/Performance.mp4` (> 200 MB: nur mit Häkchen) | `Ergebnisse/Seminar-Handout.pdf`, `Projekte/Plakat/plakat.svg`, `Projekte/Website/index.html` | `Projekte/App/src/main.rs`, `Projekte/App/README.md`, `Skills/mein-skill/SKILL.md`, `Verläufe/sitzung.jsonl`, `Ergebnisse/target/demo.exe` (unter Ergebnisse!) |
+| **flüchtig** | entsteht beim Arbeiten neu; wird beim Check-out gelöscht | `Projekte/Bildreihe/.cache/thumbs/`, `Projekte/Bildreihe/render.tmp` | `Projekte/Website/node_modules/`, `Projekte/Website/dist/`, `.DS_Store` | `Projekte/App/target/`, `__pycache__/`, `.venv/`, `*.o`, `*.log`, `core.1234`, alles außerhalb von Projekte/Ergebnisse/Skills/Verläufe |
+| **groß** (Unterfall) | persönlich, aber > 200 MB | Video, Scan-Serie | Rohdaten, Schriftpaket | Datensatz, Modell-Datei | 
+
+Sonderfall **nie**: Symlinks, Hardlinks, Geräte, FIFOs, `..`, absolute Pfade. Sie werden weder hochgeladen noch archiviert.
+
+## B7 · Seminar und Mitsteuern (A9)
+
+- Ein Ort: Reiter **„Seminar“** neben „Dateien“. Inhalt: „Seminarchat“, Direktnachrichten, „Teilnehmende“ (mit Rollen-Abzeichen aus dem Ausweis). Verbindung direkt zwischen den Rechnern (P2P), nur mit gültigem Geräteausweis.
+- Seminarleitung wählt Person → Session → **„Ansehen“** (≤ 120 min) oder **„Mitsteuern anfragen“** (≤ 30 min). Nur die Rolle Seminarleitung darf mitsteuern anfragen.
+- Mira sieht: „Aylin (Seminarleitung) möchte in ‚Seminar-Handout‘ mitschreiben.“ mit **Erlauben 30 min** / **Nur ansehen** / **Ablehnen** (Ablehnen hat den Fokus).
+- Aktiv: Rahmen in Remote-Farbe `#4fb8d8` und Leiste „Aylin steuert mit · noch 27 min · **Beenden**“. Aylin sieht „Du steuerst Miras Session ‚Seminar-Handout‘ · **Zurückgeben**“. Ihre Prompts stehen im Chat als „Aylin · Seminarleitung“ mit Farbmarke. Rückfragen beantwortet weiter Mira.
+- Ende: „Beenden“/„Zurückgeben“, Ablauf, Check-out einer Seite, Ausweis abgelaufen, Verbindung > 60 s weg.
+
+## B8 · Lebenslauf eines Arbeitsplatzes (Diagramm)
+
+```mermaid
+stateDiagram-v2
+    [*] --> frei
+    frei --> reserviert: Check-in geprüft
+    warteschlange --> reserviert: Platz wird frei (FIFO, ohne Klick)
+    [*] --> warteschlange: alle 10 belegt
+    warteschlange --> [*]: 90 s ohne Abfrage / abgebrochen
+    reserviert --> belegt: Hub kennt Geräte (Belegung)
+    belegt --> belegt: Sync-Auswahl, Arbeiten, Seminar
+    belegt --> checkout: Check-out bestätigt
+    belegt --> archiv: erzwungen (8 h, 23:30, Seminarleitung)
+    checkout --> belegt: Abbruch vor Erhalt
+    checkout --> leeren: Erhalt bestätigt (sha256)
+    archiv --> leeren: Abholfach gespeichert (≤ 72 h)
+    leeren --> frei: Leere geprüft
+    leeren --> gesperrt: Leeren/Prüfen fehlgeschlagen
+    gesperrt --> leeren: Seminarleitung/Admin prüft
+```
+
+```
+                 alle belegt                       90 s / Abbruch
+   Check-in ─────────────────► [warteschlange] ──────────────────► (weg)
+      │                              │ Platz frei, ohne Klick
+      │ frei                         ▼
+      └──────────────────────► [reserviert] ──Belegung──► [belegt] ◄─── Abbruch ───┐
+                                                          │    │                   │
+                                       Check-out bestätigt│    │erzwungen          │
+                                                          ▼    ▼                   │
+                                                  [checkout]  [archiv]─► Abholfach │
+                                                     │  └──────────────────────────┘
+                                         Erhalt sha256│    │ gespeichert (≤ 72 h)
+                                                      ▼    ▼
+                                                     [leeren] ──Fehler──► [gesperrt]
+                                                        │ Leere geprüft
+                                                        ▼
+                                                      [frei]
+```
+
+## B9 · Technik (ein Absatz)
+
+`cocopi-empfang` (Node, pi-hub `empfang/`, Nutzer `cocopi-empfang`, `127.0.0.1:8800`, Zustand `/var/lib/cocopi-empfang` 0700) prüft das authentik-ID-Token (OIDC Authorization Code + PKCE S256 über System-Browser und Loopback-Redirect, öffentlicher Client; iss, aud, exp, iat, nonce, JWKS RS256/ES256) oder einen einmaligen Einladungscode, vergibt atomar einen Arbeitsplatz oder einen FIFO-Warteplatz und schickt dem Hub `cocopi-hub@accountNN` (`127.0.0.1:88NN`) eine vom Empfang Ed25519-signierte **Belegung** (`POST /v1/belegung`), die genau die Geräte dieses Check-ins freischaltet. Der Rechner bekommt einen **Geräteausweis** (Ed25519, 12 h, bindet `pid`, Person, Rolle, `net_pubkey`, `geraet_pubkey`); pi-net prüft Peers nur gegen den angepinnten `empfang_pubkey`. Gespeichert wird nur Anzeigename und `pid` = HMAC-SHA256(Geheimnis, iss|sub), solange belegt. Sync läuft über `/v1/sync/{hoch,vorschau,archiv}` (gzip-ustar, strenge Pfadprüfung, Manifest mit sha256; Client-Crate `pi-sync`, Klassen aus `shared/sync/klassen.json`). Check-out: Archiv → Client prüft sha256 und spielt ohne Überschreiben ein → `checkout/:id/erhalten{sha256}` → signierte **Freigabe** am Hub (widerruft Geräte, stoppt pi) → `cocopi-slotctl leeren accountNN` → `pruefen` → frei. Abholfach: X25519-HKDF-SHA256-AES-256-GCM mit dem `archiv_pubkey` des Geräts, ≤ 72 h. Logs: Zeit, Ereignis, HMAC-pid; keine Namen, Inhalte oder Tokens; Tagesdateien 7 Tage. Mitsteuern: P2P über pi-net, Prompts der Seminarleitung laufen über den Client der Teilnehmenden zum Hub (`senden{text, von:{person,rolle}}`).
+
+## B10 · Was R2 wie lange speichert (E9)
+
+| Was | Wo | Wie lange |
+|---|---|---|
+| Alles im Arbeitsplatz (Dateien, Verläufe, Skills, Hub-Zustand, Archive) | `~accountNN`, `/mnt/data/accountNN` | bis zum Check-out, dann geleert und geprüft |
+| Anzeigename, `pid`, Gerät, Belegung | Empfang | solange belegt |
+| Platz in der Warteschlange | Empfang | bis zugewiesen oder 90 s ohne Abfrage |
+| Abholfach (verschlüsselt) | `/var/lib/cocopi-empfang/abholfach/` | bis Abholung bestätigt, höchstens 72 h |
+| Einladungscode (nur Hash) | Empfang | 5 min oder bis benutzt |
+| Logs (Zeit, Ereignis, Pseudonym) | Empfang, Hub | 7 Tage |
+| Seminar-Chat, DMs | nur auf den beteiligten Rechnern (P2P), flüchtig | bis cocopi geschlossen wird (Vorschlag, siehe Bericht) |
+
+## B11 · Fehlertexte Teil B (was / tun)
+
+Codes mit HTTP-Status stammen aus `PROTOKOLL.md` §I2 (S3) bzw. dem Empfang (S7). Zeilen mit „Client“ sind reine Anzeigetexte ohne Protokollcode (Vorschlag an S2/S8).
+
+| Code | Wo | was | tun |
+|---|---|---|---|
+| `browser_fehlt` (Client) | F5 | „Der Browser konnte nicht geöffnet werden.“ | „Öffne einen Browser und versuche es erneut. Ohne Browser ist keine Anmeldung möglich.“ |
+| `anmeldung_abgebrochen` (Client) | F5 | „Die Anmeldung im Browser wurde nicht abgeschlossen.“ | „Klicke erneut auf ‚Einchecken mit UdK-Konto‘.“ |
+| `keine_berechtigung` 403 | F5 | „Du darfst diesen Bereich nicht öffnen.“ | „Frage deine Seminarleitung.“ |
+| `abgelaufen` 410 | F5 Gast | „Dieser Code ist abgelaufen.“ | „Bitte um einen neuen Code.“ |
+| `verbraucht` 409 | F5 Gast | „Dieser Code wurde schon benutzt.“ | „Erzeuge einen neuen Code. Wenn du das nicht warst, sag deiner Seminarleitung Bescheid.“ |
+| `zu_viele` 429 | F5 | „Zu viele Versuche.“ | „Warte eine Minute und versuche es dann noch einmal.“ |
+| `warteschlange_verfallen` (Client, nach `unbekannt` 404 auf `warten/:id`) | F5 | „Dein Platz in der Warteschlange ist verfallen.“ | „Checke erneut ein. Lass das Fenster beim Warten offen.“ |
+| `empfang_offline` (Client) | F5, F7 | „Der Empfang auf R2 ist nicht erreichbar.“ | „Prüfe deine Verbindung. Deine Dateien auf R2 bleiben, bis du auscheckst.“ |
+| `ausweis_ungueltig` 401 | F8, F9 | „Dein Geräteausweis ist ungültig.“ | „Melde dich erneut am Empfang an.“ |
+| `pfad_nicht_erlaubt` 403 | F6 | „Dieser Ordner ist nicht freigegeben.“ | „Wähle einen Projektordner deines Kontos.“ → Vorschlag Wortlaut I2: „Wähle einen Ordner in ~/cocopi.“ |
+| `ordner_fehlt` (Client) | F6 | „Der Ordner ~/cocopi fehlt.“ | „cocopi legt ihn jetzt leer an. Lege deine Projekte unter Projekte/ ab.“ |
+| `zu_gross` (Client) | F6 | „Deine Auswahl ist größer als 2 GB.“ | „Nimm weniger Projekte mit. Große Dateien kannst du einzeln abwählen.“ |
+| `pruefsumme_falsch` (Client) | F7 | „Die Dateien sind nicht vollständig angekommen. Es wurde nichts gelöscht.“ | „Klicke ‚Erneut prüfen‘. Deine Dateien bleiben auf R2.“ |
+| `checkout_laeuft` 409 | F7 | „Dieser Arbeitsplatz wird gerade zurückgegeben.“ | „Versuche es erneut oder frage die Seminarleitung.“ |
+| `leeren_unbestaetigt` 409 | F7 | „Der Arbeitsplatz ist noch nicht nachweislich leer.“ | „Die Seminarleitung muss den Arbeitsplatz prüfen.“ |
+| `kein_platz_lokal` (Client) | F7 | „Auf deinem Rechner ist nicht genug Platz.“ | „Mach {Größe} frei und klicke ‚Erneut prüfen‘. Auf R2 wird nichts gelöscht.“ |
+| `abholfach_fremd` (Client) | F7 | „Dieses Abholfach kann nur der Rechner öffnen, mit dem du eingecheckt warst.“ | „Checke an diesem Rechner ein. Nach 72 h wird es gelöscht.“ |
+| `nicht_gesendet` (Client) | F8 | „Nachricht nicht gesendet.“ | „Die Verbindung zu {Person} fehlt. Versuche es gleich noch einmal.“ |
+| `freigabe_beendet` (Client) | F9 | „Freigabe beendet.“ | „Mira steuert ihre Session wieder allein.“ (Grund: Check-out, Ablauf, Ausweis oder Verbindung) |
