@@ -468,9 +468,15 @@ mod tests {
             eprintln!("Übersprungen: node fehlt.");
             return;
         }
-        let hub = Path::new("/home/medienhaus/Work/pi-hub-wt/s3");
+        let configured = std::env::var_os("COCOPI_TEST_HUB_DIR");
+        let hub_path = configured
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../../pi-hub-wt/s3"));
+        let hub = hub_path.as_path();
         if !hub.join("server.mjs").is_file() {
-            eprintln!("Übersprungen: S3-Hub-Worktree fehlt.");
+            assert!(configured.is_none(), "COCOPI_TEST_HUB_DIR enthält keinen Hub");
+            eprintln!("Übersprungen: S3-Hub-Worktree fehlt (COCOPI_TEST_HUB_DIR setzen).");
             return;
         }
         let dir = std::env::temp_dir().join(format!("hub-v1-client-{}", std::process::id()));
