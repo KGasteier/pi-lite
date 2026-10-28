@@ -278,6 +278,15 @@ class Slots:
                                  'Skelett einspielen', 'Quote und Leerzustand prüfen', 'Hub starten']}
             if action == 'leeren':
                 start = time.monotonic()
+                # Frühere Erfolgsbelege bei neuem Versuch niemals weiterverwenden.
+                inventory = self.open_dir('var/lib/cocopi-slots')
+                try:
+                    try:
+                        os.unlink(slot + '.leer.json', dir_fd=inventory)
+                    except FileNotFoundError:
+                        pass
+                finally:
+                    os.close(inventory)
                 if not self.fake:
                     command('/usr/bin/systemctl', 'stop', 'cocopi-hub@' + slot + '.service')
                     # Neue Zugriffe sperren, bevor Prozessruhe hergestellt wird.
@@ -361,7 +370,7 @@ def main():
     lockdir = slots.open_dir('var/lib/cocopi-slots')
     lock = None
     try:
-        if args.ausfuehren and args.befehl == 'leeren':
+        if args.ausfuehren and args.befehl in ('leeren', 'pruefen'):
             lock = os.open('pool.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW,
                            0o600, dir_fd=lockdir)
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

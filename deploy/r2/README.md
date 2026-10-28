@@ -100,7 +100,8 @@ Soft=Hard, Inodes 200000/800000. Leer-Nachweis verlangt ≤1 MiB Gesamtbelegung
 für Skelett/Verzeichnisblöcke und **exakt passende UID-Inodezahlen** innerhalb
 der Wurzeln plus dem bekannten Legacy-Token. So blockieren auch kleine
 Restdateien, offene gelöschte Dateien oder Hardlinks außerhalb der Wurzeln die
-Freigabe. Der alte rootverwaltete Token bleibt bis zur S3-Tokenbereinigung
+Freigabe. Vor neuem Löschversuch wird ein früherer Beleg entfernt; bei Fehler
+bleibt der Platz gesperrt. Der alte rootverwaltete Token bleibt bis zur S3-Tokenbereinigung
 bestehen; der Geräteausweis/Check-in muss trotzdem Hubzugriffe begrenzen.
 
 Skelett `/etc/cocopi/skel`: nur leere Verzeichnisse `arbeit/Projekte`,
@@ -173,8 +174,12 @@ unwirksam wäre; dies verlangt besonders sorgfältiges Review des Empfangscodes.
 
 ## Nachweise lokal
 
-`python3 deploy/r2/test_scripts.py`: 38 grün (inkl. zehn Fake-Root-Angriffstests).
+`python3 deploy/r2/test_scripts.py`: 42 grün (inkl. 14 Helfer-/Fake-Root-Tests).
 Nur Tempverzeichnisse, keine System-/Netzänderungen. Bash-Syntax, Dry-Run-
 Mutationssentinel, Argumente, Quoten/Slices/Listenerfixtures, Poolstatus/Proxy-
-Mocks und enumerierte sudoers geprüft. Kein R2-Deployment, authentik-Login,
+Mocks und enumerierte sudoers geprüft. `systemd-analyze verify` auf Tempkopien
+(allein Hub-ExecStart durch `/usr/bin/true` ersetzt, da nicht installiert): Exit 0;
+Warnung zu im lokalen systemd entfallenem `CPUAccounting`, keine Dienste gestartet.
+Unveränderte Originalprüfung meldet erwartbar fehlenden installierten Hublauncher.
+Kein R2-Deployment, authentik-Login,
 Modellaufruf oder produktiver End-to-End-/Securitynachweis.

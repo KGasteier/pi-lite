@@ -4,7 +4,6 @@ import datetime
 import json
 import os
 from pathlib import Path
-import re
 import stat
 import pwd
 import sys
@@ -25,7 +24,7 @@ def read_safe(path, owner=0):
 
 
 def validate(data, now):
-    if data.get('protokoll') != 1:
+    if set(data) != {'protokoll', 'zeit', 'slots'} or data.get('protokoll') != 1:
         raise ValueError('Vertrag')
     moment = datetime.datetime.fromisoformat(data['zeit'].replace('Z', '+00:00'))
     if not 0 <= (now - moment).total_seconds() <= 120:

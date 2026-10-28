@@ -568,6 +568,65 @@ class SlotctlTests(unittest.TestCase):
         self.run_slot('pruefen', 'account01', success=False)
         self.run_slot('--ausfuehren', 'leeren', 'account01')
 
+    def test_quota_inode_proof_rejects_small_external_residue(self):
+        # Echter quota()-Code mit reinem Q_GETQUOTA-Modul-Fake: kein Kernelaufruf.
+        import importlib.machinery
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        loader = importlib.machinery.SourceFileLoader('slotctl_test', str(BASE / 'cocopi-slotctl'))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        with patch.dict(os.environ, self.env):
+            helper = module.Slots()
+        self.addCleanup(os.close, helper.rootfd)
+        (self.root / 'etc/cocopi/slots/account01').mkdir(parents=True)
+        (self.root / 'etc/cocopi/slots/account01/token').write_text('synthetisch')
+        helper.fake = False
+        helper.open_dir = lambda relative: os.open(self.root / relative, module.DIRECTORY)
+        helper.owned_inodes = lambda fd, uid: 2
+        quota_module = SimpleNamespace(query=lambda device, uid: SimpleNamespace(space=64, inodes=3 if device=='/' else 2), limits_match=lambda *args: True)
+        quota_spec = SimpleNamespace(loader=SimpleNamespace(exec_module=lambda *args: None))
+        real_stat = os.stat
+        def token_stat(*args, **kwargs):
+            result = real_stat(*args, **kwargs)
+            return SimpleNamespace(st_mode=result.st_mode, st_nlink=1, st_uid=20001)
+        with patch.object(module.importlib.util, 'spec_from_file_location', return_value=quota_spec), \
+             patch.object(module.importlib.util, 'module_from_spec', return_value=quota_module), \
+             patch.object(module, 'command', side_effect=lambda *args: args[-1]), \
+             patch.object(module.os, 'stat', token_stat):
+            self.assertEqual(helper.quota(20001, [1, 2]), 128)
+            quota_module.query = lambda *args: SimpleNamespace(space=64, inodes=4)
+            with self.assertRaises(RuntimeError):
+                helper.quota(20001, [1, 2])
+
+    def test_receipt_matches_clear_and_failed_retry_invalidates_it(self):
+        import json
+        result = json.loads(self.run_slot('--ausfuehren', 'leeren', 'account01').stdout)
+        receipt = self.root / 'var/lib/cocopi-slots/account01.leer.json'
+        self.assertEqual(json.loads(receipt.read_text()), result)
+        self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
+        self.fixture(prozesse=True)
+        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+        self.assertFalse(receipt.exists())
+
+    def test_first_proof_is_read_only_unless_explicit(self):
+        import shutil
+        shutil.copytree(self.root / 'etc/cocopi/skel', self.root / 'home/account01', dirs_exist_ok=True)
+        receipt = self.root / 'var/lib/cocopi-slots/account01.leer.json'
+        self.run_slot('pruefen', 'account01')
+        self.assertFalse(receipt.exists())
+        self.run_slot('--ausfuehren', 'pruefen', 'account01')
+        self.assertTrue(receipt.exists())
+
+    def test_skeleton_hardlink_blocks_before_deletion(self):
+        source = self.root / 'etc/cocopi/skel/.profile'
+        os.link(source, self.root / 'etc/cocopi/skel/kopie')
+        survivor = self.root / 'home/account01/bleibt'
+        survivor.write_text('synthetisch')
+        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+        self.assertTrue(survivor.exists())
+
     def test_concurrent_clear_is_blocked(self):
         import fcntl
         with (self.root / 'var/lib/cocopi-slots/pool.lock').open('w') as lock:
