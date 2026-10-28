@@ -6,13 +6,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-const source = process.env.I2_SEMINAR_DIR;
+const source = process.env.I2_SEMINAR_DIR || fileURLToPath(new URL('../../', import.meta.url));
 const crate = source && path.resolve(source, 'copi/crates/pi-net');
 const ready = crate && fs.existsSync(path.join(crate, 'src/seminar.rs'));
 
 test('Mitsteuern: ohne Zustimmung, nur Ansicht, Ablehnung und Check-out erreichen keinen Hub', {
   timeout: 190000,
-  todo: !ready && 'S8-Automat nicht eingebunden: I2_SEMINAR_DIR auf geprüften S8-Worktree setzen; kein UI-/Produktionsnachweis.',
+  skip: !ready && 'S8-Automat fehlt im gewählten Repo (copi/crates/pi-net/src/seminar.rs); kein UI-/Produktionsnachweis.',
 }, t => {
   if (!ready) return;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cocopi-i2-consent-'));

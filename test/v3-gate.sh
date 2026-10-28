@@ -45,7 +45,7 @@ safe_env=(env -i "PATH=$PATH" "HOME=$logs/home" "USERPROFILE=$logs/home"
     CARGO_NET_OFFLINE=true CARGO_TERM_COLOR=never RUSTUP_AUTO_INSTALL=0
     "PI_HUB_DIR=$logs/no-hub" HUB_HOST=127.0.0.1 HUB_TOKEN=v3-gate-mock HUB_STATE=off
     "HUB_ROOTS=$logs/tmp" "HUB_PI_BIN=$logs/no-real-pi" "LC_ALL=C.UTF-8"
-    "I2_SEMINAR_DIR=${I2_SEMINAR_DIR:-}")
+    "I2_SEMINAR_DIR=${I2_SEMINAR_DIR:-$worktree}")
 failed=0
 run() {
     local id=$1 dir=$2 rc=0; shift 2

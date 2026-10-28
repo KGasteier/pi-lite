@@ -131,7 +131,7 @@ printf 'rustfmt %s\\n' "$*" >> '{calls}'
 [[ ! -f "$PWD/fail-fmt" ]]
 ''')
         executable(tools / "node", f'''#!/bin/bash
-printf 'node %s\n' "$*" >> '{calls}'
+printf 'node %s seminar=%s\n' "$*" "$I2_SEMINAR_DIR" >> '{calls}'
 for arg in "$@"; do
     [[ $arg != *a.js && $arg != *test-a.cjs ]] || [[ ! -f "$PWD/fail-js" ]] || exit 9
     [[ $arg != *test-statusline-net.cjs ]] || [[ ! -f "$PWD/fail-known" ]] || exit 9
@@ -334,6 +334,18 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("SKIP i2-szenarien | I2-Abnahme unvollständig", result.stdout)
         self.assertNotIn("PASS i2-szenarien", result.stdout)
+
+    def test_gate_i2_uses_selected_repo_for_seminar_unless_overridden(self):
+        worktree, hub, calls = self.setup_gate()
+        (worktree / "test/i2").mkdir(parents=True)
+        (worktree / "test/i2/scenarios.test.mjs").write_text("// stub\n")
+        result = self.run_script("v3-gate.sh", worktree, hub, I2_SEMINAR_DIR="")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS i2-szenarien |", result.stdout)
+        self.assertIn(f"node --test test/i2/scenarios.test.mjs seminar={worktree}", calls.read_text())
+        result = self.run_script("v3-gate.sh", worktree, hub, I2_SEMINAR_DIR="/explicit/repo")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("seminar=/explicit/repo", calls.read_text())
 
     def test_gate_rejects_empty_js_globs(self):
         worktree, _, _ = self.setup_gate()
