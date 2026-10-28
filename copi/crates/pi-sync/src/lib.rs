@@ -39,7 +39,17 @@ pub fn safe_path(p: &str) -> io::Result<()> {
     if p.is_empty()
         || p.len() > 255
         || p.chars().any(|c| c.is_control() || c == '\\' || c == ':')
-        || p.split('/').any(|x| x.is_empty() || x == "." || x == "..")
+        || p.split('/').any(|x| {
+            let name = x.split('.').next().unwrap_or("").to_ascii_lowercase();
+            x.is_empty()
+                || x == "."
+                || x == ".."
+                || x.ends_with(['.', ' '])
+                || ["con", "prn", "aux", "nul"].contains(&name.as_str())
+                || (name.len() == 4
+                    && (name.starts_with("com") || name.starts_with("lpt"))
+                    && matches!(name.as_bytes()[3], b'1'..=b'9'))
+        })
     {
         return Err(invalid("Dieser Dateipfad ist nicht erlaubt."));
     }
@@ -52,6 +62,9 @@ pub fn classify(p: &str, bytes: u64, regular: bool) -> Klasse {
     let parts: Vec<_> = p.split('/').collect();
     if !AREAS.contains(&parts[0]) && parts[0] != "Verläufe" {
         return Klasse::Fluechtig;
+    }
+    if parts.len() == 1 {
+        return Klasse::Persoenlich;
     }
     if bytes > MAX_FILE {
         return Klasse::Gross;
@@ -73,6 +86,18 @@ pub fn classify(p: &str, bytes: u64, regular: bool) -> Klasse {
         Klasse::Persoenlich
     }
 }
+fn hardlinked(meta: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta.nlink() > 1
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        false
+    }
+}
 fn no_link(path: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(path)?;
     if meta.file_type().is_symlink() || (!meta.is_dir() && !meta.is_file()) {
@@ -83,17 +108,18 @@ fn no_link(path: &Path) -> io::Result<()> {
     Ok(())
 }
 fn ensure_tree(path: &Path) -> io::Result<()> {
+    // Auch bestehende Vorfahren prüfen; ein normaler letzter Ordner kann unter einem Link liegen.
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && parent != path {
+            ensure_tree(parent)?;
+        }
+    }
     if path.exists() {
         no_link(path)?;
         if !path.is_dir() {
             return Err(invalid("Hier wird ein Ordner benötigt."));
         }
         return Ok(());
-    }
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            ensure_tree(parent)?;
-        }
     }
     fs::create_dir(path)?;
     no_link(path)
@@ -179,6 +205,13 @@ impl LocalFolder {
         ] {
             ensure_tree(&root.join(area))?;
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for p in [".sync", ".sync/archiv", ".sync/konflikte"] {
+                fs::set_permissions(root.join(p), fs::Permissions::from_mode(0o700))?;
+            }
+        }
         let folder = Self { root };
         if !folder.root.join(".sync/zustand.json").exists() {
             folder.save_state(&Zustand {
@@ -234,7 +267,7 @@ impl LocalFolder {
                 };
                 for entry in WalkDir::new(child.path()).follow_links(false) {
                     let entry = entry?;
-                    if !entry.file_type().is_file() {
+                    if !entry.file_type().is_file() || hardlinked(&entry.metadata()?) {
                         continue;
                     }
                     let p = relative_portable(&dir, entry.path())?;
@@ -284,7 +317,7 @@ impl LocalFolder {
         let mut entries = Vec::new();
         for entry in WalkDir::new(&source).follow_links(false) {
             let entry = entry?;
-            if !entry.file_type().is_file() {
+            if !entry.file_type().is_file() || hardlinked(&entry.metadata()?) {
                 continue;
             }
             let p = relative_portable(base, entry.path())?;
@@ -531,10 +564,14 @@ pub fn write_archive<W: Write>(
     let mut total = 0;
     for (p, file) in entries {
         safe_path(&p)?;
+        if let Some(parent) = file.parent() {
+            ensure_tree(parent)?;
+        }
         no_link(&file)?;
         let mut input = File::open(&file)?;
         let before = input.metadata()?;
         if !before.is_file()
+            || hardlinked(&before)
             || before.len() > MAX_FILE
             || total + before.len() > MAX_BYTES
             || manifest.contains_key(&p)
@@ -576,6 +613,7 @@ pub fn write_archive<W: Write>(
 pub fn read_archive<R: Read>(input: R, stage: &Path) -> io::Result<Vec<String>> {
     let mut zip = GzDecoder::new(input);
     let mut seen = BTreeSet::new();
+    let mut folded = BTreeSet::new();
     let mut files = Vec::new();
     let mut total = 0;
     loop {
@@ -628,7 +666,7 @@ pub fn read_archive<R: Read>(input: R, stage: &Path) -> io::Result<Vec<String>> 
             format!("{prefix}/{name}")
         };
         safe_path(&p)?;
-        if !seen.insert(p.clone()) {
+        if !seen.insert(p.clone()) || !folded.insert(p.to_lowercase()) {
             return Err(invalid("Doppelter Pfad im Archiv."));
         }
         let size = octal(&h[124..136])?;

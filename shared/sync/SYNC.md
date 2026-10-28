@@ -50,6 +50,21 @@ Links, Duplikate, absoluten Pfade, `.`/`..`-Komponenten, Backslashes, Laufwerke,
 Steuerzeichen; Rechte auf 0644/0755 normalisiert. Leser begrenzen entpackte Größe,
 Header-/Dateizahl und Pfadlänge. Lange Pfade mittels ustar-Prefix (155/100 Bytes).
 
+## Signierter Empfang-Dienstweg
+
+Zusätzlich vor Geräte-Auth an S7 durchreichen: `/v1/sync/dienst/archiv` und
+`/v1/sync/dienst/archiv/:id` (beide POST). `ctx.empfangPubkey` ist derselbe Pin
+wie A6. Nur echte Loopback-Socketadresse und signierter Auftrag
+`{v:1,typ:"sync_dienst",aktion:"archiv"|"holen",slot,checkin_id,iat,nonce,
+archiv_id?,erzwungen?,auswahl?,signatur}`. `iat` Unixsekunden ±60 s,
+Nonce 32 Byte Base64url, persistent einmalig; Check-in muss gerade belegt sein.
+`archiv` liefert `archiv_bereit`, `holen` gzip-Stream. Keine Modell- oder
+Geräteberechtigung wird umgangen; ausschließlich Archivbau/-abruf erlaubt.
+`auswahl` entspricht Desktop-Auswahl; Empfang leitet sie beim normalen Check-out
+weiter. Bei Zwangs-Check-out `erzwungen:true`: auch große persönliche Dateien
+werden verschlüsselt gesichert, statt still verloren zu gehen. Über 2 GiB bleibt
+Check-out gesperrt (keine stille Löschung). Maximal acht ausstehende Slot-Archive.
+
 ## Client-Schnittstellen
 
 `pi-sync` arbeitet nur mit `Read`/`Write`, ohne HTTP. Auswahl zeigt je Bereich/Projekt
@@ -64,12 +79,17 @@ Erst nach erfolgreichem Import bestätigt der Aufrufer `erhalten{sha256}`.
 ## Empfang, Signaturen und Abholfach
 
 Ed25519: öffentliche Schlüssel 32 Byte Base64url, private PKCS8-PEM-Datei 0600.
-Signierte Hülle `{inhalt:{…},signatur:"Base64url"}`; signierte Bytes sind rekursiv
-nach Schlüsseln sortiertes UTF-8-JSON ohne Leerraum. Belegung, Freigabe und
+Signiertes JSON `{...Nutzfelder,signatur:"Base64url"}`; signierte Bytes sind alle
+Felder außer `signatur` als rekursiv nach Schlüsseln sortiertes UTF-8-JSON ohne
+Leerraum (nur sichere Ganzzahlen). Belegung, Freigabe und
 Geräteausweis haben exakt die A6-Inhalte. Zeitstempel der Ausweise in Unixsekunden
 (`iat`,`exp`), `gueltig_bis` in Unixmillisekunden wie v1.
 
-Challenge-Payload (Ed25519, Empfang, kurzlebig/einmalig):
+Desktop-Anmeldung kompatibel mit S3: `POST anmelden/challenge {geraet_id}`,
+`POST anmelden {challenge_id,signatur}` → `angemeldet{zugangstoken,…}`; Payload
+`cocopi-v1-empfang\n<origin>\nempfang\n<geraet_id>\n<challenge_id>\n<nonce>`.
+Token gilt eine Stunde und nur solange dieselbe Belegung besteht.
+Zusätzlich Challenge-Payload pro Anfrage (Ed25519, Empfang, kurzlebig/einmalig):
 `cocopi-v1-empfang\n<origin>\n<checkin_id>\n<challenge_id>\n<nonce>`.
 `POST /v1/empfang/challenge {protokoll:1,checkin_id}` liefert Challenge;
 anschließend geschützte Anfragen mit Header `X-Cocopi-Checkin`,
@@ -90,11 +110,12 @@ abrufen; `POST abholfach/:id/erhalten {sha256}` löscht nach Hashbestätigung.
 
 Normaler Check-out: Archiv bauen → `checkout_bereit{checkout_id,archiv_id,sha256}`;
 Client lädt am Hub und bestätigt denselben Hash am Empfang; dann Freigabe am Hub,
-Leeren-Helfer, `pruefen` und erst danach Slot frei. Zwangs-Check-out: Archiv bauen,
+Leeren-Helfer, `pruefen` und erst danach Slot frei. `pruefen` muss
+`{slot,zustand:"leer"}` (S4) oder im Test `{slot,leer:true}` liefern. Zwangs-Check-out: Archiv bauen,
 verschlüsseltes Abholfach dauerhaft speichern, dann gleicher Löschablauf. Bei Fehler
 bleibt der Slot gesperrt; niemals Erfolg melden. Hub-Aufrufe laufen über einen
-expliziten Service-Adapter, nicht über geratenes Token-Bypass. Solange S3 diesen
-Adapter nicht bereitstellt, verweigert der reale Dienst Check-in/Check-out sicher.
+expliziten signierten Service-Adapter; bis S3 die Dienst-Routen vor Geräte-Auth
+durchreicht, verweigert der Hub diese Anfragen sicher.
 
 Einladungen: einmalige zufällige Codes (5 Minuten), nur durch authentisierte
 Seminarleitung, Rolle immer `gast`. Logs nur Zeitpunkt, Ereignis und HMAC-pid,
