@@ -1,7 +1,9 @@
 //! Seminar-Desktop: eine Oberfläche, ein Modus-Ort, keine lokalen Agentenstarts.
 //! Alle Hub-Aktionen laufen über DesktopApi; Fixtures sind ausschließlich Demo/Tests.
 mod checkin;
+pub mod flow_adapter;
 mod hub;
+pub mod seminar;
 mod sync_ui;
 pub use checkin::{AuthCallback, CancelTarget, CheckinMethod, FlowReply, MemoryApi, WaitTarget};
 use checkin::{Flow, Stage, TransferKind};
@@ -9,7 +11,7 @@ use egui::{Color32, RichText, Ui};
 use pi_backend::mode::{self, Mode};
 use qrcodegen::{QrCode, QrCodeEcc};
 use std::{
-    sync::{mpsc, Arc},
+    sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
 
@@ -130,6 +132,11 @@ pub enum Request {
     Open(String),
     Rest(String),
     Prompt(String, String),
+    PromptAs {
+        session: String,
+        text: String,
+        von: pi_net::seminar::Von,
+    },
     Stop(String),
 }
 #[derive(Clone, Debug)]
@@ -147,6 +154,11 @@ pub enum Reply {
     Heartbeat,
     Disconnected(String),
     Sent(String, String),
+    SentAs(String, String, pi_net::seminar::Von),
+    SeminarPrompt {
+        session_id: String,
+        prompt: seminar::HubPrompt,
+    },
     SessionUpdated(Session),
     PiEvent(String, serde_json::Value),
     SignedIn(Account),
@@ -173,6 +185,9 @@ pub enum Reply {
 pub trait DesktopApi: Send + Sync {
     fn call(&self, request: Request) -> Reply;
     fn watch(&self, _tx: mpsc::Sender<Reply>) {}
+    fn open_browser(&self, _url: &str) -> Result<(), String> {
+        Err("Es gibt keine bestätigte Browseranmeldung.".into())
+    }
 }
 struct Unavailable;
 impl DesktopApi for Unavailable {
@@ -220,6 +235,7 @@ pub struct Desktop {
     pub enabled: bool,
     demo: bool,
     api: Arc<dyn DesktopApi>,
+    api_configured: bool,
     tx: mpsc::Sender<Reply>,
     rx: mpsc::Receiver<Reply>,
     pending: usize,
@@ -246,6 +262,7 @@ pub struct Desktop {
     prompt: String,
     files: bool,
     seminar_selected: bool,
+    seminar: Option<seminar::Seminar>,
     flow: Flow,
     flow_generation: u64,
     flow_pending: bool,
@@ -256,6 +273,9 @@ pub struct Desktop {
     rename: bool,
     device_name: String,
     hub_url: String,
+    oidc_issuer: String,
+    empfang_pubkey: String,
+    archiv_pubkey: String,
     confirm_host: Option<String>,
     last_event: Option<Instant>,
     watch_started: bool,
@@ -266,12 +286,18 @@ pub struct Desktop {
 #[serde(default)]
 struct Profile {
     hub_url: String,
+    oidc_issuer: String,
+    empfang_pubkey: String,
+    archiv_pubkey: String,
     device_name: String,
 }
 impl Default for Profile {
     fn default() -> Self {
         Self {
             hub_url: String::new(),
+            oidc_issuer: String::new(),
+            empfang_pubkey: String::new(),
+            archiv_pubkey: String::new(),
             device_name: "Mein Rechner".into(),
         }
     }
@@ -315,6 +341,7 @@ impl Desktop {
             enabled: !cfg!(test) || !demo,
             demo,
             api: Arc::new(Unavailable),
+            api_configured: false,
             tx,
             rx,
             pending: 0,
@@ -345,6 +372,7 @@ impl Desktop {
             prompt: String::new(),
             files: false,
             seminar_selected: false,
+            seminar: None,
             flow: Flow::default(),
             flow_generation: 0,
             flow_pending: false,
@@ -355,6 +383,9 @@ impl Desktop {
             rename: false,
             device_name: profile.device_name,
             hub_url: profile.hub_url,
+            oidc_issuer: profile.oidc_issuer,
+            empfang_pubkey: profile.empfang_pubkey,
+            archiv_pubkey: profile.archiv_pubkey,
             confirm_host: None,
             last_event: None,
             watch_started: false,
@@ -364,6 +395,38 @@ impl Desktop {
     }
     pub fn set_api(&mut self, api: Arc<dyn DesktopApi>) {
         self.api = api;
+        self.api_configured = true;
+    }
+    /// Produktions-Runtime erst nach bestätigtem Check-in einsetzen.
+    /// `events` liefert epochgebundene Events; fremde cwd sind niemals Session-IDs.
+    pub fn attach_seminar(
+        &mut self,
+        seminar: seminar::Seminar,
+    ) -> Result<mpsc::Sender<Reply>, String> {
+        if self.demo || !self.connected || self.flow.receipt.is_none() {
+            return Err("Das Seminar benötigt einen bestätigten Check-in.".into());
+        }
+        if let Some(previous) = &mut self.seminar {
+            previous.checkout();
+        }
+        self.seminar = Some(seminar);
+        let (tx, rx) = mpsc::channel();
+        let target = self.tx.clone();
+        let epoch = self.connection_epoch;
+        std::thread::spawn(move || {
+            while let Ok(reply) = rx.recv() {
+                if target
+                    .send(Reply::ConnectionEvent {
+                        epoch,
+                        reply: Box::new(reply),
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Ok(tx)
     }
     fn call(&mut self, request: Request) {
         if self.demo {
@@ -403,8 +466,10 @@ impl Desktop {
                         && *attempt == self.flow.attempt
                         && self.flow.stage == Stage::Starting
                     {
-                        if let Err(e) = pi_backend::cli::open_url(url) {
-                            self.error = Some(format!("Der Browser konnte nicht geöffnet werden. Öffne die Anmeldung mit dem Knopf unten. {e}"));
+                        if let Err(e) = self.api.open_browser(url) {
+                            self.error = Some(format!(
+                                "Der Browser konnte nicht geöffnet werden. Öffne die Anmeldung mit dem Knopf unten. {e}"
+                            ));
                         }
                     }
                 }
@@ -420,6 +485,11 @@ impl Desktop {
                     }
                 }
                 if self.flow.stage == Stage::Done {
+                    if let Some(seminar) = &mut self.seminar {
+                        seminar.checkout();
+                    }
+                    self.seminar = None;
+                    self.seminar_selected = false;
                     self.connection_epoch += 1;
                     self.pending = 0;
                     self.watch_started = false;
@@ -463,6 +533,15 @@ impl Desktop {
                     .entry(id)
                     .or_default()
                     .push(ChatMessage::new("Du", text));
+            }
+            Reply::SeminarPrompt { session_id, prompt } => {
+                self.send_as(&session_id, prompt.von, prompt.text);
+            }
+            Reply::SentAs(id, text, von) => {
+                self.chat_by_session
+                    .entry(id)
+                    .or_default()
+                    .push(ChatMessage::new(von.label(), text));
             }
             Reply::SessionUpdated(session) => {
                 if let Some(s) = self.sessions.iter_mut().find(|s| s.id == session.id) {
@@ -538,6 +617,10 @@ impl Desktop {
                     self.connected = false;
                 }
                 if e == InviteError::Revoked {
+                    if let Some(seminar) = &mut self.seminar {
+                        seminar.checkout();
+                    }
+                    self.seminar = None;
                     self.connection_epoch += 1;
                     self.pending = 0;
                     self.account = None;
@@ -611,6 +694,9 @@ impl Desktop {
             Ok(api) => {
                 let profile = Profile {
                     hub_url: self.hub_url.clone(),
+                    oidc_issuer: self.oidc_issuer.clone(),
+                    empfang_pubkey: self.empfang_pubkey.clone(),
+                    archiv_pubkey: self.archiv_pubkey.clone(),
                     device_name: self.device_name.clone(),
                 };
                 if let Err(e) = profile.save() {
@@ -703,6 +789,25 @@ impl Desktop {
             self.apply(reply);
         }
         self.flow_tick(ui.ctx());
+        if let Some(seminar) = &mut self.seminar {
+            // Ablauf und Netzereignisse sind unabhängig vom gerade sichtbaren Tab.
+            seminar.tick();
+            ui.ctx().request_repaint_after(Duration::from_secs(1));
+            let active = seminar
+                .state
+                .remote
+                .grants
+                .iter()
+                .any(|g| matches!(g.state, pi_net::remote::GrantState::Active { .. }));
+            if active {
+                ui.painter().rect_stroke(
+                    ui.max_rect().shrink(1.0),
+                    0.0,
+                    egui::Stroke::new(2.0, Color32::from_rgb(0x4f, 0xb8, 0xd8)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
         if let Some(id) = self.pairing_login.clone() {
             if self.pending == 0
                 && self
@@ -814,6 +919,12 @@ impl Desktop {
         }
         self.settings_ui(&ctx);
         self.dialogs(&ctx);
+        // Seminar::ui zeigt den Dialog selbst; sonst global, auch über Einstellungen.
+        if !self.seminar_selected || self.settings.is_some() || self.flow.stage != Stage::Working {
+            if let Some(seminar) = &mut self.seminar {
+                seminar.consent_ui(ui);
+            }
+        }
     }
     fn welcome(&mut self, ui: &mut Ui) {
         ui.vertical_centered(|ui| {
@@ -861,6 +972,11 @@ impl Desktop {
         });
     }
     fn main(&mut self, ui: &mut Ui) {
+        if !self.seminar_selected {
+            if let Some(seminar) = &mut self.seminar {
+                seminar.remote_bar(ui);
+            }
+        }
         egui::Panel::left("v3-sessions")
             .exact_size(360.0)
             .show(ui, |ui| {
@@ -1093,7 +1209,16 @@ impl Desktop {
                 Section::Appearance => { ui.heading("Darstellung"); ui.label("Die Oberfläche verwendet die mitgelieferten Schriften. Farben werden immer durch Zustandstext ergänzt."); }
                 Section::Speech => { ui.heading("Vorlesen"); ui.label("Vorlesen ist in dieser I1-Oberfläche noch nicht angebunden. Es wird kein Hilfsmodell gestartet."); }
                 Section::Advanced => { ui.heading("Verbindung"); ui.label("Bestätige die Hub-Adresse deiner Seminarleitung. Die Adresse wird nie still aus einem Link übernommen. Kein SSH-Bootstrap, Deployment oder automatischer Hub-Neustart."); ui.add(egui::TextEdit::singleline(&mut self.hub_url).hint_text("https://freigegebener-host"));
-                    ui.label("Name dieses Rechners"); ui.text_edit_singleline(&mut self.device_name); }
+                    ui.label("Name dieses Rechners"); ui.text_edit_singleline(&mut self.device_name);
+                    ui.separator();
+                    ui.label("Empfang · HTTPS-Issuer (mit Seminarleitung abgleichen)");
+                    ui.text_edit_singleline(&mut self.oidc_issuer);
+                    ui.label("Bestätigter Empfangsschlüssel · Base64url, 32 Byte");
+                    ui.text_edit_singleline(&mut self.empfang_pubkey);
+                    ui.label("Eigener X25519-Archivschlüssel · öffentlicher Anteil");
+                    ui.text_edit_singleline(&mut self.archiv_pubkey);
+                    ui.label("Nur den öffentlichen Schlüssel eines eigenen, gesichert verwahrten Archivschlüssels eintragen. Erzeugung und Abholfach-Entschlüsselung sind hier noch nicht angebunden. Ohne Schlüssel kein Check-in; niemals einen Empfangsschlüssel automatisch übernehmen.");
+                }
             }
             if let Some(e) = &self.error { ui.add_space(16.0); ui.label(e); }
             ui.add_space(18.0);
@@ -1233,8 +1358,24 @@ impl Desktop {
         }
     }
     fn seminar_tab(&mut self, ui: &mut Ui) {
-        ui.heading("Seminar");
-        ui.label("Hier kommen Seminar-Chat, Direktnachrichten und begleitetes Mitsteuern hin. Noch nicht verbunden; es werden keine Nachrichten geteilt.");
+        if let Some(seminar) = &mut self.seminar {
+            seminar.ui(ui);
+        } else {
+            ui.heading("Seminar");
+            ui.label("Noch nicht verbunden. Der bestätigte Geräteausweis und die Seminarverbindung werden benötigt. Es werden keine Nachrichten geteilt.");
+        }
+    }
+    /// Ausschließlich das explizit freigegebene Hub-Ziel, nie die aktuelle Auswahl.
+    pub fn send_as(&mut self, session: &str, von: pi_net::seminar::Von, text: String) {
+        if !self.connected || !self.sessions.iter().any(|s| s.id == session && !s.local) {
+            self.error = Some("Auftrag nicht gesendet: Die freigegebene R2-Session ist nicht mehr verbunden. Es wurde kein anderes Ziel verwendet.".into());
+            return;
+        }
+        self.call(Request::PromptAs {
+            session: session.into(),
+            text,
+            von,
+        });
     }
     pub fn scene(&mut self, scene: &str) {
         if !self.demo {
@@ -1247,6 +1388,7 @@ impl Desktop {
         self.flow_failed = false;
         self.flow_retry = None;
         self.seminar_selected = false;
+        self.seminar = None;
         self.guest = false;
         self.account = None;
         self.welcome_done = false;
@@ -1255,6 +1397,22 @@ impl Desktop {
         self.hybrid_dialog = false;
         self.limit = false;
         self.pairing = None;
+        if let Some(seminar) = seminar::scene(scene) {
+            // Szenen bleiben synthetisch. Kein produktiver Empfangspin aus Demo-Daten.
+            self.scene("v3-arbeiten-eingecheckt");
+            for prompt in &seminar.marked_prompts {
+                self.chat_by_session
+                    .entry("a".into())
+                    .or_default()
+                    .push(ChatMessage::new(prompt.von.label(), &prompt.text));
+            }
+            self.seminar = Some(seminar);
+            self.seminar_selected = !matches!(
+                scene,
+                "v3-mitsteuern-aktiv-student" | "v3-mitsteuern-anfrage"
+            );
+            return;
+        }
         if self.flow_scene(scene) {
             return;
         }
@@ -1306,8 +1464,14 @@ impl Desktop {
         ];
         self.selected = Some("a".into());
         self.messages = vec![
-            ChatMessage::new("Mira", "Erstelle einen Entwurf für ein zweiseitiges Seminar-Handout. Zeige zuerst die Gliederung. Nichts veröffentlichen."),
-            ChatMessage::new("cocopi · R2", "Ich bereite die Gliederung vor und prüfe das freigegebene Material. Dateien und Ergebnisse bleiben zunächst auf R2."),
+            ChatMessage::new(
+                "Mira",
+                "Erstelle einen Entwurf für ein zweiseitiges Seminar-Handout. Zeige zuerst die Gliederung. Nichts veröffentlichen.",
+            ),
+            ChatMessage::new(
+                "cocopi · R2",
+                "Ich bereite die Gliederung vor und prüfe das freigegebene Material. Dateien und Ergebnisse bleiben zunächst auf R2.",
+            ),
         ];
         match scene {
             "v3-modus" => self.settings = Some(Section::Mode),
@@ -1337,7 +1501,19 @@ impl Desktop {
 fn chat_message(ui: &mut Ui, message: &ChatMessage, id: impl std::hash::Hash + std::fmt::Debug) {
     ui.add_space(12.0);
     egui::Frame::new().inner_margin(14.0).show(ui, |ui| {
-        ui.label(RichText::new(&message.speaker).small().color(QUIET));
+        let leader = message.speaker.ends_with(" · Seminarleitung");
+        if leader {
+            ui.painter().vline(
+                ui.min_rect().left(),
+                ui.min_rect().y_range(),
+                egui::Stroke::new(3.0, Color32::from_rgb(0x4f, 0xb8, 0xd8)),
+            );
+        }
+        ui.label(RichText::new(&message.speaker).small().color(if leader {
+            Color32::from_rgb(0x4f, 0xb8, 0xd8)
+        } else {
+            QUIET
+        }));
         ui.add_space(8.0);
         md_egui::show_doc(
             ui,
@@ -1398,7 +1574,10 @@ mod tests {
             InviteError::Expired.text(),
             "Diese Einladung ist abgelaufen. Bitte deine Seminarleitung um eine neue."
         );
-        assert_eq!(InviteError::Used.text(), "Diese Einladung wurde schon benutzt. Jede Einladung gilt nur einmal. Wenn du das nicht warst, sag deiner Seminarleitung Bescheid.");
+        assert_eq!(
+            InviteError::Used.text(),
+            "Diese Einladung wurde schon benutzt. Jede Einladung gilt nur einmal. Wenn du das nicht warst, sag deiner Seminarleitung Bescheid."
+        );
         assert_eq!(
             InviteError::Unknown.text(),
             "Dieser Code passt zu keiner Einladung. Prüfe die Zeichen oder öffne den Link direkt."
@@ -1515,6 +1694,91 @@ mod tests {
             assert_eq!(d.pending, 0);
             assert_eq!(d.mode, Mode::RemoteOnly);
         }
+    }
+    #[test]
+    fn seminar_scenes_are_embedded_and_leader_prompt_is_marked_in_main_chat() {
+        for scene in [
+            "v3-seminar-chat",
+            "v3-seminar-dm",
+            "v3-mitsteuern-anfrage",
+            "v3-mitsteuern-aktiv-student",
+            "v3-mitsteuern-aktiv-leitung",
+        ] {
+            let ctx = egui::Context::default();
+            crate::setup_ctx(&ctx);
+            let mut d = Desktop::new(true);
+            d.scene(scene);
+            assert!(d.seminar.is_some(), "{scene}");
+            for _ in 0..3 {
+                assert!(!frame(&mut d, &ctx, vec![]).shapes.is_empty());
+            }
+            if scene == "v3-mitsteuern-aktiv-student" {
+                assert!(!d.seminar_selected);
+                assert!(
+                    d.chat_by_session["a"]
+                        .iter()
+                        .any(|m| m.speaker == "Aylin · Seminarleitung")
+                );
+            }
+            assert_eq!(d.pending, 0);
+        }
+    }
+    #[test]
+    fn leader_send_uses_explicit_session_not_selected_chat_and_checkout_clears_seminar() {
+        struct Echo;
+        impl DesktopApi for Echo {
+            fn call(&self, request: Request) -> Reply {
+                match request {
+                    Request::PromptAs { session, text, von } => Reply::SentAs(session, text, von),
+                    _ => panic!("wrong request"),
+                }
+            }
+        }
+        let mut d = Desktop::new(true);
+        d.scene("v3-mitsteuern-aktiv-student");
+        d.selected = Some("b".into());
+        d.demo = false;
+        d.set_api(Arc::new(Echo));
+        let prompt = seminar::HubPrompt {
+            session: pi_net::remote::SessionRef {
+                label: "not used".into(),
+                cwd: "/never/use/as/hub-id".into(),
+            },
+            text: "Gezielter Auftrag".into(),
+            von: pi_net::seminar::Von {
+                person: "Aylin".into(),
+                rolle: pi_net::ausweis::Rolle::Seminarleitung,
+            },
+        };
+        d.apply(Reply::SeminarPrompt {
+            session_id: "a".into(),
+            prompt,
+        });
+        d.apply(d.rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        assert_eq!(
+            d.chat_by_session["a"].last().unwrap().speaker,
+            "Aylin · Seminarleitung"
+        );
+        assert!(!d.chat_by_session.contains_key("b"));
+        let before = d.pending;
+        d.send_as(
+            "missing",
+            pi_net::seminar::Von {
+                person: "Aylin".into(),
+                rolle: pi_net::ausweis::Rolle::Seminarleitung,
+            },
+            "Nicht senden".into(),
+        );
+        assert_eq!(d.pending, before);
+        assert!(d.error.is_some());
+        d.flow.stage = Stage::Transfer(TransferKind::Checkout);
+        d.apply(Reply::Flow(FlowReply::CheckedOut(checkin::ReturnSummary {
+            files: 0,
+            bytes: 0,
+            conflicts: 0,
+        })));
+        assert!(d.seminar.is_none());
+        assert!(d.chat_by_session.is_empty());
     }
     #[test]
     fn send_ack_preserves_newer_edit_and_neutral_ready_has_no_marker() {
