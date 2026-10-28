@@ -39,6 +39,10 @@ impl Desktop {
                     .unwrap_or_default()
                     .join("devices"),
                 sha256: Some(flow_adapter::sha256),
+                local_root: std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_default()
+                    .join("cocopi"),
             };
             match flow_adapter::FlowAdapter::new(config) {
                 Ok(api) => self.set_api(Arc::new(api)),
@@ -92,6 +96,11 @@ impl Desktop {
         {
             if let Some(request) = self.flow.poll() {
                 self.flow_call(request);
+            }
+        }
+        if !self.demo {
+            if let Some(progress) = self.api.progress() {
+                self.flow.apply(FlowReply::Progress(progress));
             }
         }
         if self.flow_pending || self.flow.poll().is_some() {
@@ -166,6 +175,7 @@ impl Desktop {
                                 ui.add_space(8.0);
                             }
                             ui.add_space(12.0);
+                            ui.label("Große Dateien (> 200 MiB) stehen einzeln und ohne Vorauswahl in der Liste.");
                             ui.label(format!("Builds/Cache werden nicht übertragen ({})", bytes(self.flow.plan.excluded_bytes)));
                             let total: u64 = self.flow.plan.items.iter().filter(|i| i.selected).map(|i| i.bytes).sum();
                             ui.add_space(22.0);

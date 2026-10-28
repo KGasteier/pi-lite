@@ -4,6 +4,7 @@ mod checkin;
 pub mod flow_adapter;
 mod hub;
 pub mod seminar;
+mod sync_flow;
 mod sync_ui;
 pub use checkin::{AuthCallback, CancelTarget, CheckinMethod, FlowReply, MemoryApi, WaitTarget};
 use checkin::{Flow, Stage, TransferKind};
@@ -185,6 +186,12 @@ pub enum Reply {
 pub trait DesktopApi: Send + Sync {
     fn call(&self, request: Request) -> Reply;
     fn watch(&self, _tx: mpsc::Sender<Reply>) {}
+    fn seminar(&self, _sessions: &[Session]) -> Result<Option<seminar::Seminar>, String> {
+        Ok(None)
+    }
+    fn progress(&self) -> Option<checkin::Progress> {
+        None
+    }
     fn open_browser(&self, _url: &str) -> Result<(), String> {
         Err("Es gibt keine bestätigte Browseranmeldung.".into())
     }
@@ -605,8 +612,30 @@ impl Desktop {
                 if self.selected.is_none() {
                     self.selected = sessions.first().map(|s| s.id.clone());
                 }
+                let changed = self
+                    .sessions
+                    .iter()
+                    .map(|s| (&s.id, &s.title))
+                    .collect::<Vec<_>>()
+                    != sessions
+                        .iter()
+                        .map(|s| (&s.id, &s.title))
+                        .collect::<Vec<_>>();
                 self.sessions = sessions;
                 self.connected = true;
+                if !self.demo && self.flow.receipt.is_some() && (changed || self.seminar.is_none())
+                {
+                    if let Some(previous) = &mut self.seminar {
+                        previous.checkout();
+                    }
+                    self.seminar = None;
+                    match self.api.seminar(&self.sessions) {
+                        Ok(seminar) => self.seminar = seminar,
+                        Err(error) => {
+                            self.error = Some(format!("Seminar noch nicht verbunden. {error}"))
+                        }
+                    }
+                }
             }
             Reply::Limit => self.limit = true,
             Reply::Error(e) => {
@@ -806,6 +835,19 @@ impl Desktop {
                     egui::Stroke::new(2.0, Color32::from_rgb(0x4f, 0xb8, 0xd8)),
                     egui::StrokeKind::Inside,
                 );
+            }
+        }
+        if let Some(seminar) = &mut self.seminar {
+            // SlotHub hat bereits gesendet: ausschließlich markieren, NICHT erneut senden.
+            for prompt in seminar.marked_prompts.drain(..) {
+                if let Some(session) = self.sessions.iter().find(|s| {
+                    !s.local && s.id == prompt.session.cwd && s.title == prompt.session.label
+                }) {
+                    self.chat_by_session
+                        .entry(session.id.clone())
+                        .or_default()
+                        .push(ChatMessage::new(prompt.von.label(), prompt.text));
+                }
             }
         }
         if let Some(id) = self.pairing_login.clone() {
