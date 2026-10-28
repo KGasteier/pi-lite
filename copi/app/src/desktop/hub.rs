@@ -36,6 +36,16 @@ impl HubAdapter {
             }),
         }
     }
+    pub(super) fn with_hub<T>(
+        &self,
+        f: impl FnOnce(&HubV1) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let c = self
+            .connection
+            .lock()
+            .map_err(|_| "Die Slotverbindung wurde unterbrochen.")?;
+        f(&c.hub)
+    }
     fn invoke(&self, request: Request) -> Result<Reply, String> {
         let mut c = self
             .connection

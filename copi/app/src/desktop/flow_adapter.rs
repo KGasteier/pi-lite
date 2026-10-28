@@ -1,13 +1,16 @@
 //! Empfang in App-Workern. Fehlende Sync-HTTP-APIs werden nicht umgangen.
 //! Ohne bestätigten Empfangsschlüssel und eigenen Archivschlüssel kein Check-in.
-use super::{checkin::*, hub::HubAdapter, Account, DesktopApi, InviteError, Reply, Request};
-use pi_backend::hub_v1::{empfang::Empfang, oidc, DeviceKey};
-use serde_json::{json, Value};
+use super::{
+    Account, DesktopApi, InviteError, Reply, Request, checkin::*, hub::HubAdapter, sync_flow,
+};
+use pi_backend::hub_v1::{DeviceKey, empfang::Empfang, oidc};
+use serde_json::{Value, json};
 use std::{
     path::PathBuf,
     sync::{
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -29,6 +32,7 @@ pub struct Config {
     pub device_name: String,
     pub key_dir: PathBuf,
     pub sha256: Option<Sha256>,
+    pub local_root: PathBuf,
 }
 struct State {
     empfang: Empfang,
@@ -42,11 +46,17 @@ struct State {
     checkout: Option<Value>,
     cancelled: bool,
     checkin_pending: bool,
+    plan: Option<sync_flow::Plan>,
+    preview: Option<(String, Value)>,
+    ausweis: Option<Value>,
+    seminar_hub: Option<pi_backend::hub_v1::HubV1>,
 }
 pub struct FlowAdapter {
     config: Config,
     state: Mutex<State>,
     cancelled_attempt: AtomicU64,
+    transfer: sync_flow::Transfer,
+    identity: pi_net::identity::Identity,
 }
 impl FlowAdapter {
     pub fn new(config: Config) -> Result<Self, String> {
@@ -55,8 +65,12 @@ impl FlowAdapter {
         }
         let empfang = Empfang::new(&config.origin)?;
         let key = DeviceKey::at(&config.key_dir, "seminar-desktop")?;
+        let identity =
+            pi_net::identity::Identity::load_or_create(&config.key_dir.join("seminar-net.key"))?;
         Ok(Self {
             config,
+            identity,
+            transfer: sync_flow::Transfer::default(),
             cancelled_attempt: AtomicU64::new(0),
             state: Mutex::new(State {
                 empfang,
@@ -70,6 +84,10 @@ impl FlowAdapter {
                 checkout: None,
                 cancelled: false,
                 checkin_pending: false,
+                plan: None,
+                preview: None,
+                ausweis: None,
+                seminar_hub: None,
             }),
         })
     }
@@ -79,9 +97,7 @@ impl FlowAdapter {
             "geraet":{"pubkey":s.key.public_key(),"name":self.config.device_name,"art":"desktop"},
             "archiv_pubkey":self.config.archiv_pubkey,
         });
-        if !self.config.net_pubkey.is_empty() {
-            body["net_pubkey"] = json!(self.config.net_pubkey);
-        }
+        body["net_pubkey"] = json!(self.identity.peer().0);
         if s.cancelled || self.cancelled_attempt.load(Ordering::SeqCst) == s.attempt {
             return Ok(FlowReply::Cancelled);
         }
@@ -103,6 +119,7 @@ impl FlowAdapter {
         }
         s.empfang
             .uebernehmen(&result, &mut s.key, &self.config.empfang_pubkey, now_ms())?;
+        s.ausweis = Some(result["geraeteausweis"].clone());
         let id = field(&result, "checkin_id")?;
         let slot = field(&result, "slot")?;
         let account = Account {
@@ -138,6 +155,12 @@ impl FlowAdapter {
             self.config.origin.trim_end_matches('/')
         ))?;
         hub.login(&s.key)?;
+        let mut seminar_hub = pi_backend::hub_v1::HubV1::new(&format!(
+            "{}/slot/{slot}",
+            self.config.origin.trim_end_matches('/')
+        ))?;
+        seminar_hub.login(&s.key)?;
+        s.seminar_hub = Some(seminar_hub);
         let key = DeviceKey::at(&self.config.key_dir, "seminar-desktop")?;
         s.hub = Some(Arc::new(HubAdapter::authenticated(
             hub,
@@ -149,6 +172,11 @@ impl FlowAdapter {
     fn invoke(&self, request: Request) -> Result<Reply, String> {
         // Muss auch während eines blockierenden Check-in-HTTP-Aufrufs greifen.
         if let Request::CancelFlow(target) = &request {
+            if !target.abandon_checkin && self.transfer.progress().is_some() {
+                self.transfer.cancel.store(true, Ordering::SeqCst);
+                // Kein Mutex-Warten hinter einem HTTP-Stream und kein Checkout beim Transferabbruch.
+                return Ok(Reply::Flow(FlowReply::Cancelled));
+            }
             self.cancelled_attempt
                 .store(target.attempt, Ordering::SeqCst);
         }
@@ -275,7 +303,10 @@ impl FlowAdapter {
             }
             Request::SyncPlan(id) => {
                 require_receipt(&s, &id)?;
-                return Err("Die App bindet pi-sync noch nicht ein. Es wurde keine Dateiauswahl erfunden und nichts übertragen.".into());
+                let plan = sync_flow::Plan::new(&self.config.local_root)?;
+                let reply = plan.ui();
+                s.plan = Some(plan);
+                FlowReply::Plan(reply)
             }
             Request::Upload {
                 checkin_id,
@@ -288,14 +319,26 @@ impl FlowAdapter {
                 {
                     return Err("Kein Upload: abgebrochen oder keine bestätigte Auswahl.".into());
                 }
-                return Err(
-                    "HubV1 bietet noch keinen Streaming-Sync-Upload. Es wurde nichts übertragen."
-                        .into(),
-                );
+                let plan = s
+                    .plan
+                    .as_ref()
+                    .ok_or("Prüfe zuerst die lokale Dateiauswahl.")?;
+                let hub = s.hub.as_ref().ok_or("Die Slotverbindung fehlt.")?;
+                self.transfer.begin(TransferKind::Upload, &checkin_id, 0);
+                let result =
+                    hub.with_hub(|h| plan.upload(h, &checkin_id, &selection, &self.transfer));
+                self.transfer.end();
+                result?;
+                FlowReply::Uploaded
             }
             Request::CheckoutPreview(id) => {
                 require_receipt(&s, &id)?;
-                return Err("HubV1 bietet noch keine Sync-Vorschau. Ohne aktuelle Vorschau wird kein Rückgabe-Archiv bestätigt.".into());
+                let hub = s.hub.as_ref().ok_or("Die Slotverbindung fehlt.")?;
+                let value = hub.with_hub(|h| h.sync_http(sync_flow::hash).vorschau())?;
+                let preview_id = format!("vorschau-{}", now_ms());
+                let preview = sync_flow::preview(&value, preview_id.clone())?;
+                s.preview = Some((preview_id, value));
+                FlowReply::Preview(preview)
             }
             Request::Checkout {
                 checkin_id,
@@ -305,7 +348,56 @@ impl FlowAdapter {
                 if preview_id.is_empty() {
                     return Err("Die bestätigte Rückgabevorschau fehlt.".into());
                 }
-                return Err("Archivdownload und pi-sync-Import fehlen in dieser App. Es wird ausdrücklich kein erhalten gesendet und kein Platz gelöscht.".into());
+                let (current, preview) = s
+                    .preview
+                    .as_ref()
+                    .ok_or("Prüfe zuerst die Rückgabevorschau.")?;
+                if current != &preview_id {
+                    return Err("Diese Rückgabevorschau ist veraltet.".into());
+                }
+                if preview["gross"].as_array().is_some_and(|a| !a.is_empty()) {
+                    return Err("Auf R2 liegen große Dateien. Ihre sichere Rückgabe braucht eine zusätzliche Bestätigung, die dieser Empfang-Client noch nicht unterstützt. Der Arbeitsplatz bleibt belegt; es wird nichts gelöscht.".into());
+                }
+                self.transfer.begin(TransferKind::Checkout, &checkin_id, 0);
+                // Empfang baut das autoritative Archiv; kein zweites, abweichendes Clientarchiv.
+                let meta = match &s.checkout {
+                    Some(v) => v.clone(),
+                    None => s.empfang.checkout(&checkin_id)?,
+                };
+                s.checkout = Some(meta.clone());
+                if meta["typ"] == "ausgecheckt" {
+                    self.transfer.end();
+                    s.receipt = None;
+                    s.hub = None;
+                    s.preview = None;
+                    return Ok(Reply::Flow(FlowReply::CheckedOut(ReturnSummary {
+                        files: 0,
+                        bytes: 0,
+                        conflicts: 0,
+                    })));
+                }
+                let folder = pi_sync::LocalFolder::create(&self.config.local_root)
+                    .map_err(|e| e.to_string())?;
+                let hub = s.hub.as_ref().ok_or("Die Slotverbindung fehlt.")?;
+                let imported =
+                    hub.with_hub(|h| sync_flow::receive(&folder, h, &meta, &self.transfer));
+                self.transfer.end();
+                let summary = imported?;
+                self.transfer.check()?;
+                let confirmed = s
+                    .empfang
+                    .erhalten(&field(&meta, "checkout_id")?, &field(&meta, "sha256")?)?;
+                if confirmed["typ"] != "ausgecheckt" {
+                    return Err("Der Empfang hat die Leerung noch nicht bestätigt.".into());
+                }
+                sync_flow::journal(
+                    &folder,
+                    json!({"ereignis":"ausgecheckt","checkin_id":checkin_id,"sha256":meta["sha256"]}),
+                )?;
+                s.receipt = None;
+                s.hub = None;
+                s.preview = None;
+                FlowReply::CheckedOut(summary)
             }
             Request::Collect {
                 checkin_id,
@@ -324,13 +416,75 @@ impl FlowAdapter {
             other => {
                 let hub = s.hub.clone().ok_or("Du bist noch nicht eingecheckt.")?;
                 drop(s);
-                return Ok(hub.call(other));
+                let reply = hub.call(other);
+                // Auf dem Worker anmelden, nie auf dem UI-Thread. Neuer expliziter
+                // Sessionbestand bekommt eine frische, gleich gebundene Runtime.
+                if matches!(&reply, Reply::Sessions(_) | Reply::Opened(_, _)) {
+                    let mut s = self
+                        .state
+                        .lock()
+                        .map_err(|_| "Die Seminarverbindung wurde unterbrochen.")?;
+                    if s.seminar_hub.is_none() {
+                        if let Some(receipt) = &s.receipt {
+                            let mut h = pi_backend::hub_v1::HubV1::new(&format!(
+                                "{}/slot/{}",
+                                self.config.origin.trim_end_matches('/'),
+                                receipt.account.slot
+                            ))?;
+                            h.login(&s.key)?;
+                            s.seminar_hub = Some(h);
+                        }
+                    }
+                }
+                return Ok(reply);
             }
         };
         Ok(Reply::Flow(reply))
     }
 }
 impl DesktopApi for FlowAdapter {
+    fn progress(&self) -> Option<Progress> {
+        self.transfer.progress()
+    }
+    fn seminar(
+        &self,
+        sessions: &[super::Session],
+    ) -> Result<Option<super::seminar::Seminar>, String> {
+        let mut s = self
+            .state
+            .lock()
+            .map_err(|_| "Die Seminaranmeldung wurde unterbrochen.")?;
+        let receipt = s.receipt.as_ref().ok_or("Du bist nicht eingecheckt.")?;
+        let ausweis = serde_json::from_value(s.ausweis.clone().ok_or("Der Geräteausweis fehlt.")?)
+            .map_err(|e| format!("Der Geräteausweis ist ungültig: {e}"))?;
+        let identity = pi_net::identity::Identity {
+            secret: self.identity.secret.clone(),
+        };
+        let state = super::seminar::SeminarState::new(
+            identity.peer(),
+            &receipt.account.person,
+            self.config.empfang_pubkey.clone(),
+            pi_net::model::SpaceId("seminar".into()),
+        );
+        let hub = s
+            .seminar_hub
+            .take()
+            .ok_or("Die Seminarverbindung wird noch vorbereitet.")?;
+        let own = sessions
+            .iter()
+            .filter(|s| !s.local)
+            .map(|s| {
+                (
+                    pi_net::remote::SessionRef {
+                        label: s.title.clone(),
+                        cwd: s.id.clone(),
+                    },
+                    s.id.clone(),
+                )
+            })
+            .collect();
+        super::seminar::production(state, identity, ausweis, hub, own).map(Some)
+    }
     fn open_browser(&self, url: &str) -> Result<(), String> {
         validate_browser_url(&self.config.issuer, url)?;
         let s = self
@@ -424,6 +578,9 @@ mod tests {
     }
     impl Fixture {
         fn start() -> Option<Self> {
+            Self::start_mode(false)
+        }
+        fn start_mode(real_sync: bool) -> Option<Self> {
             if Command::new("node").arg("--version").output().is_err() {
                 eprintln!("SKIP: node fehlt; Empfang/Fake-OIDC nicht gestartet.");
                 return None;
@@ -445,7 +602,7 @@ mod tests {
             let script = r#"
 import fs from 'node:fs'; import path from 'node:path'; import http from 'node:http';
 import crypto from 'node:crypto'; import {pathToFileURL} from 'node:url';
-const [source,root]=process.argv.slice(1);
+const [source,root,mode]=process.argv.slice(1);
 const {createEmpfang}=await import(pathToFileURL(path.join(source,'empfang/empfang.mjs')));
 const {Oidc}=await import(pathToFileURL(path.join(source,'empfang/oidc.mjs')));
 const {createFakeOidc}=await import(pathToFileURL(path.join(source,'empfang/test/fake-oidc.mjs')));
@@ -463,12 +620,23 @@ origin='http://127.0.0.1:'+server.address().port;
 const work=path.join(root,'home/arbeit'); fs.mkdirSync(work,{recursive:true,mode:0o700});
 const calls=[];
 fs.mkdirSync(path.join(root,'epochen'),{recursive:true}); fs.writeFileSync(path.join(root,'epochen/account01.epoche'),'0\n');
-reception=createEmpfang({dir:path.join(root,'empfang'),origin,slots:{account01:origin},epochenDir:path.join(root,'epochen'),
+reception=createEmpfang({dir:path.join(root,'empfang'),origin,slots:{account01:mode==='sync'?origin+'/slot/account01':origin},epochenDir:path.join(root,'epochen'),
  oidc:new Oidc({issuer:fake.issuer,clientId:fake.clientId,allowHttp:true}),
- adapter:{register:async(_slot,belegung)=>{ if(fs.existsSync(path.join(root,'delay'))){fs.writeFileSync(path.join(root,'registering'),'yes');await new Promise(resolve=>setTimeout(resolve,200));} const response=await fetch(origin+'/slot/account01/v1/belegung',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({protokoll:1,belegung})}); if(!response.ok)throw Error('register'); },
+ adapter:mode==='sync'?undefined:{register:async(_slot,belegung)=>{ if(fs.existsSync(path.join(root,'delay'))){fs.writeFileSync(path.join(root,'registering'),'yes');await new Promise(resolve=>setTimeout(resolve,200));} const response=await fetch(origin+'/slot/account01/v1/belegung',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({protokoll:1,belegung})}); if(!response.ok)throw Error('register'); },
  release:async()=>{throw Error('Freigabe ohne Import verboten');},
  archive:async()=>{calls.push('archiv');fs.writeFileSync(path.join(root,'calls.json'),JSON.stringify(calls));return {archiv_id:crypto.randomUUID(),sha256:'a'.repeat(64),bytes:0};}},
- clearSlot:async()=>{throw Error('Echtes Leeren verboten');}});
+ clearSlot:async(_slot,action)=>{
+   if(mode!=='sync')throw Error('Echtes Leeren verboten');
+   const local=path.join(root,'local-e2e/Projekte/Buch');
+   if(!fs.existsSync(path.join(root,'empty-checkout'))) {
+     const conflicts=fs.readdirSync(local).filter(n=>/^text \(R2 \d\d\.\d\d\. \d\d-\d\d\)\.md$/.test(n));
+     if(conflicts.length!==1||fs.readFileSync(path.join(local,'text.md'),'utf8')!=='lokal unverändert')throw Error('Import nicht nachgewiesen');
+     if(fs.readFileSync(path.join(local,conflicts[0]),'utf8')!=='R2 geändert')throw Error('Konfliktfassung fehlt');
+   }
+   calls.push(action);fs.writeFileSync(path.join(root,'calls.json'),JSON.stringify(calls));
+   if(action==='leeren')for(const p of [work,path.join(root,'home/.pi')]){fs.rmSync(p,{recursive:true,force:true});fs.mkdirSync(p,{recursive:true});}
+   if(action==='pruefen')fs.writeFileSync(path.join(root,'pool-frei'),'bestätigt');
+ }});
 hub=createV1({dir:path.join(root,'hub'),slot:'account01',hubUrl:origin,roots:[work],inRoots:p=>p===work?p:null,
  empfangPubkey:reception.ausweis.pubkey,epochFile:path.join(root,'epochen/account01.epoche'),createInstance:()=>{throw Error('Modellstart verboten');}});
 const codes=['test-invitation-one','test-invitation-two'];
@@ -482,6 +650,7 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
                 .args(["--input-type=module", "-e", script])
                 .arg(source)
                 .arg(&root)
+                .arg(if real_sync { "sync" } else { "legacy" })
                 .env("HOME", root.join("home"))
                 .env_remove("HUB_EMPFANG_PUBKEY")
                 .stdout(Stdio::piped())
@@ -510,7 +679,8 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
                 net_pubkey: String::new(),
                 device_name: name.into(),
                 key_dir: self.root.join(name),
-                sha256: None,
+                sha256: Some(sha256),
+                local_root: self.root.join(format!("local-{name}")),
             })
             .unwrap()
         }
@@ -532,7 +702,7 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         assert!(matches!(first.call(Request::Sessions), Reply::Sessions(_)));
         assert!(matches!(
             first.call(Request::SyncPlan(receipt.checkin_id.clone())),
-            Reply::Error(_)
+            Reply::Flow(FlowReply::Plan(_))
         ));
         assert!(matches!(
             first.call(Request::Upload {
@@ -632,9 +802,11 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
             state.receipt.is_some(),
             "No fake release without server confirmation"
         );
-        assert!(std::fs::read_to_string(f.root.join("calls.json"))
-            .unwrap()
-            .contains("archiv"));
+        assert!(
+            std::fs::read_to_string(f.root.join("calls.json"))
+                .unwrap()
+                .contains("archiv")
+        );
     }
     #[test]
     fn ambiguous_checkin_never_retries_or_claims_cancelled() {
@@ -668,6 +840,140 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
             Reply::Error(_)
         ));
         assert!(adapter.state.lock().unwrap().receipt.is_none());
+    }
+    #[test]
+    fn local_node_end_to_end_upload_conflict_import_then_release() {
+        let f = Fixture::start_mode(true).expect("Node-Fixture erforderlich");
+        let root = f.root.join("local-e2e");
+        let folder = pi_sync::LocalFolder::create(&root).unwrap();
+        let book = root.join("Projekte/Buch");
+        std::fs::create_dir(&book).unwrap();
+        for (name, content) in [
+            ("text.md", "lokal unverändert"),
+            ("skizze.svg", "<svg/>"),
+            ("notiz.md", "Notiz"),
+        ] {
+            std::fs::write(book.join(name), content).unwrap();
+        }
+        let big = std::fs::File::create(book.join("film.mp4")).unwrap();
+        big.set_len(201 * 1024 * 1024).unwrap();
+        let mut adapter = f.adapter("e2e");
+        adapter.config.local_root = root.clone();
+        let reply = adapter.call(Request::Checkin {
+            attempt: 1,
+            method: CheckinMethod::Guest("test-invitation-one".into()),
+        });
+        let Reply::Flow(FlowReply::CheckedIn(receipt)) = reply else {
+            panic!("{reply:?}")
+        };
+        let Reply::Flow(FlowReply::Plan(plan)) =
+            adapter.call(Request::SyncPlan(receipt.checkin_id.clone()))
+        else {
+            panic!("Plan fehlt")
+        };
+        assert!(
+            plan.items
+                .iter()
+                .any(|i| i.name.contains("film.mp4") && !i.selected)
+        );
+        assert!(
+            plan.items.iter().all(|i| !i.selected),
+            "Kein zuletzt gewähltes Projekt: nichts vorausgewählt"
+        );
+        let id = plan
+            .items
+            .iter()
+            .find(|i| i.name == "Projekte / Buch")
+            .unwrap()
+            .id
+            .clone();
+        let uploaded = adapter.call(Request::Upload {
+            checkin_id: receipt.checkin_id.clone(),
+            selection: vec![id],
+        });
+        assert!(
+            matches!(uploaded, Reply::Flow(FlowReply::Uploaded)),
+            "{uploaded:?}"
+        );
+        let remote = f.root.join("home/arbeit/Projekte/Buch");
+        assert!(!remote.join("film.mp4").exists());
+        assert_eq!(std::fs::read_dir(&remote).unwrap().count(), 3);
+        std::fs::write(remote.join("text.md"), "R2 geändert").unwrap();
+        let Reply::Flow(FlowReply::Preview(preview)) =
+            adapter.call(Request::CheckoutPreview(receipt.checkin_id.clone()))
+        else {
+            panic!("Vorschau fehlt")
+        };
+        assert_eq!(
+            preview.personal.len(),
+            1,
+            "Unveränderte Uploads kommen nicht zurück"
+        );
+        let reply = adapter.call(Request::Checkout {
+            checkin_id: receipt.checkin_id.clone(),
+            preview_id: preview.id,
+        });
+        let Reply::Flow(FlowReply::CheckedOut(summary)) = reply else {
+            panic!("{reply:?}")
+        };
+        assert_eq!(summary.conflicts, 1);
+        assert_eq!(
+            std::fs::read_to_string(book.join("text.md")).unwrap(),
+            "lokal unverändert"
+        );
+        assert!(
+            f.root.join("pool-frei").exists(),
+            "Leeren-Fixture prüft Import vor Freigabe"
+        );
+        assert!(adapter.state.lock().unwrap().receipt.is_none());
+        let journal = std::fs::read_to_string(folder.root.join(".sync/protokoll.jsonl")).unwrap();
+        let events: Vec<Value> = journal
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(
+            events
+                .iter()
+                .map(|v| v["ereignis"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["hochgeladen", "importiert", "ausgecheckt"]
+        );
+        assert!(
+            std::fs::read_dir(root.join(".sync/archiv"))
+                .unwrap()
+                .next()
+                .is_some()
+        );
+    }
+    #[test]
+    fn local_node_empty_checkout_handles_n6_without_archive() {
+        let f = Fixture::start_mode(true).unwrap();
+        std::fs::write(f.root.join("empty-checkout"), b"yes").unwrap();
+        let adapter = f.adapter("empty");
+        let Reply::Flow(FlowReply::CheckedIn(receipt)) = adapter.call(Request::Checkin {
+            attempt: 1,
+            method: CheckinMethod::Guest("test-invitation-one".into()),
+        }) else {
+            panic!("Check-in fehlt")
+        };
+        let Reply::Flow(FlowReply::Preview(p)) =
+            adapter.call(Request::CheckoutPreview(receipt.checkin_id.clone()))
+        else {
+            panic!("Vorschau fehlt")
+        };
+        let reply = adapter.call(Request::Checkout {
+            checkin_id: receipt.checkin_id,
+            preview_id: p.id,
+        });
+        assert!(
+            matches!(
+                reply,
+                Reply::Flow(FlowReply::CheckedOut(ReturnSummary { files: 0, .. }))
+            ),
+            "{reply:?}"
+        );
+        assert!(f.root.join("pool-frei").exists());
+        assert!(adapter.state.lock().unwrap().checkout.as_ref().unwrap()["typ"] == "ausgecheckt");
     }
     #[test]
     fn local_fake_oidc_proof_is_verified_by_real_empfang() {
