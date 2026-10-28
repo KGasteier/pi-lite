@@ -147,12 +147,62 @@ set -- --slots account01,account02
             for line in (f'HUB_SLOT=account{n:02}', 'HUB_MAX_OPEN_SESSIONS=2',
                          'HUB_MAX_ACTIVE_SESSIONS=1', 'HUB_GLOBAL_HEAVY_JOBS=1',
                          f'HUB_STATE=/home/account{n:02}/.cocopi-hub',
+                         f'HUB_EPOCHE_DATEI=/var/lib/cocopi/slots/account{n:02}.epoche',
                          f'HUB_ROOTS=/home/account{n:02}/arbeit',
                          'HUB_EMPFANG_PUBKEY=BITTE_EINTRAGEN'):
                 self.assertIn(line, env_lines)
             self.assertIn(f'PLAN: bei neuem Konto Skelett /etc/cocopi/skel als account{n:02}', result.stdout)
         self.assertNotIn('HUB_STATE=off', result.stdout)
+        preflight = body[:body.index('\n\nif [[ $MODE == apply')]
+        self.assertIn('python3 "$BASE/epoch-read.py" "$SLOT" >/dev/null', preflight)
         self.assertFalse(self.sentinel.exists())
+
+    def test_empfang_env_matches_s7_names_without_shell_evaluation(self):
+        checker = load('empfang-env-check')
+        text = (BASE / 'empfang.env.example').read_text().replace('cocopi.example.invalid', 'seminar.example.org').replace('auth.example.invalid', 'auth.example.org').replace('BITTE_EINTRAGEN', 'public-client')
+        checker.validate(text, 'account01,account02')
+        for bad in (text.replace('EMPFANG_STATE=', 'EMPFANG_STATE_DIR='),
+                    text.replace('/var/lib/cocopi/slots', '/home/account01'),
+                    text.replace('EMPFANG_OIDC_ISSUER=https:', 'EMPFANG_OIDC_ISSUER=http:'),
+                    text.replace('public-client', '$(touch /tmp/nie)'),
+                    text + '\nEMPFANG_PORT=8801\n',
+                    text.replace('account01,account02', 'account01..account10')):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                checker.validate(bad, 'account01,account02')
+        self.assertFalse(self.sentinel.exists())
+
+    def test_epoch_reader_checks_numeric_value_rights_and_links(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        reader = load('epoch-read')
+        root = Path(self.temp.name)
+        parent = root / 'var/lib/cocopi/slots'
+        parent.mkdir(parents=True)
+        for path in (root / 'var', root / 'var/lib', root / 'var/lib/cocopi', parent):
+            path.chmod(0o755)
+        epoch = parent / 'account01.epoche'
+        epoch.write_text('42\n')
+        epoch.chmod(0o644)
+        real_fstat = reader.os.fstat
+        def root_stat(fd):
+            info = real_fstat(fd)
+            return SimpleNamespace(st_uid=0, st_mode=info.st_mode, st_nlink=info.st_nlink)
+        with patch.object(reader.os, 'fstat', root_stat):
+            self.assertEqual(reader.read_epoch('account01', str(root)), 42)
+            for value in ('01', '-1', '9007199254740992', '42\n43', ''):
+                epoch.write_text(value)
+                with self.assertRaises(ValueError):
+                    reader.read_epoch('account01', str(root))
+            epoch.write_text('42\n')
+            epoch.chmod(0o666)
+            with self.assertRaises(ValueError):
+                reader.read_epoch('account01', str(root))
+            epoch.unlink()
+            epoch.symlink_to('/nonexistent-cocopi-epoch')
+            with self.assertRaises(OSError):
+                reader.read_epoch('account01', str(root))
+        with self.assertRaises(ValueError):
+            reader.read_epoch('../account01', str(root))
 
     def test_pool_projection_rejects_stale_incomplete_and_personal_fields(self):
         import copy
@@ -191,9 +241,40 @@ set -- --slots account01,account02
                  patch.object(checker.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, code, b'')):
                 self.assertEqual(checker.main(), 1)
 
+    def test_proxy_templates_block_n5_before_routing(self):
+        import re
+        routes = (BASE / 'proxy/routes.caddy').read_text()
+        for name in ('intern', 'dienst'):
+            pattern = re.search(r'@' + name + r' path_regexp \w+ (.+)', routes).group(1)
+            first_route = routes.index('handle /v1/empfang/')
+            self.assertLess(routes.index('respond @' + name + ' "Nur intern" 403'), first_route)
+            for prefix in ('', *(f'/slot/account{n:02}' for n in range(1, 11))):
+                paths = ('/v1/belegung', '/v1/freigabe') if name == 'intern' else ('/v1/sync/dienst', '/v1/sync/dienst/archiv/abc')
+                for path in paths:
+                    for suffix in ('', '/'):
+                        self.assertIsNotNone(re.fullmatch(pattern, prefix + path + suffix))
+            for path in ('/v1/empfang/hallo', '/slot/account01/v1/sync/hoch', '/slot/account10/v1/anmelden'):
+                self.assertIsNone(re.fullmatch(pattern, path))
+        self.assertLess(routes.index('respond @unsicher'), routes.index('handle /v1/empfang/'))
+        for variant in ('Caddyfile', 'Caddyfile.tailscale'):
+            text = (BASE / 'proxy' / variant).read_text()
+            self.assertIn('import /etc/cocopi/proxy/routes.caddy', text)
+            self.assertNotIn('reverse_proxy', text)
+        local = (BASE / 'proxy/Caddyfile.tailscale').read_text()
+        self.assertIn('http://127.0.0.1:8799', local)
+        self.assertIn('bind 127.0.0.1', local)
+        serve = (BASE / 'proxy/tailscale-serve.sh').read_text()
+        commands = [line.strip() for line in serve.splitlines() if line.strip().startswith('tailscale ')]
+        self.assertEqual(commands, ['tailscale serve --bg --https=443 http://127.0.0.1:8799'])
+        for n in range(1, 11):
+            self.assertIn(f'handle /slot/account{n:02}/v1/*', routes)
+            self.assertIn(f'reverse_proxy 127.0.0.1:{8800+n}', routes)
+
     def test_system_units_and_sudoers_have_narrow_contract(self):
         hub = (BASE / 'systemd/cocopi-hub@.service').read_text()
         reception = (BASE / 'systemd/cocopi-empfang.service').read_text()
+        self.assertIn('Environment=HUB_EPOCHE_DATEI=/var/lib/cocopi/slots/%i.epoche', hub)
+        self.assertIn('EMPFANG_EPOCHEN_DIR=/var/lib/cocopi/slots', (BASE / 'empfang.env.example').read_text())
         for text in ('User=%i', 'Slice=cocopi-%i.slice', 'EnvironmentFile=/etc/cocopi/hub-%i.env', 'KillMode=control-group'):
             self.assertIn(text, hub)
         for text in ('User=cocopi-empfang', 'StateDirectory=cocopi-empfang', 'StateDirectoryMode=0700', '/empfang/empfang.mjs'):
@@ -317,7 +398,7 @@ check_mounts
         self.assertEqual(result.returncode, 0, result.stderr)
         for title in ('Konto', 'Eingerichtet', 'Verbindung', 'Zugang', 'Speicher', 'Letzte Aktivität'):
             self.assertIn(title, result.stdout)
-        self.assertEqual(result.stdout.count('nicht geprueft'), 10)
+        self.assertEqual(result.stdout.count('nicht geprueft'), 12)
         self.assertIn('kein Anwesenheitsnachweis', result.stdout)
         self.assertNotIn('OK:', result.stdout)
 
@@ -341,6 +422,7 @@ assert_account() { return 0; }
 user_systemctl() { return 97; }
 hub_systemctl() { [[ $* == 'is-active --quiet cocopi-hub@account01.service' ]]; }
 pool_checks() { :; }
+python3() { [[ $1 == */epoch-read.py ]] && printf '7\n'; }
 hub_loopback() { [[ $SLOT == account01 ]]; }
 quota_usage() { printf '%s' '1.00/10.00 GB'; }
 '''
@@ -357,6 +439,7 @@ quota_usage() { printf '%s' '1.00/10.00 GB'; }
         self.assertIn('vorhanden', rows[0])
         self.assertIn('aktiv', rows[0])
         self.assertIn('nur lokal', rows[0])
+        self.assertIn('7', rows[0])
         self.assertIn('NVMe 1.00/10.00 GB; SATA 1.00/10.00 GB', rows[0])
         self.assertTrue(rows[0].endswith('unbekannt'))
         self.assertIn('nicht aktiv', rows[1])
@@ -376,6 +459,11 @@ quota_usage() { printf '%s' '1.00/10.00 GB'; }
                 self.assertEqual(result.returncode, 1, result.stderr)
                 rows = [line for line in result.stdout.splitlines() if line.startswith('account')]
                 self.assertIn(expected, rows[0])
+
+    def test_admin_missing_epoch_is_not_green(self):
+        result = self.admin_fixture('hub_systemctl() { return 0; }; hub_loopback() { return 0; }; python3() { return 1; };\n')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('bitte pruefen', result.stdout)
 
     def test_admin_fixture_all_observed_checks_pass(self):
         result = self.admin_fixture('hub_systemctl() { return 0; }; hub_loopback() { return 0; };\n')
@@ -475,8 +563,12 @@ class SlotctlTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         for path in ('home/account01', 'mnt/data/account01', 'etc/cocopi/skel/arbeit/Projekte',
                      'etc/cocopi/skel/arbeit/Ergebnisse', 'etc/cocopi/skel/.pi/agent/skills',
-                     'etc/cocopi/skel/.pi/agent/sessions', 'var/lib/cocopi-slots', 'run'):
+                     'etc/cocopi/skel/.pi/agent/sessions', 'var/lib/cocopi-slots',
+                     'var/lib/cocopi/slots', 'run'):
             (self.root / path).mkdir(parents=True, exist_ok=True)
+        epoch = self.root / 'var/lib/cocopi/slots/account01.epoche'
+        epoch.write_text('0\n')
+        epoch.chmod(0o644)
         (self.root / 'etc/cocopi/skel/.profile').write_text('umask 077\n')
         self.fixture()
         self.env = dict(os.environ, COCOPI_ROOT=str(self.root), HOME=str(self.root),
@@ -499,6 +591,7 @@ class SlotctlTests(unittest.TestCase):
         self.assertIn('nicht_geprueft', result.stdout)
         self.assertEqual(secret.read_text(), 'synthetisch')
         self.assertFalse((self.root / 'var/lib/cocopi-slots/pool.lock').exists())
+        self.assertEqual((self.root / 'var/lib/cocopi/slots/account01.epoche').read_text(), '0\n')
 
     def test_clear_proof_and_repeat_are_idempotent(self):
         import json
@@ -508,10 +601,53 @@ class SlotctlTests(unittest.TestCase):
         self.assertEqual(result['zustand'], 'leer')
         self.assertGreaterEqual(result['bytes_geloescht'], 100)
         self.assertEqual(result['nachweis'], 'vor_hubstart')
+        self.assertEqual(result['epoche'], 1)
         self.run_slot('pruefen', 'account01')
         self.run_slot('--ausfuehren', 'leeren', 'account01')
+        epoch = self.root / 'var/lib/cocopi/slots/account01.epoche'
+        self.assertEqual(epoch.read_text(), '2\n')
+        self.assertEqual(epoch.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(list(epoch.parent.iterdir()), [epoch])
         self.assertEqual(list((self.root / 'mnt/data/account01').iterdir()), [])
         self.assertTrue((self.root / 'home/account01/arbeit/Ergebnisse').is_dir())
+
+    def test_epoch_replacement_is_atomic_for_existing_readers(self):
+        epoch = self.root / 'var/lib/cocopi/slots/account01.epoche'
+        with epoch.open() as old:
+            before = os.fstat(old.fileno()).st_ino
+            self.run_slot('--ausfuehren', 'leeren', 'account01')
+            self.assertEqual(old.read(), '0\n')
+            self.assertEqual(epoch.read_text(), '1\n')
+            self.assertNotEqual(epoch.stat().st_ino, before)
+
+    def test_epoch_is_mandatory_and_malformed_values_block_before_deletion(self):
+        epoch = self.root / 'var/lib/cocopi/slots/account01.epoche'
+        survivor = self.root / 'home/account01/bleibt'
+        survivor.write_text('synthetisch')
+        for text in ('-1', '01', '1.5', '1\n2', '9007199254740991', '9007199254740992', '9' * 40, ''):
+            epoch.write_text(text)
+            self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+            self.assertTrue(survivor.exists())
+        epoch.unlink()
+        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+        self.assertTrue(survivor.exists())
+        epoch.symlink_to(survivor)
+        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+        self.assertEqual(survivor.read_text(), 'synthetisch')
+
+    def test_epoch_unsafe_mode_and_hardlink_rejected(self):
+        epoch = self.root / 'var/lib/cocopi/slots/account01.epoche'
+        epoch.chmod(0o666)
+        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+        epoch.chmod(0o644)
+        os.link(epoch, epoch.parent / 'hardlink')
+        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+
+    def test_failed_clear_never_rolls_back_epoch(self):
+        self.fixture(quota_bytes=1048577)
+        self.run_slot('--ausfuehren', 'leeren', 'account01', success=False)
+        self.assertEqual((self.root / 'var/lib/cocopi/slots/account01.epoche').read_text(), '1\n')
+        self.assertFalse((self.root / 'var/lib/cocopi-slots/account01.leer.json').exists())
 
     def test_slot_traversal_and_additional_commands_rejected(self):
         for slot in ('../', '../account01', 'account00', 'account11', 'account01/..',

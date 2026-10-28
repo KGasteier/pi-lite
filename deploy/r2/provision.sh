@@ -29,6 +29,7 @@ preflight() {
             [[ $(loginctl show-user "$USER_NAME" -p Linger --value 2>/dev/null || true) != yes ]] || fail "Linger für $SLOT aktiv; Migration separat nötig."
             [[ ! -e /mnt/data/cocopi/$SLOT ]] || fail "Alter I1-Datenpfad für $SLOT vorhanden."
             [[ -f $STATE_BASE/$SLOT.uid && $(< "$STATE_BASE/$SLOT.uid") == "$UID_NUM" ]] || fail "UID-Inventar für $SLOT fehlt / weicht ab. Keine Übernahme fremder Konten."
+            python3 "$BASE/epoch-read.py" "$SLOT" >/dev/null || fail "Epoche für $SLOT fehlt / unsicher; Migration vor allen Änderungen klären."
         else
             [[ ! -e $SLOT_HOME && ! -L $SLOT_HOME && ! -e $SLOT_DATA && ! -L $SLOT_DATA ]] || fail "Verwaiste Slotpfade bei $SLOT; erst Recovery prüfen."
             [[ ! -e $STATE_BASE/$SLOT.uid ]] || fail "Inventar für gelöschten Slot $SLOT vorhanden. Erst Rückbau / Wiedervergabe abschließen."
@@ -62,6 +63,9 @@ if ! getent group "$SLOT_GROUP" >/dev/null; then
 fi
 managed_dir "$DATA_BASE" 755 root root
 managed_dir /etc/cocopi/slots 755 root root
+# Öffentlich lesbare Zähler; nur root darf sie erhöhen. Nie beim Wiederlauf nullen.
+managed_dir /var/lib/cocopi 755 root root
+managed_dir /var/lib/cocopi/slots 755 root root
 managed_dir /usr/local/libexec 755 root root
 managed_dir /etc/systemd/system 755 root root
 managed_dir /etc/sudoers.d 750 root root
@@ -145,6 +149,13 @@ SLICE
         quota_matches "$NVME_MOUNT" "$NVME_QUOTA_KIB" "$NVME_INODES" || fail "NVMe-Quote für $SLOT nach Setzen nicht bestätigt. Kein Dienststart."
         quota_matches "$DATA_MOUNT" "$DATA_QUOTA_KIB" "$DATA_INODES" || fail "SATA-Quote für $SLOT nach Setzen nicht bestätigt. Kein Dienststart."
     fi
+    if [[ $MODE == dry-run ]]; then
+        note "PLAN: /var/lib/cocopi/slots/$SLOT.epoche root:root 0644; nur bei neuem Konto atomar mit 0 anlegen, sonst prüfen"
+    elif [[ ! -e /var/lib/cocopi/slots/$SLOT.epoche && ! -L /var/lib/cocopi/slots/$SLOT.epoche && $NEW_ACCOUNT == true ]]; then
+        managed_file "/var/lib/cocopi/slots/$SLOT.epoche" 644 root root <<< 0
+    else
+        python3 "$BASE/epoch-read.py" "$SLOT" >/dev/null || fail "Epoche für $SLOT fehlt / unsicher; separate Migration nötig, niemals automatisch zurücksetzen."
+    fi
     managed_file "/etc/cocopi/hub-$SLOT.env" 600 root root <<ENV
 HUB_SLOT=$SLOT
 HUB_HOST=$HUB_BIND
@@ -154,6 +165,7 @@ HUB_DIR=$HUB_DIR
 HUB_PI_BIN=$HUB_PI
 HUB_ROOTS=$SLOT_HOME/arbeit
 HUB_EMPFANG_PUBKEY=${HUB_EMPFANG_PUBKEY:-BITTE_EINTRAGEN}
+HUB_EPOCHE_DATEI=/var/lib/cocopi/slots/$SLOT.epoche
 HUB_STATE=$HUB_STATE
 HUB_MAX_OPEN_SESSIONS=$HUB_MAX_OPEN_SESSIONS
 HUB_MAX_ACTIVE_SESSIONS=$HUB_MAX_ACTIVE_SESSIONS

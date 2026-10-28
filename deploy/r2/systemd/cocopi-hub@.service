@@ -9,6 +9,7 @@ User=%i
 Group=%i
 Slice=cocopi-%i.slice
 EnvironmentFile=/etc/cocopi/hub-%i.env
+Environment=HUB_EPOCHE_DATEI=/var/lib/cocopi/slots/%i.epoche
 Environment=HOME=/home/%i
 Environment=DO_NOT_TRACK=1
 WorkingDirectory=/home/%i

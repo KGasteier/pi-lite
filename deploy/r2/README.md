@@ -1,4 +1,7 @@
-# R2 · flüchtiger cocopi-Pool (I2)
+# R2 · flüchtiger cocopi-Pool (I2b)
+
+Kurzer Einstieg: [`SCHNELLSTART.md`](SCHNELLSTART.md) (Voraussetzungen, sechs
+Befehle, Prüfung); begleiteter Weg: [`EINRICHTEN-MIT-PI.md`](EINRICHTEN-MIT-PI.md).
 
 **Nicht installiert. Kein Deployment ausführen.** Arbeitsstand nur lokal mit
 Fake-Root/Fixtures getestet; bestehende R2-Konten, Dienste, Mounts und Netzregeln
@@ -21,7 +24,8 @@ müssen innerhalb der beiden flüchtigen Wurzeln liegen. `HUB_ROOTS` erlaubt nur
 | `systemd/cocopi-hub@.service` | System-Hub, `User=%i`, eigene Slice, `/etc/cocopi/hub-%i.env` |
 | `systemd/cocopi-empfang.service` | Systemkonto, privater State `/var/lib/cocopi-empfang` |
 | `systemd/cocopi.slice`, `cocopi-account.slice.in` | globale und je-Platz-CPU/RAM/Taskgrenzen |
-| `cocopi-slotctl` | fd-basierter Root-Löschhelfer mit Leer-Nachweis |
+| `cocopi-slotctl`, `epoch-read.py` | fd-basierter Root-Löschhelfer, Leer-Nachweis und lesender Epochencheck |
+| `empfang-env-check.py` | exakte Empfang-Variablen als Daten prüfen, keine Shell-Auswertung |
 | `sudoers/cocopi-slotctl`, `slotctl-empfang` | exakt enumerierte Rootrechte nur für Empfang |
 | `einrichten.sh` | acht nummerierte Schritte, Standard Dry-Run |
 | `provision.sh`, `check.sh` | Poolkonten/Teilquoten/System-Units, technische Leseabnahme |
@@ -81,19 +85,39 @@ Mounts im Löschbaum, auch keine gleich-Dateisystem-Bindmounts. Serielle Sperre.
 
 Reihenfolge: bestätigte Empfangsfreigabe/Widerruf → Hub stoppen → Wurzeln
 rootprivat sperren → Usermanager stoppen → UID-Prozesse TERM/KILL → bei Resten
-abbrechen → fd-relativ ohne Link-Folgen löschen → geprüftes Skelett einspielen →
+abbrechen → Epoche atomar erhöhen → fd-relativ ohne Link-Folgen löschen → geprüftes Skelett einspielen →
 Hashes/Tree und aktive Teilquoten prüfen → Leerbeleg atomar schreiben →
 Besitz zurückgeben → Hub starten. Kein persistentes Nutzdatenbackup. Fehler
 liefern Exit ungleich 0 und keine Freigabe. Teilweise gelöschter Zustand ist
 möglich und bleibt gesperrt; nicht als Transaktion/Undelete verstehen.
 
-JSON-Erfolg: `slot`, `zustand:"leer"`, `nachweis:"vor_hubstart"`, `zeit`,
+JSON-Erfolg: `slot`, `epoche`, `zustand:"leer"`, `nachweis:"vor_hubstart"`, `zeit`,
 `dauer_ms`, `bytes_geloescht`, `quota_bytes`, `grenze_bytes`. Beleg unter
 `/var/lib/cocopi-slots/accountNN.leer.json` root:root 0600, nur Zeit/Zähler,
 keine Personen oder Dateinamen. `pruefen --ausfuehren` schreibt beim ersten
 Start denselben Beleg, löscht aber nichts. Nach Hubstart gilt der Livebaum
 wegen neuer Hubdateien/Prozesse nicht mehr als leer. Empfang muss den
 **vorherigen** erfolgreichen Nachweis benutzen, niemals einen Fehler wegfiltern.
+
+### N3 · Epochen sperren alte Belegungen
+
+Außerhalb der flüchtigen Daten liegt `/var/lib/cocopi/slots/accountNN.epoche`,
+root:root 0644; Eltern rootverwaltet und 0755. Empfang liest mit
+`EMPFANG_EPOCHEN_DIR=/var/lib/cocopi/slots`, Hub mit
+`HUB_EPOCHE_DATEI=/var/lib/cocopi/slots/accountNN.epoche` (System-Unit und Env).
+Neue Konten erhalten initial `0`. Bestehende Werte niemals zurücksetzen; fehlt
+bei einem Bestandskonto die Datei, stoppt die Einrichtung. Eine Migration muss
+Check-ins sperren und das Replayrisiko gesondert prüfen. Fehlende Dateien als
+Epoche 0 sind nur im Testvertrag erlaubt, nicht im Launcher oder Löschhelfer.
+
+`leeren --ausfuehren` erhöht unter Pool-Sperre, nach Prozessruhe und **vor** der
+ersten Löschung. Schreiben in zufällige neue Datei, fsync, atomarer Austausch,
+fsync des Verzeichnisses. Fehler danach rollt den Zähler nicht zurück; Platz
+bleibt gesperrt. Dry-Run/`status`/`pruefen` erhöhen nie. Auch wiederholtes Leeren
+erhöht erneut – inhaltlich idempotent, Sicherheitsgeneration absichtlich neu.
+Ganzzahlen 0 bis 2^53−1; Überlauf, Links, Hardlinks, falsche Rechte und kaputte
+Werte blockieren. `admin-check.sh` zeigt die Epoche, fehlender Nachweis ist Exit 1.
+Der Zähler ist keine Personendatei; kein Nutzdatenbackup und keine Rotation.
 
 Quote: 9.765.625 KiB (10 GB) NVMe + 68.359.375 KiB (70 GB) Daten = 80 GB dezimal;
 Soft=Hard, Inodes 200000/800000. Leer-Nachweis verlangt ≤1 MiB Gesamtbelegung
@@ -135,14 +159,14 @@ caddy validate --config /etc/cocopi/proxy/Caddyfile --adapter caddyfile
 visudo -cf /usr/local/lib/cocopi-r2/sudoers/cocopi-slotctl
 ```
 
-Hier sind Caddy und visudo nicht vorhanden; Syntax/Proxybetrieb damit **nicht
-validiert**. Python-Fixtures sind kein Ersatz. Erst echte HTTPS-403 plus positive
+Vorlagen in dieser Runde nur statisch geprüft, Caddy-Syntax/Proxybetrieb damit
+**nicht validiert**. Python-Fixtures sind kein Ersatz. Erst echte HTTPS-403 plus positive
 Empfang-/Slot-/SSE-Abnahme nach Netzfreigabe erlauben Pilotbetrieb.
 
 ## Admin-Abnahme und offene Integration
 
 `admin-check.sh --ausfuehren --slots account01,account02 --proxy-url https://NAME`
-liest nur Konto/UID, Systemdienst/PID, lokale Listener, Quote und Poolprojektion;
+liest nur Konto/UID, Systemdienst/PID, lokale Listener, Epoche, Quote und Poolprojektion;
 ruft `POST /v1/empfang/hallo` inhaltsfrei auf und testet absichtlich ungültige
 POSTs gegen externe Sperrpfade. Kein Modell, keine Namen/Sessiondateien/Token.
 Kein URL-Credential, Pfad oder Query im Parameter erlaubt, TLS niemals abschalten.
@@ -174,8 +198,10 @@ unwirksam wäre; dies verlangt besonders sorgfältiges Review des Empfangscodes.
 
 ## Nachweise lokal
 
-`python3 deploy/r2/test_scripts.py`: 42 grün (inkl. 14 Helfer-/Fake-Root-Tests).
-Nur Tempverzeichnisse, keine System-/Netzänderungen. Bash-Syntax, Dry-Run-
+`python3 deploy/r2/test_scripts.py`: 50 grün in I2b (inkl. atomarer Epochenwechsel,
+fehlender/unsicherer Zähler, Fehler ohne Rollback und statischer N5-Matrix).
+Vorheriger I2-Nachweis: 42 Tests. Nur Tempverzeichnisse, keine System-/Netzänderungen.
+Bash-Syntax, Dry-Run-
 Mutationssentinel, Argumente, Quoten/Slices/Listenerfixtures, Poolstatus/Proxy-
 Mocks und enumerierte sudoers geprüft. `systemd-analyze verify` auf Tempkopien
 (allein Hub-ExecStart durch `/usr/bin/true` ersetzt, da nicht installiert): Exit 0;
