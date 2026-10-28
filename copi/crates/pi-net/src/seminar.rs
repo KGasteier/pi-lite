@@ -9,6 +9,9 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
+#[path = "seminar_net.rs"]
+pub mod net;
+
 #[derive(Clone, Debug)]
 pub struct Person {
     pub peer: PeerId,
@@ -44,6 +47,17 @@ pub trait SeminarNet {
     fn poll(&mut self) -> Vec<(PeerId, Payload)> {
         vec![]
     }
+    /// Presence nur aus dem authentifizierten Transport, niemals aus Roster-JSON.
+    fn presence(&mut self) -> Vec<(PeerId, bool, u64)> {
+        vec![]
+    }
+    fn errors(&mut self) -> Vec<String> {
+        vec![]
+    }
+    fn set_contacts(&mut self, _peers: Vec<(PeerId, String)>) -> Result<(), String> {
+        Err("Dieser Seminaradapter unterstützt keine Netzverbindung".into())
+    }
+    fn checkout(&mut self) {}
 }
 #[derive(Default)]
 pub struct MemoryNet {
@@ -100,6 +114,10 @@ impl SeminarState {
             issuer,
             verified: BTreeMap::new(),
         }
+    }
+    /// Bereits durch den Konto-Dialog bestätigter Empfangsschlüssel.
+    pub fn issuer(&self) -> &str {
+        &self.issuer
     }
     pub fn verified(&self, peer: &PeerId, now: u64) -> Option<&Bestaetigt> {
         self.verified.get(peer).filter(|c| c.gueltig(now / 1000))
@@ -421,7 +439,7 @@ impl SeminarState {
                 self.identify(from, &ausweis, now)?;
             }
             Payload::RemoteRequest { ref space, .. } if space != &self.space => {
-                return Err("Fremdes Seminar".into())
+                return Err("Fremdes Seminar".into());
             }
             Payload::RemoteRequest { .. }
             | Payload::RemoteGrant { .. }
@@ -492,7 +510,7 @@ impl SeminarState {
 /// Ausschließlich Screenshot-/Testdaten: eigener öffentlicher Demo-Empfang,
 /// niemals als produktiven Vertrauensanker verwenden. Kein I/O und kein Netz.
 pub fn demo_pair(now: u64) -> (SeminarState, SeminarState) {
-    use crate::ausweis::{base64url, kanonisch, Inhalt};
+    use crate::ausweis::{Inhalt, base64url, kanonisch};
     let issuer = iroh::SecretKey::from_bytes(&[101; 32]);
     let peers =
         [102, 103].map(|b| PeerId(iroh::SecretKey::from_bytes(&[b; 32]).public().to_string()));
@@ -577,7 +595,7 @@ pub fn demo_pair(now: u64) -> (SeminarState, SeminarState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ausweis::{base64url, kanonisch, Inhalt};
+    use crate::ausweis::{Inhalt, base64url, kanonisch};
     const NOW: u64 = 1_000_000;
     fn session() -> SessionRef {
         SessionRef {
@@ -655,12 +673,13 @@ mod tests {
     fn no_certificate_no_control() {
         let (mut a, mut b, _, _) = pair();
         a.verified.remove(&b.chats.me);
-        assert!(a
-            .request(&b.chats.me, &session(), RemoteScope::Control, NOW)
-            .is_err());
+        assert!(
+            a.request(&b.chats.me, &session(), RemoteScope::Control, NOW)
+                .is_err()
+        );
         b.verified.remove(&a.chats.me);
-        assert!(b
-            .receive(
+        assert!(
+            b.receive(
                 &a.chats.me,
                 Payload::RemoteRequest {
                     req: "r".into(),
@@ -671,18 +690,20 @@ mod tests {
                 },
                 NOW
             )
-            .is_err());
+            .is_err()
+        );
         assert!(a.remote.grants.is_empty());
         assert!(b.remote.grants.is_empty());
     }
     #[test]
     fn participant_cannot_request_control_or_spoof_role() {
         let (mut a, mut b, _, _) = pair();
-        assert!(b
-            .request(&a.chats.me, &session(), RemoteScope::Control, NOW)
-            .is_err());
-        assert!(a
-            .receive(
+        assert!(
+            b.request(&a.chats.me, &session(), RemoteScope::Control, NOW)
+                .is_err()
+        );
+        assert!(
+            a.receive(
                 &b.chats.me,
                 Payload::RemoteRequest {
                     req: "r".into(),
@@ -693,7 +714,8 @@ mod tests {
                 },
                 NOW
             )
-            .is_err());
+            .is_err()
+        );
         assert!(a.remote.grants.is_empty());
     }
     #[test]
@@ -705,8 +727,8 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(b.remote.grants.is_empty());
         assert_eq!(before, serde_json::to_string(&b.chats).unwrap());
-        assert!(b
-            .receive(
+        assert!(
+            b.receive(
                 &a.chats.me,
                 Payload::Steuern {
                     req,
@@ -714,15 +736,16 @@ mod tests {
                 },
                 NOW
             )
-            .is_err());
+            .is_err()
+        );
     }
     #[test]
     fn expiry_stops_control() {
         let (mut a, mut b, _, _) = pair();
         let req = active(&mut a, &mut b);
         let expired = NOW + 30 * 60_000;
-        assert!(b
-            .receive(
+        assert!(
+            b.receive(
                 &a.chats.me,
                 Payload::Steuern {
                     req: req.clone(),
@@ -730,7 +753,8 @@ mod tests {
                 },
                 expired
             )
-            .is_err());
+            .is_err()
+        );
         assert_eq!(b.tick(expired).len(), 1);
         assert!(b.remote.grants.is_empty());
         assert!(a.control(&req, "Text", expired).is_err());
@@ -753,8 +777,8 @@ mod tests {
     fn view_only_stop_disconnect_checkout_and_session_binding() {
         let (mut a, mut b, _, _) = pair();
         let req = ask(&mut a, &mut b);
-        assert!(b
-            .accept(
+        assert!(
+            b.accept(
                 &req,
                 RemoteScope::Control,
                 &SessionRef {
@@ -763,7 +787,8 @@ mod tests {
                 },
                 NOW
             )
-            .is_err());
+            .is_err()
+        );
         let p = b
             .accept(&req, RemoteScope::View, &session(), NOW)
             .unwrap()
@@ -771,8 +796,8 @@ mod tests {
             .1;
         a.receive(&b.chats.me, p, NOW).unwrap();
         assert!(a.control(&req, "Text", NOW).is_err());
-        assert!(b
-            .receive(
+        assert!(
+            b.receive(
                 &a.chats.me,
                 Payload::Steuern {
                     req: req.clone(),
@@ -780,7 +805,8 @@ mod tests {
                 },
                 NOW
             )
-            .is_err());
+            .is_err()
+        );
         b.end(&req, "Beendet");
         a.end(&req, "Zurückgegeben");
         assert!(b.remote.grants.is_empty());
@@ -823,8 +849,8 @@ mod tests {
             }]
         );
         b.end(&req, "Beendet");
-        assert!(b
-            .mirror(
+        assert!(
+            b.mirror(
                 &req,
                 &session(),
                 RemoteFrame {
@@ -835,7 +861,8 @@ mod tests {
                 },
                 NOW
             )
-            .is_err());
+            .is_err()
+        );
     }
     #[test]
     fn chats_and_dms_reuse_v2_and_mark_unverified() {

@@ -33,11 +33,35 @@ pub struct Inhalt {
     pub iat: u64,
     pub exp: u64,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Ausweis {
+    /// N1: flache Ausgabe; die ältere verschachtelte Hülle bleibt lesbar.
+    #[serde(flatten)]
     pub inhalt: Inhalt,
     pub signatur: String,
+}
+impl<'de> Deserialize<'de> for Ausweis {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let mut object = serde_json::Value::deserialize(d)?
+            .as_object()
+            .cloned()
+            .ok_or_else(|| D::Error::custom("Ausweis muss ein Objekt sein"))?;
+        let signatur = object
+            .remove("signatur")
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .ok_or_else(|| D::Error::custom("Ausweissignatur fehlt"))?;
+        let value = if object.contains_key("inhalt") {
+            if object.len() != 1 {
+                return Err(D::Error::custom("Unsignierte Angaben in Ausweishülle"));
+            }
+            object.remove("inhalt").expect("zuvor geprüft")
+        } else {
+            serde_json::Value::Object(object)
+        };
+        let inhalt = serde_json::from_value(value).map_err(D::Error::custom)?;
+        Ok(Self { inhalt, signatur })
+    }
 }
 
 /// Nicht deserialisierbar/öffentlich konstruierbar: kein Rollen-Bypass über JSON.
@@ -165,7 +189,15 @@ impl Ausweis {
         if i.iat > now_s || i.exp <= now_s || i.exp <= i.iat || i.exp - i.iat > 12 * 60 * 60 {
             return Err("Geräteausweis abgelaufen oder Zeit ungültig".into());
         }
-        // net_pubkey ist die iroh-ID in Hex; Geräteschlüssel/Empfang aus A6 Base64url.
+        // N4: ausschließlich 64 kleine Hexzeichen, kein Base32/Uppercase-Alias.
+        if i.net_pubkey.len() != 64
+            || !i
+                .net_pubkey
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err("Netzidentität muss aus 64 kleinen Hexzeichen bestehen".into());
+        }
         let peer: iroh::PublicKey = i
             .net_pubkey
             .parse()
@@ -219,15 +251,64 @@ mod tests {
         assert!(c.pruefen(&pk, &p, 99).is_err());
         assert!(c.pruefen(&pk, &p, 43300).is_err());
         assert!(c.pruefen(&pk, &PeerId::from("other"), 101).is_err());
-        assert!(c
-            .pruefen(
+        assert!(
+            c.pruefen(
                 &base64url(iroh::SecretKey::from_bytes(&[44; 32]).public().as_bytes()),
                 &p,
                 101
             )
-            .is_err());
+            .is_err()
+        );
         c.inhalt.person = "Mallory".into();
         assert!(c.pruefen(&pk, &p, 101).is_err());
+    }
+    #[test]
+    fn n1_flat_output_nested_input_and_no_unsigned_fields() {
+        let (c, _, _) = cert();
+        let flat = serde_json::to_value(&c).unwrap();
+        assert!(flat.get("inhalt").is_none());
+        assert_eq!(flat["iat"], 100);
+        assert_eq!(serde_json::from_value::<Ausweis>(flat.clone()).unwrap(), c);
+        let nested = serde_json::json!({"inhalt":c.inhalt,"signatur":c.signatur});
+        assert_eq!(
+            serde_json::from_value::<Ausweis>(nested.clone()).unwrap(),
+            c
+        );
+        for mut v in [flat, nested] {
+            v["rolle_extra"] = serde_json::json!("seminarleitung");
+            assert!(serde_json::from_value::<Ausweis>(v).is_err());
+        }
+    }
+    #[test]
+    fn n4_seconds_lowercase_hex_and_no_time_unit_guessing() {
+        let (mut c, k, p) = cert();
+        let pk = base64url(k.public().as_bytes());
+        assert_eq!(p.as_str().len(), 64);
+        assert!(
+            p.as_str()
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        );
+        c.inhalt.iat = 1_800_000_000;
+        c.inhalt.exp = c.inhalt.iat + 43_200;
+        let sign = |c: &mut Ausweis| {
+            c.signatur = base64url(&k.sign(&kanonisch(&c.inhalt).unwrap()).to_bytes())
+        };
+        sign(&mut c);
+        assert!(c.pruefen(&pk, &p, 1_800_000_000).is_ok());
+        assert!(c.pruefen(&pk, &p, 1_800_043_200).is_err());
+        c.inhalt.iat *= 1000;
+        c.inhalt.exp *= 1000;
+        sign(&mut c);
+        assert!(c.pruefen(&pk, &p, 1_800_000_000).is_err());
+        c.inhalt.iat = 100;
+        c.inhalt.exp = 200;
+        c.inhalt.net_pubkey.make_ascii_uppercase();
+        sign(&mut c);
+        assert!(
+            c.pruefen(&pk, &PeerId(c.inhalt.net_pubkey.clone()), 100)
+                .is_err()
+        );
     }
     #[test]
     fn recursive_canonical_json_and_encoding() {

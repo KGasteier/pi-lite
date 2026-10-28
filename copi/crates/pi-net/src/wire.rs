@@ -51,6 +51,9 @@ impl Envelope {
 pub enum Payload {
     /// Additiver A6-Handshake; fehlend/ungültig bleibt unbestätigt.
     Geraeteausweis { ausweis: crate::ausweis::Ausweis },
+    /// Additive Seminarhülle: TLS-Absender bleibt maßgeblich; ID/Zeit begrenzen
+    /// Wiederholungen des Transportworkers, insbesondere bei Mitsteuer-Prompts.
+    SeminarPacket { id: String, sent_ms: u64, payload: Box<Payload> },
     /// A9 Eingabe; identische Consent-Prüfung wie RemoteInput (v2 bleibt gültig).
     Steuern { req: String, text: String },
     /// Einladung in einen Chat (ohne Verlauf). Annahme nur nach Bestätigung durch die Person.
