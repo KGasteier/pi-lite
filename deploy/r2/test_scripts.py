@@ -134,6 +134,32 @@ class SafeScripts(unittest.TestCase):
         result = self.helper('! no_symlinks "$HOME/link" && ! no_symlinks "$HOME/../x"')
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_preflight_clean_new_accounts_returns_success(self):
+        # Die echte Funktionsdefinition testen, nicht eine duplizierte Implementierung.
+        # Alle Hostabfragen sind Fixtures, alle Änderungsbefehle bleiben Sentinel-gesperrt.
+        source = (BASE / 'provision.sh').read_text()
+        definition = source[source.index('preflight() {'):source.index('\n\nif [[ $MODE == apply')]
+        fixture = r'''
+require_commands() { :; }
+check_mounts() { :; }
+check_hub_contract() { :; }
+root_controlled() { :; }
+stat() { printf '%s\n' cgroup2fs; }
+command() { printf '%s\n' /usr/bin/true; }
+readlink() { printf '%s\n' /usr/bin/true; }
+getent() { return 2; }
+parse_args provision --slots s01,s02
+HOME_BASE=$HOME/homes
+DATA_BASE=$HOME/data
+STATE_BASE=$HOME/state
+preflight
+'''
+        result = subprocess.run(['bash', '-c', 'source "$1/common.sh"; ' + definition + fixture,
+                                 'bash', str(BASE)], env=self.env, cwd=self.temp.name,
+                                text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.sentinel.exists())
+
     def test_hub_contract_unconfirmed_fails_before_any_service(self):
         result = self.helper('check_hub_contract')
         self.assertNotEqual(result.returncode, 0)

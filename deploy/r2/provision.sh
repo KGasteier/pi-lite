@@ -31,7 +31,9 @@ preflight() {
             if getent passwd "$EXPECTED_UID" >/dev/null || getent group "$EXPECTED_UID" >/dev/null; then
                 fail "Reservierte UID/GID $EXPECTED_UID für $SLOT bereits belegt; keine automatische Umnummerierung."
             fi
-            getent group "$USER_NAME" >/dev/null && fail "Private Gruppe $USER_NAME bereits vorhanden; erst zuordnen."
+            if getent group "$USER_NAME" >/dev/null; then
+                fail "Private Gruppe $USER_NAME bereits vorhanden; erst zuordnen."
+            fi
         fi
     done
 }
