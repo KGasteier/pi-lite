@@ -1,25 +1,24 @@
 //! Direkter iroh-QUIC-Transport ohne Relays/Discovery. TLS bestimmt den Absender.
 //! Ein serieller Versandarbeiter je Peer erhält die Reihenfolge auch bei Wiederholung.
 use crate::{
-    identity::{Identity, peer_of},
+    identity::{peer_of, Identity},
     model::{MsgId, PeerId},
     wire::{Envelope, MAX_ENVELOPE},
 };
 use iroh::{
+    endpoint::{presets, Connection},
     Endpoint, EndpointAddr,
-    endpoint::{Connection, presets},
 };
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
-        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc,
+        mpsc, Arc, Mutex,
     },
     time::{Duration, Instant},
 };
 use tokio::{
-    sync::{Notify, mpsc as channel},
+    sync::{mpsc as channel, Notify},
     task::JoinSet,
 };
 
@@ -82,6 +81,7 @@ struct State {
     rates: HashMap<PeerId, VecDeque<Instant>>,
     activity: HashMap<usize, Instant>,
     reachable: HashMap<PeerId, bool>,
+    ausweis: Option<crate::ausweis::Ausweis>,
 }
 type Shared = Arc<Mutex<State>>;
 
@@ -97,6 +97,14 @@ pub struct Node {
 impl Node {
     /// Start nur nach ausdrücklichem Klick; eigene Laufzeit in einem eigenen Thread.
     pub fn start(identity: Identity) -> Node {
+        Self::start_with_ausweis(identity, None)
+    }
+    /// Optionaler A6-Ausweis; Austausch erfolgt auf jeder neuen Verbindung.
+    /// Prüfung/Vertrauensanker bleiben bei der Anwendung, nicht beim Transport.
+    pub fn start_with_ausweis(
+        identity: Identity,
+        ausweis: Option<crate::ausweis::Ausweis>,
+    ) -> Node {
         let me = identity.peer();
         let (tx, rx) = channel::channel(MAX_QUEUE);
         let (out, events) = mpsc::channel();
@@ -119,7 +127,9 @@ impl Node {
                     .enable_all()
                     .build()
                     .map_err(|e| format!("Netz-Laufzeit: {e}"))
-                    .and_then(|rt| rt.block_on(run(identity, rx, out.clone(), stopping, wake)));
+                    .and_then(|rt| {
+                        rt.block_on(run(identity, rx, out.clone(), stopping, wake, ausweis))
+                    });
                 if let Err(e) = result {
                     let _ = out.send(NodeEvent::Error(e));
                 }
@@ -184,6 +194,7 @@ async fn run(
     out: mpsc::Sender<NodeEvent>,
     stopping: Arc<AtomicBool>,
     wake: Arc<Notify>,
+    ausweis: Option<crate::ausweis::Ausweis>,
 ) -> Result<(), String> {
     let endpoint = Endpoint::builder(presets::Minimal)
         .secret_key(identity.secret)
@@ -202,7 +213,10 @@ async fn run(
     let address =
         serde_json::to_string(&endpoint.addr()).map_err(|e| format!("Eigene Adresse: {e}"))?;
     let _ = out.send(NodeEvent::Address(address));
-    let state = Arc::new(Mutex::new(State::default()));
+    let state = Arc::new(Mutex::new(State {
+        ausweis,
+        ..State::default()
+    }));
     let mut tasks = JoinSet::new();
     let mut workers: HashMap<PeerId, channel::Sender<(Outgoing, Vec<u8>, QueueSlot)>> =
         HashMap::new();
@@ -343,6 +357,27 @@ async fn receive_connection(c: Connection, state: Shared, out: mpsc::Sender<Node
     receive_streams(c, state, out).await;
 }
 async fn receive_streams(c: Connection, state: Shared, out: mpsc::Sender<NodeEvent>) {
+    let ausweis = state.lock().expect("Netzzustand").ausweis.clone();
+    // Beide Seiten lesen parallel: kein Handshake-Deadlock, keine Änderung des
+    // v1-Umschlags. Ohne Ausweis bleibt das bisherige Transportverhalten erhalten.
+    let announce = async {
+        if let Some(ausweis) = ausweis {
+            let exchange = async {
+                let bytes = Envelope::new(crate::wire::Payload::Geraeteausweis { ausweis })
+                    .encode()
+                    .map_err(|_| ())?;
+                let (mut send, mut recv) = c.open_bi().await.map_err(|_| ())?;
+                send.write_all(&bytes).await.map_err(|_| ())?;
+                send.finish().map_err(|_| ())?;
+                recv.read_to_end(16).await.map_err(|_| ())?;
+                Ok::<(), ()>(())
+            };
+            let _ = tokio::time::timeout(STREAM_TIMEOUT, exchange).await;
+        }
+    };
+    tokio::join!(announce, receive_loop(c.clone(), state, out));
+}
+async fn receive_loop(c: Connection, state: Shared, out: mpsc::Sender<NodeEvent>) {
     let peer = peer_of(&c.remote_id());
     loop {
         let (mut send, mut recv) = match tokio::time::timeout(IDLE_TIMEOUT, c.accept_bi()).await {
@@ -616,6 +651,68 @@ mod tests {
         event(n, until, |e| matches!(e, NodeEvent::Stopped));
     }
     #[test]
+    fn loopback_optional_ausweis_exchange_keeps_tls_sender() {
+        use crate::ausweis::{base64url, kanonisch, Ausweis, Inhalt, Rolle};
+        let until = deadline();
+        let identity = Identity::ephemeral();
+        let peer = identity.peer();
+        let issuer = iroh::SecretKey::from_bytes(&[81; 32]);
+        let inhalt = Inhalt {
+            v: 1,
+            typ: "geraeteausweis".into(),
+            pid: "transport-test".into(),
+            person: "Aylin".into(),
+            rolle: Rolle::Seminarleitung,
+            net_pubkey: peer.to_string(),
+            geraet_pubkey: base64url(&[82; 32]),
+            iat: 1,
+            exp: 43201,
+        };
+        let signatur = base64url(&issuer.sign(&kanonisch(&inhalt).unwrap()).to_bytes());
+        let cert = Ausweis { inhalt, signatur };
+        let a = Node::start_with_ausweis(identity, Some(cert.clone()));
+        let b = Node::start(Identity::ephemeral());
+        let aa = address(&a, until);
+        let ba = address(&b, until);
+        a.set_allowed(vec![(b.me.clone(), ba)]);
+        b.set_allowed(vec![(a.me.clone(), aa)]);
+        a.send(outgoing(&b.me, 0)).unwrap();
+        let received = event(&b, until, |e| {
+            matches!(
+                e,
+                NodeEvent::Received {
+                    env: Envelope {
+                        payload: Payload::Geraeteausweis { .. },
+                        ..
+                    },
+                    ..
+                }
+            )
+        });
+        let NodeEvent::Received {
+            from,
+            env:
+                Envelope {
+                    payload: Payload::Geraeteausweis { ausweis },
+                    ..
+                },
+        } = received
+        else {
+            panic!("Ausweis fehlt")
+        };
+        assert_eq!(from, peer);
+        assert_eq!(ausweis, cert);
+        assert_eq!(
+            ausweis
+                .pruefen(&base64url(issuer.public().as_bytes()), &from, 2)
+                .unwrap()
+                .rolle(),
+            Rolle::Seminarleitung
+        );
+        stop(&a, until);
+        stop(&b, until);
+    }
+    #[test]
     fn loopback_bidirectional_order_sender_delivered_and_stop() {
         let until = deadline();
         let a = Node::start(Identity::ephemeral());
@@ -665,8 +762,8 @@ mod tests {
                 |e| matches!(e, NodeEvent::Delivered { tag: Some(tag), .. } if tag.as_str() == index.to_string()),
             );
         }
-        assert!(
-            a.send(Outgoing {
+        assert!(a
+            .send(Outgoing {
                 to: b.me.clone(),
                 env: Envelope::new(Payload::RemoteInput {
                     req: "x".into(),
@@ -674,8 +771,7 @@ mod tests {
                 }),
                 tag: None
             })
-            .is_err()
-        );
+            .is_err());
         stop(&a, until);
         stop(&b, until);
         assert!(a.send(outgoing(&b.me, 30)).is_err());
@@ -699,11 +795,10 @@ mod tests {
         assert!(
             matches!(event(&b, until, |e| matches!(e, NodeEvent::Rejected { .. })), NodeEvent::Rejected { from, .. } if from == c.me)
         );
-        assert!(
-            b.events
-                .try_iter()
-                .all(|e| !matches!(e, NodeEvent::Received { from, .. } if from == c.me))
-        );
+        assert!(b
+            .events
+            .try_iter()
+            .all(|e| !matches!(e, NodeEvent::Received { from, .. } if from == c.me)));
         stop(&c, until);
         stop(&a, until);
         stop(&b, until);
