@@ -1,6 +1,10 @@
 //! Seminar-Desktop: eine Oberfläche, ein Modus-Ort, keine lokalen Agentenstarts.
 //! Alle Hub-Aktionen laufen über DesktopApi; Fixtures sind ausschließlich Demo/Tests.
+mod checkin;
 mod hub;
+mod sync_ui;
+pub use checkin::{AuthCallback, CancelTarget, CheckinMethod, FlowReply, MemoryApi, WaitTarget};
+use checkin::{Flow, Stage, TransferKind};
 use egui::{Color32, RichText, Ui};
 use pi_backend::mode::{self, Mode};
 use qrcodegen::{QrCode, QrCodeEcc};
@@ -94,6 +98,27 @@ pub struct PairCode {
 }
 #[derive(Clone, Debug)]
 pub enum Request {
+    Checkin {
+        attempt: u64,
+        method: CheckinMethod,
+    },
+    AuthCallback(AuthCallback),
+    Wait(WaitTarget),
+    SyncPlan(String),
+    Upload {
+        checkin_id: String,
+        selection: Vec<String>,
+    },
+    CheckoutPreview(String),
+    Checkout {
+        checkin_id: String,
+        preview_id: String,
+    },
+    Collect {
+        checkin_id: String,
+        pickup_id: String,
+    },
+    CancelFlow(CancelTarget),
     Redeem(String),
     Devices,
     Pair,
@@ -109,6 +134,15 @@ pub enum Request {
 }
 #[derive(Clone, Debug)]
 pub enum Reply {
+    ConnectionEvent {
+        epoch: u64,
+        reply: Box<Reply>,
+    },
+    Flow(FlowReply),
+    FlowCompleted {
+        generation: u64,
+        reply: Box<Reply>,
+    },
     Completed(Box<Reply>),
     Heartbeat,
     Disconnected(String),
@@ -189,6 +223,7 @@ pub struct Desktop {
     tx: mpsc::Sender<Reply>,
     rx: mpsc::Receiver<Reply>,
     pending: usize,
+    connection_epoch: u64,
     mode: Mode,
     pub account: Option<Account>,
     connected: bool,
@@ -210,6 +245,14 @@ pub struct Desktop {
     messages: Vec<ChatMessage>,
     prompt: String,
     files: bool,
+    seminar_selected: bool,
+    flow: Flow,
+    flow_generation: u64,
+    flow_pending: bool,
+    flow_poll: Option<Instant>,
+    flow_retry: Option<Request>,
+    flow_failed: bool,
+    guest: bool,
     rename: bool,
     device_name: String,
     hub_url: String,
@@ -275,6 +318,7 @@ impl Desktop {
             tx,
             rx,
             pending: 0,
+            connection_epoch: 0,
             mode: if demo {
                 Mode::RemoteOnly
             } else {
@@ -300,6 +344,14 @@ impl Desktop {
             messages: vec![],
             prompt: String::new(),
             files: false,
+            seminar_selected: false,
+            flow: Flow::default(),
+            flow_generation: 0,
+            flow_pending: false,
+            flow_poll: None,
+            flow_retry: None,
+            flow_failed: false,
+            guest: false,
             rename: false,
             device_name: profile.device_name,
             hub_url: profile.hub_url,
@@ -321,13 +373,74 @@ impl Desktop {
             return;
         }
         self.pending += 1;
-        let (api, tx) = (self.api.clone(), self.tx.clone());
+        let (api, tx, epoch) = (self.api.clone(), self.tx.clone(), self.connection_epoch);
         std::thread::spawn(move || {
-            let _ = tx.send(Reply::Completed(Box::new(api.call(request))));
+            let _ = tx.send(Reply::ConnectionEvent {
+                epoch,
+                reply: Box::new(Reply::Completed(Box::new(api.call(request)))),
+            });
         });
     }
     fn apply(&mut self, reply: Reply) {
         match reply {
+            Reply::ConnectionEvent { epoch, reply } => {
+                if epoch == self.connection_epoch {
+                    self.apply(*reply);
+                }
+            }
+            Reply::FlowCompleted { generation, reply } => {
+                if generation == self.flow_generation {
+                    self.flow_pending = false;
+                    self.apply(*reply);
+                }
+            }
+            Reply::Flow(reply) => {
+                if matches!(reply, FlowReply::CheckedIn(_)) {
+                    self.connected = true;
+                }
+                if let FlowReply::Browser { attempt, url } = &reply {
+                    if !self.demo
+                        && *attempt == self.flow.attempt
+                        && self.flow.stage == Stage::Starting
+                    {
+                        if let Err(e) = pi_backend::cli::open_url(url) {
+                            self.error = Some(format!("Der Browser konnte nicht geöffnet werden. Öffne die Anmeldung mit dem Knopf unten. {e}"));
+                        }
+                    }
+                }
+                let next = self.flow.apply(reply);
+                if let Some(receipt) = &self.flow.receipt {
+                    self.account = Some(receipt.account.clone());
+                }
+                if self.flow.stage == Stage::Working {
+                    self.welcome_done = true;
+                    if !self.demo && !self.watch_started {
+                        self.start_watch();
+                        self.call(Request::Sessions);
+                    }
+                }
+                if self.flow.stage == Stage::Done {
+                    self.connection_epoch += 1;
+                    self.pending = 0;
+                    self.watch_started = false;
+                    self.last_event = None;
+                    self.account = None;
+                    self.connected = false;
+                    self.welcome_done = false;
+                    self.sessions.clear();
+                    self.messages.clear();
+                    self.chat_by_session.clear();
+                    self.streaming.clear();
+                    self.selected = None;
+                    self.pairing = None;
+                    self.pairing_login = None;
+                    self.pair_request = None;
+                    self.settings = None;
+                }
+                if let Some(request) = next {
+                    self.flow_call(request);
+                }
+            }
             Reply::Completed(reply) => {
                 self.pending = self.pending.saturating_sub(1);
                 self.apply(*reply);
@@ -418,11 +531,19 @@ impl Desktop {
             }
             Reply::Limit => self.limit = true,
             Reply::Error(e) => {
+                if self.flow_retry.is_some() && self.flow.stage != Stage::Working {
+                    self.flow_failed = true;
+                }
                 if e == InviteError::Revoked {
                     self.connected = false;
                 }
                 if e == InviteError::Revoked {
+                    self.connection_epoch += 1;
+                    self.pending = 0;
                     self.account = None;
+                    self.flow = Flow::default();
+                    self.flow_generation += 1;
+                    self.flow_pending = false;
                     self.welcome_done = false;
                     self.sessions.clear();
                     self.messages.clear();
@@ -451,6 +572,12 @@ impl Desktop {
                 a.person,
                 a.slot,
                 if self.connected {
+                    if let Some(receipt) = &self.flow.receipt {
+                        return format!(
+                            "{prefix} · {} · {} @ R2 · eingecheckt seit {}",
+                            a.person, a.slot, receipt.since
+                        );
+                    }
                     "verbunden"
                 } else {
                     "offline"
@@ -502,8 +629,22 @@ impl Desktop {
         }
         self.watch_started = true;
         self.last_event = Some(Instant::now());
-        let (api, tx) = (self.api.clone(), self.tx.clone());
-        std::thread::spawn(move || api.watch(tx));
+        let (api, tx, epoch) = (self.api.clone(), self.tx.clone(), self.connection_epoch);
+        let (watch_tx, watch_rx) = mpsc::channel();
+        std::thread::spawn(move || api.watch(watch_tx));
+        std::thread::spawn(move || {
+            while let Ok(reply) = watch_rx.recv() {
+                if tx
+                    .send(Reply::ConnectionEvent {
+                        epoch,
+                        reply: Box::new(reply),
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
     }
     fn pi_event(&mut self, id: String, event: serde_json::Value) {
         match event["type"].as_str() {
@@ -561,6 +702,7 @@ impl Desktop {
         while let Ok(reply) = self.rx.try_recv() {
             self.apply(reply);
         }
+        self.flow_tick(ui.ctx());
         if let Some(id) = self.pairing_login.clone() {
             if self.pending == 0
                 && self
@@ -609,6 +751,11 @@ impl Desktop {
             } else if self.pairing.is_some() {
                 self.pairing = None;
                 self.pairing_login = None;
+            } else if self.flow.stage != Stage::Start
+                && self.flow.stage != Stage::Working
+                && self.flow.stage != Stage::Done
+            {
+                self.cancel_flow();
             } else {
                 self.settings = None;
             }
@@ -629,6 +776,15 @@ impl Desktop {
                         ui.close();
                     }
                 });
+                if self.flow.stage == Stage::Working && self.flow.receipt.is_some() {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Auschecken …").clicked() {
+                            if let Some(request) = self.flow.preview() {
+                                self.flow_call(request);
+                            }
+                        }
+                    });
+                }
                 if self.demo {
                     ui.label(
                         RichText::new("VORSCHAU · erfundene Daten · keine Verbindung")
@@ -649,7 +805,9 @@ impl Desktop {
                     self.settings = Some(Section::Mode);
                 }
             });
-        if self.welcome_done && self.account.is_some() {
+        if self.flow.stage != Stage::Start && self.flow.stage != Stage::Working {
+            self.flow_card(ui);
+        } else if self.welcome_done && self.account.is_some() {
             self.main(ui);
         } else {
             self.welcome(ui);
@@ -681,14 +839,22 @@ impl Desktop {
                         }
                     }
                 } else {
-                    ui.label("Du hast eine Einladung bekommen – als Link oder als QR-Code. Öffne den Link, oder füge ihn hier ein."); ui.add_space(18.0);
-                    ui.add(egui::TextEdit::singleline(&mut self.invitation).hint_text("Einladungslink oder Code").desired_width(470.0)); ui.add_space(12.0);
-                    if ui.add_enabled(self.pending == 0 && !self.invitation.trim().is_empty(), egui::Button::new("Anmelden")).clicked() { self.redeem(); }
-                    if !self.demo && !self.hub_url.is_empty() && ui.add_enabled(self.pending == 0, egui::Button::new("Mit diesem Gerät wieder anmelden")).clicked() {
-                        self.invitation.clear(); self.redeem();
+                    ui.label("Dein Arbeitsplatz auf R2. Melde dich im Browser mit deinem UdK-Konto an.");
+                    ui.add_space(18.0);
+                    if ui.add_sized([330.0, 42.0], egui::Button::new("Einchecken mit UdK-Konto")).clicked() {
+                        if let Some(request) = self.flow.begin(CheckinMethod::Udk) { self.flow_call(request); }
                     }
-                    if self.pending > 0 { ui.horizontal(|ui| { ui.spinner(); ui.label("Einladung wird geprüft …"); }); }
-                    ui.add_space(14.0); ui.label(RichText::new("Keine Einladung? Frag deine Seminarleitung.").color(QUIET));
+                    ui.add_space(12.0);
+                    if ui.small_button("Ich habe einen Einladungscode").clicked() { self.guest = !self.guest; }
+                    if self.guest {
+                        ui.add_space(12.0);
+                        ui.add(egui::TextEdit::singleline(&mut self.invitation).hint_text("Einladungscode der Seminarleitung").desired_width(470.0));
+                        if ui.add_enabled(!self.invitation.trim().is_empty(), egui::Button::new("Als Gast einchecken")).clicked() {
+                            if let Some(request) = self.flow.begin(CheckinMethod::Guest(self.invitation.trim().into())) { self.flow_call(request); }
+                        }
+                    }
+                    ui.add_space(14.0);
+                    ui.label(RichText::new("Kein lokaler Agent. Dateien gehen nur mit deiner Bestätigung nach R2.").color(QUIET));
                 }
                 if let Some(e) = &self.error { ui.add_space(20.0); ui.label(e); }
             });
@@ -823,11 +989,31 @@ impl Desktop {
         });
         ui.horizontal(|ui| {
             ui.heading("Seminarprojekt");
-            ui.selectable_value(&mut self.files, false, "Chat");
-            ui.selectable_value(&mut self.files, true, "Dateien");
+            if ui
+                .selectable_label(!self.files && !self.seminar_selected, "Chat")
+                .clicked()
+            {
+                self.files = false;
+                self.seminar_selected = false;
+            }
+            if ui
+                .selectable_label(self.files && !self.seminar_selected, "Dateien")
+                .clicked()
+            {
+                self.files = true;
+                self.seminar_selected = false;
+            }
+            if ui
+                .selectable_label(self.seminar_selected, "Seminar")
+                .clicked()
+            {
+                self.seminar_selected = true;
+            }
         });
         ui.separator();
-        if self.files {
+        if self.seminar_selected {
+            self.seminar_tab(ui);
+        } else if self.files {
             ui.label("Dateiübertragung wird in I2 freigeschaltet. Es werden keine lokalen Dateien automatisch gelesen oder übertragen.");
             for text in [
                 "Nach R2 übertragen",
@@ -885,9 +1071,10 @@ impl Desktop {
                         ui.horizontal(|ui| {
                             let own = self.account.as_ref().is_some_and(|a| a.device_id == d.id);
                             ui.label(format!("{}{} · {} · zuletzt aktiv {}", d.name, if own { " (dieser Rechner)" } else { "" }, d.kind, d.last_seen));
-                            if ui.button("Abmelden …").clicked() {
+                            if !own && ui.button("Abmelden …").clicked() {
                                 revoke = Some(d.clone());
                             }
+                            if own { ui.label("bis zum Check-out"); }
                         });
                     }
                     if let Some(d) = revoke { self.revoke = Some(d); }
@@ -898,16 +1085,9 @@ impl Desktop {
                     ui.heading("Konto");
                     if let Some(a) = &self.account {
                         ui.label(format!("{} · {} @ R2", a.person, a.slot));
-                        if ui.button("Abmelden …").clicked() {
-                            self.revoke = Some(Device {
-                                id: a.device_id.clone(),
-                                name: a.device_name.clone(),
-                                kind: "Rechner".into(),
-                                last_seen: "jetzt".into(),
-                            });
-                        }
+                        ui.label("Zum Beenden dieses Arbeitsplatzes nutze ‚Auschecken …‘ oben rechts. Dateien werden vorher zur Prüfung angezeigt.");
                     } else {
-                        ui.label("Nicht angemeldet. Löse deine persönliche Einladung auf der Startkarte ein.");
+                        ui.label("Nicht eingecheckt. Melde dich auf der Startkarte mit deinem UdK-Konto an.");
                     }
                 }
                 Section::Appearance => { ui.heading("Darstellung"); ui.label("Die Oberfläche verwendet die mitgelieferten Schriften. Farben werden immer durch Zustandstext ergänzt."); }
@@ -1052,11 +1232,22 @@ impl Desktop {
             });
         }
     }
+    fn seminar_tab(&mut self, ui: &mut Ui) {
+        ui.heading("Seminar");
+        ui.label("Hier kommen Seminar-Chat, Direktnachrichten und begleitetes Mitsteuern hin. Noch nicht verbunden; es werden keine Nachrichten geteilt.");
+    }
     pub fn scene(&mut self, scene: &str) {
         if !self.demo {
             return;
         }
         self.enabled = true;
+        self.flow = Flow::default();
+        self.flow_generation += 1;
+        self.flow_pending = false;
+        self.flow_failed = false;
+        self.flow_retry = None;
+        self.seminar_selected = false;
+        self.guest = false;
         self.account = None;
         self.welcome_done = false;
         self.settings = None;
@@ -1064,6 +1255,9 @@ impl Desktop {
         self.hybrid_dialog = false;
         self.limit = false;
         self.pairing = None;
+        if self.flow_scene(scene) {
+            return;
+        }
         if scene == "v3-start" {
             return;
         }
@@ -1445,6 +1639,194 @@ mod tests {
             assert_ne!(s.color(), WORKING);
         }
         assert_eq!(SessionState::Working.color(), WORKING);
+    }
+    #[test]
+    fn i2_scenes_render_the_requested_cards_and_one_checkout_location() {
+        for (scene, expected) in [
+            ("v3-start", "Einchecken mit UdK-Konto"),
+            ("v3-checkin", "Warte auf Anmeldung im Browser …"),
+            (
+                "v3-warteschlange",
+                "Alle 10 Arbeitsplätze sind belegt. Du bist Nr. 2 in der Warteschlange.",
+            ),
+            ("v3-sync-auswahl", "Was möchtest du nach R2 mitnehmen?"),
+            ("v3-arbeiten-eingecheckt", "Auschecken …"),
+            ("v3-checkout-vorschau", "Auschecken und Dateien holen"),
+            ("v3-checkout-fertig", "Alles zurück in ~/cocopi"),
+            ("v3-seminar-platzhalter", "Seminar"),
+            ("v3-sync-fortschritt", "Deine Auswahl geht nach R2 …"),
+            ("v3-checkout-fortschritt", "Dateien kommen zurück …"),
+            ("v3-abholfach", "Dateien vom letzten Mal abholen"),
+        ] {
+            let ctx = egui::Context::default();
+            crate::setup_ctx(&ctx);
+            let mut d = Desktop::new(true);
+            d.scene(scene);
+            for _ in 0..4 {
+                frame(&mut d, &ctx, vec![]);
+            }
+            let output = frame(&mut d, &ctx, vec![]);
+            let texts = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::epaint::Shape::Text(t) => Some(t.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(texts.contains(&expected), "{scene}: {texts:?}");
+            let checkouts = texts.iter().filter(|s| **s == "Auschecken …").count();
+            assert_eq!(
+                checkouts,
+                usize::from(
+                    scene == "v3-arbeiten-eingecheckt" || scene == "v3-seminar-platzhalter"
+                )
+            );
+            assert_eq!(d.pending, 0);
+            assert!(!d.flow_pending);
+            if scene == "v3-arbeiten-eingecheckt" {
+                assert_eq!(
+                    d.status(),
+                    "☁ Nur Remote · Mira · account03 @ R2 · eingecheckt seit 14:02"
+                );
+            }
+        }
+    }
+    fn click_text(d: &mut Desktop, ctx: &egui::Context, text: &str) {
+        for _ in 0..3 {
+            frame(d, ctx, vec![]);
+        }
+        let output = frame(d, ctx, vec![]);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::epaint::Shape::Text(t) if t.galley.job.text == text => {
+                    Some(t.pos + t.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("Knopf fehlt: {text}"));
+        click(d, ctx, pos);
+    }
+    #[test]
+    fn i2_ui_selection_requires_click_and_preview_cancel_does_not_checkout() {
+        let ctx = egui::Context::default();
+        crate::setup_ctx(&ctx);
+        let mut d = Desktop::new(true);
+        d.scene("v3-sync-auswahl");
+        assert_eq!(d.flow.stage, Stage::Selection);
+        click_text(&mut d, &ctx, "Ohne Dateien starten");
+        assert_eq!(d.flow.stage, Stage::Working);
+        assert!(d.flow_retry.is_none(), "kein Upload ohne Klick auf Senden");
+        d.scene("v3-checkout-vorschau");
+        click_text(&mut d, &ctx, "Zurück zur Arbeit");
+        assert_eq!(d.flow.stage, Stage::Working);
+        assert!(d.flow.receipt.is_some());
+        assert!(d.flow_retry.is_none());
+    }
+    #[test]
+    fn i2_escape_cancels_browser_queue_upload_checkout_and_preview() {
+        for scene in [
+            "v3-checkin",
+            "v3-warteschlange",
+            "v3-sync-fortschritt",
+            "v3-checkout-fortschritt",
+            "v3-checkout-vorschau",
+        ] {
+            let ctx = egui::Context::default();
+            crate::setup_ctx(&ctx);
+            let mut d = Desktop::new(true);
+            d.scene(scene);
+            frame(
+                &mut d,
+                &ctx,
+                vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+            );
+            if scene == "v3-checkout-vorschau" {
+                assert_eq!(d.flow.stage, Stage::Working);
+            } else {
+                assert_eq!(d.flow.stage, Stage::Cancelling);
+            }
+            assert_ne!(d.flow.stage, Stage::Done);
+        }
+    }
+    #[test]
+    fn i2_checkout_invalidates_late_session_and_heartbeat_events() {
+        let mut d = Desktop::new(true);
+        d.scene("v3-checkout-fortschritt");
+        let epoch = d.connection_epoch;
+        d.apply(Reply::Flow(FlowReply::CheckedOut(
+            checkin::MemoryApi::summary(),
+        )));
+        d.apply(Reply::ConnectionEvent {
+            epoch,
+            reply: Box::new(Reply::Sessions(vec![Session {
+                id: "old".into(),
+                title: "Alt".into(),
+                state: SessionState::Working,
+                local: false,
+                pinned: false,
+            }])),
+        });
+        d.apply(Reply::ConnectionEvent {
+            epoch,
+            reply: Box::new(Reply::Heartbeat),
+        });
+        assert!(d.sessions.is_empty());
+        assert!(!d.connected);
+        assert!(d.account.is_none());
+    }
+    #[test]
+    fn i2_stale_worker_reply_after_cancel_cannot_reopen_checkin() {
+        let mut d = Desktop::new(true);
+        d.flow.stage = Stage::Browser;
+        d.flow_generation = 4;
+        d.flow_pending = true;
+        d.apply(Reply::FlowCompleted {
+            generation: 3,
+            reply: Box::new(Reply::Flow(FlowReply::CheckedIn(
+                checkin::MemoryApi::receipt(),
+            ))),
+        });
+        assert_eq!(d.flow.stage, Stage::Browser);
+        assert!(d.account.is_none());
+        assert!(d.flow_pending, "altes Ergebnis beendet nicht neuen Request");
+    }
+    #[test]
+    fn i2_worker_boundary_runs_memory_checkin_plan_and_checkout_without_filesystem() {
+        let mut d = Desktop::new(true);
+        d.demo = false; // reine Konstruktion, kein Profilzugriff
+        d.set_api(Arc::new(checkin::MemoryApi::default()));
+        let request = d.flow.begin(CheckinMethod::Guest("mock".into())).unwrap();
+        d.flow_call(request);
+        for _ in 0..2 {
+            let reply = d.rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            d.apply(reply);
+        }
+        assert_eq!(d.flow.stage, Stage::Selection);
+        assert!(d.connected);
+        assert_eq!(d.pending, 0);
+        let request = d.flow.preview().unwrap();
+        d.flow_call(request);
+        let reply = d.rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        d.apply(reply);
+        assert_eq!(d.flow.stage, Stage::Preview);
+        let request = d.flow.checkout().unwrap();
+        d.flow_call(request);
+        loop {
+            let reply = d.rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            d.apply(reply);
+            if d.flow.stage == Stage::Done {
+                break;
+            }
+            let request = d.flow.poll().unwrap();
+            d.flow_call(request);
+        }
+        assert!(d.account.is_none());
+        assert!(d.sessions.is_empty());
+        assert!(!d.flow_pending);
+        assert_eq!(d.flow.summary.unwrap().conflicts, 2);
     }
     #[test]
     fn revoked_returns_to_welcome() {
