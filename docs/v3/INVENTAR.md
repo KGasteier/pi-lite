@@ -172,7 +172,7 @@ Die pi-lite-UI ist funktionsgleich zu §1 (gleiche Logik, Webview). Hier steht n
 
 **Neu mobil:** M-QR Koppeln, M-QR Rechner bestätigen, M-EI Benachrichtigungen (ohne Inhalt), M-EI „Dieses Handy abmelden“, M-VO Ergebnisvorschau.
 
-**Transport (S5):** Die 30 `invoke`-Aufrufe in `app.js`, die 2 in `material-browser.js` und die 3 in `shared-bookmarks.js` (eigene Zählung: 35) bleiben mobil **nur**, soweit sie m1, m13–m15, m18 und M-VO bedienen: `net_sessions`, `resume_session`, `send`, `net_backends`, Rückfrage-Antwort und Abbruch. Alle übrigen entfallen mobil und brauchen keinen Hub-Endpunkt.
+**Transport (S5):** Es gibt 33 verschiedene Tauri-`invoke`-Befehle: 29 in `app.js`, 2 in `material-browser.js` und 2 in `shared-bookmarks.js` (Zählung per `grep -o "invoke('…" ui/*.js | sort -u`). Mobil bleiben davon **nur** die Befehle, die m1, m13–m15, m18 und M-VO bedienen: `net_sessions`, `resume_session`, `send` (auch für Rückfrage-Antwort und Abbruch) und `net_backends`. Alle übrigen entfallen mobil und brauchen keinen Hub-Endpunkt.
 
 ---
 
@@ -217,7 +217,7 @@ Die pi-lite-UI ist funktionsgleich zu §1 (gleiche Logik, Webview). Hier steht n
 | #53–#57 P2P-Zusammenarbeit | – | Weglassen (Flag) |
 | m11 Netz-Platzhalter | – | Weglassen |
 
-**Zählung:** 60 Desktop-Einträge, davon **14 Dubletten** gestrichen, **22 weggelassen**, 24 mit v3-Ort. Mobil bleiben 7 von 23 pi-lite-Funktionen, dazu kommen 5 neue.
+**Zählung** (per `awk` über die Tabellen §1): 60 Desktop-Zeilen. 14 Zeilen sind als **Dublette** markiert, 21 haben die Plattform „weg“. Mobil bleiben 7 von 23 pi-lite-Gruppen (m1, m13–m15, m18, m21→M-VO, m22), dazu kommen 5 neue Funktionen.
 
 ## 5. Offene Punkte für S2/S5
 
