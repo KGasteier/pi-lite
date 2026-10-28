@@ -37,15 +37,15 @@ impl Pi {
     /// Startet `pi --mode rpc` in `cwd` neu. Gibt die neue Generation zurück.
     /// Zusätzliche Argumente aus `COPI_ARGS` bzw. `PI_LITE_ARGS` (leerzeichengetrennt).
     pub fn start(&self, sink: Sink, cwd: &str, args: &[String]) -> Result<u64, String> {
-        // Erst Generation erhöhen, dann alten Prozess beenden – sonst meldet dessen
-        // Lese-Thread sein Ende noch unter der aktuellen Nummer.
-        let gen = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        self.stop();
+        // Freigabe vor jeder Änderung an einer bereits laufenden Session prüfen.
         let extra = std::env::var("COPI_ARGS").or_else(|_| std::env::var("PI_LITE_ARGS")).unwrap_or_default();
         let mut full_args: Vec<String> = vec!["--mode".into(), "rpc".into(), "--append-system-prompt".into(), IDENTITY_PROMPT.into()];
         full_args.extend_from_slice(args);
         full_args.extend(extra.split_whitespace().map(String::from));
-        let mut child = crate::winshim::pi_command(&full_args)
+        let mut command = crate::winshim::pi_command(crate::mode::SpawnPurpose::Chat, &full_args).map_err(|e| e.to_string())?;
+        let gen = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.stop();
+        let mut child = command
             .env("PI_LITE_SPEECH", "1")
             .current_dir(if cwd.is_empty() { "." } else { cwd })
             .stdin(Stdio::piped())
@@ -174,6 +174,7 @@ mod tests {
     /// env-mutierenden Testmodulen). Der Aufrufer muss den zurückgegebenen Guard bis zum
     /// Ende des Tests behalten.
     fn fake_pi(script: &str) -> (EnvGuard, std::path::PathBuf) {
+        crate::mode::set_for_test(crate::mode::Mode::Hybrid);
         let dir = std::env::temp_dir().join(format!("pi-backend-rpc-test-{}-{}", std::process::id(), fastrand_seed()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("pi");

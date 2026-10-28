@@ -1,0 +1,13 @@
+{
+  "protokoll": 1,
+  "typ": "geraete_liste",
+  "geraete": [
+    {
+      "geraet_id": "geraet-01",
+      "slot": "account01",
+      "art": "desktop",
+      "geraetename": "Miras Rechner",
+      "widerrufen": false
+    }
+  ]
+}

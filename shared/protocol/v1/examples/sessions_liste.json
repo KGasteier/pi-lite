@@ -1,0 +1,60 @@
+{
+  "protokoll": 1,
+  "typ": "sessions_liste",
+  "sessions": [
+    {
+      "protokoll": 1,
+      "typ": "session_zustand",
+      "session_id": "session-01",
+      "zustand": "ruht",
+      "seit": 1793200000000,
+      "titel": "Mein Entwurf",
+      "workspace": "/home/account01/Projekt"
+    },
+    {
+      "protokoll": 1,
+      "typ": "session_zustand",
+      "session_id": "session-01",
+      "zustand": "arbeitet",
+      "seit": 1793200000000,
+      "titel": "Mein Entwurf",
+      "workspace": "/home/account01/Projekt"
+    },
+    {
+      "protokoll": 1,
+      "typ": "session_zustand",
+      "session_id": "session-01",
+      "zustand": "wartet",
+      "seit": 1793200000000,
+      "titel": "Mein Entwurf",
+      "workspace": "/home/account01/Projekt"
+    },
+    {
+      "protokoll": 1,
+      "typ": "session_zustand",
+      "session_id": "session-01",
+      "zustand": "fertig",
+      "seit": 1793200000000,
+      "titel": "Mein Entwurf",
+      "workspace": "/home/account01/Projekt"
+    },
+    {
+      "protokoll": 1,
+      "typ": "session_zustand",
+      "session_id": "session-01",
+      "zustand": "bereit",
+      "seit": 1793200000000,
+      "titel": "Mein Entwurf",
+      "workspace": "/home/account01/Projekt"
+    },
+    {
+      "protokoll": 1,
+      "typ": "session_zustand",
+      "session_id": "session-01",
+      "zustand": "fehler",
+      "seit": 1793200000000,
+      "titel": "Mein Entwurf",
+      "workspace": "/home/account01/Projekt"
+    }
+  ]
+}

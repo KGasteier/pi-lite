@@ -1,0 +1,7 @@
+{
+  "protokoll": 1,
+  "typ": "fehler",
+  "code": "protokoll_zu_alt",
+  "was": "cocopi muss aktualisiert werden. R2 spricht eine neuere Sprache.",
+  "tun": "Lade die neue cocopi-Version bei deiner Seminarleitung herunter."
+}

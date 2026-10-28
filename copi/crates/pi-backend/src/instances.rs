@@ -603,7 +603,7 @@ impl HubInstances {
                 };
                 let have = last.as_deref().and_then(|l| l.parse::<u64>().ok()).unwrap_or(0);
                 let mut live = !instance_stream;
-                if instance_stream && target.map_or(false, |t| have >= t) {
+                if instance_stream && target.is_some_and(|t| have >= t) {
                     live = true;
                     sink(tag(&inst, Ev::Live));
                 }
@@ -628,7 +628,7 @@ impl HubInstances {
                             Some("hub_restart") => {}
                             _ => sink(tag(&inst, Ev::Line(ev.to_string()))),
                         }
-                        if !live && target.map_or(true, |t| seq.map_or(false, |s| s >= t)) {
+                        if !live && target.is_none_or(|t| seq.is_some_and(|s| s >= t)) {
                             live = true;
                             sink(tag(&inst, Ev::Live));
                         }
@@ -828,6 +828,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn local_two_instances_independent_with_history_and_restart() {
+        crate::mode::set_for_test(crate::mode::Mode::Hybrid);
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("pi-inst-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

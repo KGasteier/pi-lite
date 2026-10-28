@@ -69,8 +69,7 @@ pub fn config_path() -> Option<std::path::PathBuf> {
     crate::copi_config_dir().map(|d| d.join("backends.json"))
 }
 
-/// Liest die Liste; fehlt die Datei, gibt es genau das lokale Backend. Ein lokales Backend ist
-/// immer enthalten (wird vorangestellt, falls die Datei es nicht nennt).
+/// Ohne Hybrid gibt es weder einen lokalen Eintrag noch einen lokalen Rückfall.
 pub fn parse(text: &str) -> Result<Vec<BackendCfg>, String> {
     let mut v: Vec<BackendCfg> = serde_json::from_str(text).map_err(|e| format!("backends.json ungültig: {e}"))?;
     let mut seen = std::collections::HashSet::new();
@@ -79,17 +78,19 @@ pub fn parse(text: &str) -> Result<Vec<BackendCfg>, String> {
             return Err(format!("backends.json: doppelte id \"{}\"", b.id));
         }
     }
-    if !v.iter().any(|b| b.kind == "local") {
+    if crate::mode::current() == crate::mode::Mode::RemoteOnly {
+        v.retain(|b| b.kind != "local");
+    } else if !v.iter().any(|b| b.kind == "local") {
         v.insert(0, BackendCfg::local());
     }
     Ok(v)
 }
 
 pub fn load() -> Result<Vec<BackendCfg>, String> {
-    let Some(p) = config_path() else { return Ok(vec![BackendCfg::local()]) };
+    let Some(p) = config_path() else { return parse("[]") };
     match std::fs::read_to_string(&p) {
         Ok(t) => parse(&t),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![BackendCfg::local()]),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => parse("[]"),
         Err(e) => Err(e.to_string()),
     }
 }
@@ -114,11 +115,22 @@ mod tests {
 
     #[test]
     fn local_is_always_present_and_ids_unique() {
+        crate::mode::set_for_test(crate::mode::Mode::Hybrid);
         let v = parse(r#"[{"id":"s","label":"Server","kind":"hub","url":"http://h:1","token":"x"}]"#).unwrap();
         assert_eq!(v[0].kind, "local");
         assert_eq!(v[1].id, "s");
         assert!(v[1].enabled);
         assert!(parse(r#"[{"id":"a","label":"","kind":"local"},{"id":"a","label":"","kind":"local"}]"#).unwrap_err().contains("doppelte"));
+    }
+
+    #[test]
+    fn remote_only_backends_has_no_local() {
+        crate::mode::set_for_test(crate::mode::Mode::RemoteOnly);
+        assert!(parse("[]").unwrap().is_empty());
+        assert!(parse(r#"[{"id":"l","label":"L","kind":"local"}]"#).unwrap().is_empty());
+        let home = std::env::temp_dir().join(format!("remote-backends-{}", std::process::id()));
+        let _g = crate::test_support::EnvGuard::temp_home(&home);
+        assert!(load().unwrap().is_empty());
     }
 
     #[test]
@@ -140,6 +152,7 @@ mod tests {
 
     #[test]
     fn roundtrip_save_load() {
+        crate::mode::set_for_test(crate::mode::Mode::Hybrid);
         let home = std::env::temp_dir().join(format!("pi-backends-{}", std::process::id()));
         let _g = crate::test_support::EnvGuard::temp_home(&home);
         let l = vec![BackendCfg::local(), BackendCfg::hub("s", "S", "http://a:1", "tok")];
