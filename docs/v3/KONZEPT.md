@@ -472,10 +472,12 @@ Codes mit HTTP-Status stammen aus `PROTOKOLL.md` §I2 (S3) bzw. dem Empfang (S7)
 | `empfang_offline` (Client) | F5, F7 | „Der Empfang auf R2 ist nicht erreichbar.“ | „Prüfe deine Verbindung. Deine Dateien auf R2 bleiben, bis du auscheckst.“ |
 | `ausweis_ungueltig` 401 | F8, F9 | „Dein Geräteausweis ist ungültig.“ | „Melde dich erneut am Empfang an.“ |
 | `pfad_nicht_erlaubt` 403 | F6 | „Dieser Ordner ist nicht freigegeben.“ | „Wähle einen Projektordner deines Kontos.“ → Vorschlag Wortlaut I2: „Wähle einen Ordner in ~/cocopi.“ |
+| `ordner_fehlt` (Client) | F6 | „Der Ordner ~/cocopi fehlt.“ | „cocopi legt ihn jetzt leer an. Lege deine Projekte unter Projekte/ ab.“ |
 | `zu_gross` (Client) | F6 | „Deine Auswahl ist größer als 2 GB.“ | „Nimm weniger Projekte mit. Große Dateien kannst du einzeln abwählen.“ |
 | `pruefsumme_falsch` (Client) | F7 | „Die Dateien sind nicht vollständig angekommen. Es wurde nichts gelöscht.“ | „Klicke ‚Erneut prüfen‘. Deine Dateien bleiben auf R2.“ |
 | `checkout_laeuft` 409 | F7 | „Dieser Arbeitsplatz wird gerade zurückgegeben.“ | „Versuche es erneut oder frage die Seminarleitung.“ |
 | `leeren_unbestaetigt` 409 | F7 | „Der Arbeitsplatz ist noch nicht nachweislich leer.“ | „Die Seminarleitung muss den Arbeitsplatz prüfen.“ |
 | `kein_platz_lokal` (Client) | F7 | „Auf deinem Rechner ist nicht genug Platz.“ | „Mach {Größe} frei und klicke ‚Erneut prüfen‘. Auf R2 wird nichts gelöscht.“ |
+| `abholfach_fremd` (Client) | F7 | „Dieses Abholfach kann nur der Rechner öffnen, mit dem du eingecheckt warst.“ | „Checke an diesem Rechner ein. Nach 72 h wird es gelöscht.“ |
 | `nicht_gesendet` (Client) | F8 | „Nachricht nicht gesendet.“ | „Die Verbindung zu {Person} fehlt. Versuche es gleich noch einmal.“ |
 | `freigabe_beendet` (Client) | F9 | „Freigabe beendet.“ | „Mira steuert ihre Session wieder allein.“ (Grund: Check-out, Ablauf, Ausweis oder Verbindung) |
