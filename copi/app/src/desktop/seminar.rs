@@ -75,6 +75,9 @@ impl Seminar {
             Err(e) => self.error = Some(e),
         }
     }
+    pub fn address(&self) -> Option<&str> {
+        self.net.address()
+    }
     pub fn set_contacts(&mut self, peers: Vec<(PeerId, String)>) -> Result<(), String> {
         if peers
             .iter()

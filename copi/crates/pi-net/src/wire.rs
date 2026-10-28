@@ -54,6 +54,8 @@ pub enum Payload {
     /// Additive Seminarhülle: TLS-Absender bleibt maßgeblich; ID/Zeit begrenzen
     /// Wiederholungen des Transportworkers, insbesondere bei Mitsteuer-Prompts.
     SeminarPacket { id: String, sent_ms: u64, payload: Box<Payload> },
+    /// Frischer, in SeminarPacket eingehüllter Lebensnachweis (keine Rollenquelle).
+    SeminarPresence,
     /// A9 Eingabe; identische Consent-Prüfung wie RemoteInput (v2 bleibt gültig).
     Steuern { req: String, text: String },
     /// Einladung in einen Chat (ohne Verlauf). Annahme nur nach Bestätigung durch die Person.

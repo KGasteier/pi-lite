@@ -54,6 +54,9 @@ pub trait SeminarNet {
     fn errors(&mut self) -> Vec<String> {
         vec![]
     }
+    fn address(&self) -> Option<&str> {
+        None
+    }
     fn set_contacts(&mut self, _peers: Vec<(PeerId, String)>) -> Result<(), String> {
         Err("Dieser Seminaradapter unterstützt keine Netzverbindung".into())
     }

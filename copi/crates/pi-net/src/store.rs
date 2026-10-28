@@ -831,7 +831,7 @@ impl ChatStore {
                     .step = step;
                 Applied::StepChanged { space, step }
             }
-            Payload::Steuern { .. } | Payload::Geraeteausweis { .. } | Payload::SeminarPacket { .. } => return Err("gehört zur Ausweis-/Freigabeprüfung".into()),
+            Payload::Steuern { .. } | Payload::Geraeteausweis { .. } | Payload::SeminarPacket { .. } | Payload::SeminarPresence => return Err("gehört zur Ausweis-/Freigabeprüfung".into()),
             Payload::RemoteRequest { .. }
             | Payload::RemoteGrant { .. }
             | Payload::RemoteEnd { .. }

@@ -72,3 +72,89 @@ pub fn production(
     let net = NodeNet::start(identity, ausweis, state.issuer().into(), Box::new(slot))?;
     Ok(Seminar::new(state, Box::new(net)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pi_net::ausweis::Rolle;
+    use serde_json::json;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        time::Duration,
+    };
+
+    #[test]
+    fn slot_hub_posts_sender_and_own_id_not_untrusted_cwd() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut header = vec![];
+            while !header.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                socket.read_exact(&mut byte).unwrap();
+                header.push(byte[0]);
+                assert!(header.len() < 16_384);
+            }
+            let header = String::from_utf8(header).unwrap();
+            assert!(
+                header.starts_with("POST /v1/sessions/own-id/senden HTTP/1.1\r\n"),
+                "{header}"
+            );
+            let length: usize = header
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|n| n.trim().parse().unwrap())
+                })
+                .unwrap();
+            let mut body = vec![0; length];
+            socket.read_exact(&mut body).unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+                json!({"protokoll":1,"text":"Bitte gliedern", "von":{"person":"Aylin","rolle":"seminarleitung"}})
+            );
+            let body = json!({"protokoll":1,"typ":"gesendet"}).to_string();
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        });
+        let hub = HubV1::new(&format!("http://{address}")).unwrap();
+        let own = SessionRef {
+            label: "Handout".into(),
+            cwd: "not-a-hub-id".into(),
+        };
+        let mut slot = SlotHub::new(hub, vec![(own.clone(), "own-id".into())]).unwrap();
+        let von = Von {
+            person: "Aylin".into(),
+            rolle: Rolle::Seminarleitung,
+        };
+        assert!(
+            slot.senden(
+                &SessionRef {
+                    label: own.label.clone(),
+                    cwd: "foreign".into()
+                },
+                "Nie",
+                &von
+            )
+            .is_err()
+        );
+        assert!(
+            slot.senden(
+                &own,
+                "Nie",
+                &Von {
+                    person: "Mira".into(),
+                    rolle: Rolle::Teilnehmende
+                }
+            )
+            .is_err()
+        );
+        slot.senden(&own, "Bitte gliedern", &von).unwrap();
+        server.join().unwrap();
+    }
+}
