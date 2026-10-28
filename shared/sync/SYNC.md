@@ -71,10 +71,19 @@ Check-out gesperrt (keine stille Löschung). Maximal acht ausstehende Slot-Archi
 ## Client-Schnittstellen
 
 `pi-sync` arbeitet nur mit `Read`/`Write`, ohne HTTP. Auswahl zeigt je Bereich/Projekt
-persönliche Dateizahl/Größe und ausgelassene flüchtige/große Dateien. Archiv erst
+persönliche Dateizahl/Größe und ausgelassene flüchtige/große Dateien.
+`selection()` ergänzt je Eintrag die Liste `gross:[{pfad,bytes}]`, sortiert nach
+Pfad; `pfad` relativ zur Auswahlwurzel (Einzeldatei: ihr Name). Die Pfade lassen
+sich nach Einzelbestätigung unverändert an `upload_explicit` übergeben. Summen
+`gross_bytes/gross_dateien` bleiben erhalten; nichts aus `gross` ist vorausgewählt.
+Archiv erst
 als `.sync/archiv/…tar.gz` sichern und SHA256 prüfen. Keine vorhandene Datei wird
 ersetzt. Abweichender Inhalt landet daneben als `Name (R2 TT.MM. HH-MM).ext`,
-bei Wiederholung mit ` 2`, ` 3` usw.; Konflikteintrag in `.sync/konflikte/`.
+bei Wiederholung mit ` 2`, ` 3` usw. **hinter** der schließenden Klammer und vor
+der letzten Endung: `Plakat (R2 28.10. 22-00) 2.psd`. Ohne Endung wird nur der
+Zusatz angehängt; `.gitignore` gilt als Name ohne Endung. Bei `Buch.tar.gz` bleibt
+nur die letzte Endung außen: `Buch.tar (R2 28.10. 22-00).gz`.
+Konflikteintrag in `.sync/konflikte/`.
 Identische Dateien benötigen keine zweite Kopie. `.sync/zustand.json` enthält
 `v`, `letzter_checkin`, `auswahl`, `manifest`; atomarer Austausch.
 Erst nach erfolgreichem Import bestätigt der Aufrufer `erhalten{sha256}`.
@@ -85,8 +94,11 @@ Ed25519: öffentliche Schlüssel 32 Byte Base64url, private PKCS8-PEM-Datei 0600
 Signiertes JSON `{...Nutzfelder,signatur:"Base64url"}`; signierte Bytes sind alle
 Felder außer `signatur` als rekursiv nach Schlüsseln sortiertes UTF-8-JSON ohne
 Leerraum (nur sichere Ganzzahlen). Belegung, Freigabe und
-Geräteausweis haben exakt die A6-Inhalte. Zeitstempel der Ausweise in Unixsekunden
-(`iat`,`exp`), `gueltig_bis` in Unixmillisekunden wie v1.
+Geräteausweis haben die A6-Inhalte plus `epoche` in Belegung/Freigabe (N3).
+`iat`, `exp` und `gueltig_bis` sind Unixsekunden (N4); Challenge-/Tokenfristen,
+Warteliste, interne Pool-Zeit und Abholfach-Ablauf bleiben Millisekunden.
+`net_pubkey` ist die kleingeschriebene iroh-Knoten-ID in Hex (64 Zeichen), kein
+Base64url-Ed25519-Schlüssel.
 
 Desktop-Anmeldung kompatibel mit S3: `POST anmelden/challenge {geraet_id}`,
 `POST anmelden {challenge_id,signatur}` → `angemeldet{zugangstoken,…}`; Payload
@@ -119,6 +131,95 @@ verschlüsseltes Abholfach dauerhaft speichern, dann gleicher Löschablauf. Bei 
 bleibt der Slot gesperrt; niemals Erfolg melden. Hub-Aufrufe laufen über einen
 expliziten signierten Service-Adapter; bis S3 die Dienst-Routen vor Geräte-Auth
 durchreicht, verweigert der Hub diese Anfragen sicher.
+
+## Epoche, Wiederholung und leerer Abbruch (N1–N6)
+
+Der Empfang liest `<EMPFANG_EPOCHEN_DIR>/accountNN.epoche` vor der ersten
+Aktivierung (Standard `/var/lib/cocopi/slots`). Nur sichere nichtnegative Ganzzahl,
+reguläre Datei, kein Link. Fehlende/beschädigte Datei sperrt; Epoche 0 ohne Datei
+nur mit expliziter Testoption, niemals als Betriebsfallback. Empfang persistiert
+die vollständige signierte Belegung **vor** dem ersten Hub-Aufruf. Neustart und
+Sweep senden offene Aktivierungen bytegleich erneut. Epoche nie nachträglich an
+einer alten Signatur ändern. Freigabe wird ebenfalls vor dem Senden persistiert;
+sie trägt dieselbe Epoche wie ihre Belegung. `slotctl leeren` erhöht die Datei;
+der nächste Check-in bekommt die neue Epoche.
+
+Belegung/Freigabe: nach Transportfehler oder 5xx höchstens drei Wiederholungen
+nach 1/3/9 Sekunden (insgesamt vier Versuche). Permanente 4xx nicht wiederholen.
+Hub bestätigt bytegleiche aktive Belegung bzw. bereits erfolgte identische
+Freigabe idempotent (N2); abweichender Inhalt bleibt verboten. Archivaufträge mit
+Einmal-Nonce werden **nicht** blind wiederholt.
+
+N6 nutzt denselben `POST /v1/empfang/checkout {checkin_id}`. Empfang prüft vor
+Archivbau signiert `POST /v1/sync/dienst/leer` mit `aktion:"leer_pruefen"`;
+Antwort `sync_leer{leer:boolean}`. Alle vier Sync-Bereiche und Upload-Manifest
+müssen leer sein (auch Links und leere Projektordner verhindern Abbruch), kein
+Upload darf laufen. Positive Prüfung versiegelt neue Uploads dauerhaft im Slot-State
+(`sync-abbruch.json`, beim Slot-Leeren gelöscht), auch über Hub-Neustart hinweg. Zusätzlich muss
+S3 im Handler-Kontext `reserveEmptyCheckout()` anbieten: synchron prüfen, dass
+noch keine Session gestartet wurde, dann neue Starts bis Freigabe sperren.
+Ohne diesen Haken `leer:false`, also normaler Archivweg statt Datenrisiko.
+Die Sessionstart-Sperre liegt im S3-Router, nicht in `pi-sync`.
+
+Nur nach positiver Prüfung folgt Hub-Freigabe → Leeren → `pruefen` → Pool frei,
+ohne Archiv und ohne Abholfach; Antwort direkt `ausgecheckt`. Desktop muss auch
+diese Alternative zu `checkout_bereit` behandeln. Bei vorhandenen Daten oder
+fehlender sicherer Prüfung bleibt der normale Archivweg. Fehler beim Leeren
+sperrt den Slot; bestätigter leerer Abbruch bleibt persistent fortsetzbar.
+
+## Ablauf Check-in bis Check-out
+
+```mermaid
+flowchart TD
+    Start[Anmelden] --> Identitaet{Nachweis gültig?}
+    Identitaet -->|Nein| LoginFehler[Anmeldung erklären, erneut versuchen]
+    LoginFehler --> Start
+    Identitaet -->|Ja| Pool{Platz frei?}
+    Pool -->|Nein| Warten[Platz in Warteschlange zeigen]
+    Warten -->|90 s ohne Abfrage| Start
+    Warten -->|Nachgerückt| Reserviert
+    Pool -->|Ja| Reserviert[Slot reservieren und Epoche lesen]
+    Reserviert -->|Datei fehlt oder beschädigt| Gesperrt[Slot bleibt gesperrt, Seminarleitung fragen]
+    Reserviert --> Signieren[Signierte Belegung dauerhaft speichern]
+    Signieren --> Aktivieren[Belegung an Hub senden]
+    Aktivieren -->|Antwort verloren oder 5xx| Wiederholen[Bytegleich wiederholen, höchstens 3-mal]
+    Wiederholen --> Aktivieren
+    Wiederholen -->|Weiter ohne Antwort| Recovery[Reservierung bleibt, Neustart oder Sweep wiederholt]
+    Recovery --> Aktivieren
+    Aktivieren -->|Epoche falsch oder dauerhafter Fehler| Gesperrt
+    Aktivieren -->|Bestätigt| Auswahl[Dateien und große Medien bewusst auswählen]
+    Auswahl -->|Bestätigt| Upload[Auswahl sicher hochladen]
+    Upload -->|Pfad, Größe oder Verbindung fehlerhaft| UploadFehler[Nichts als übertragen melden, Auswahl prüfen]
+    UploadFehler --> Auswahl
+    Upload --> Arbeit[Auftrag und Ergebnisse auf R2]
+    Auswahl -->|Abbrechen nach Vergabe| Checkout[Check-out anfordern]
+    Arbeit --> Checkout
+    Checkout --> Leer{Hub bestätigt leer und sperrt neue Arbeit?}
+    Leer -->|Ja| Freigabe[Signierte Hub-Freigabe, idempotent]
+    Leer -->|Nein| Vorschau[Kommt zurück oder wird gelöscht anzeigen]
+    Vorschau -->|Auswahl bestätigt| Archiv[Archiv am Hub bauen]
+    Vorschau -->|Zurück| Arbeit
+    Archiv -->|Fehler oder mehr als 2 GiB| Behalten[Daten bleiben auf R2, erneut versuchen]
+    Behalten --> Vorschau
+    Archiv --> Import[Archiv lokal sichern, Hash prüfen, ohne Überschreiben importieren]
+    Import -->|Fehler oder Abbruch| Behalten
+    Import -->|Erfolgreich| Erhalten[Hash am Empfang bestätigen]
+    Erhalten --> Freigabe
+    Arbeit -->|Zwangs-Check-out| Zwang[Archiv mit Geräteschlüssel verschlüsseln]
+    Zwang -->|Fehler| Behalten
+    Zwang --> Fach[Abholfach dauerhaft sichern, höchstens 72 h]
+    Fach --> Freigabe
+    Freigabe -->|Antwort verloren| RetryFreigabe[Bytegleich wiederholen, 1/3/9 s]
+    RetryFreigabe --> Freigabe
+    Freigabe -->|Bestätigt| Leeren[Slot leeren, Epoche erhöhen]
+    Leeren --> Pruefen{Nachweislich leer?}
+    Pruefen -->|Nein oder Helferfehler| Gesperrt
+    Pruefen -->|Ja| Frei[Erst jetzt Pool frei und ausgecheckt]
+```
+
+Das Diagramm beschreibt den Vertrag, keine Betriebs-/UI-Abnahme. Der
+S3-Sessionstart-Haken und Desktop-Behandlung der direkten Antwort müssen im
+integrierten Stand gesondert nachgewiesen werden.
 
 Einladungen: einmalige zufällige Codes (5 Minuten), nur durch authentisierte
 Seminarleitung, Rolle immer `gast`. Logs nur Zeitpunkt, Ereignis und HMAC-pid,
