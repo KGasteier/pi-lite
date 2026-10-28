@@ -7,7 +7,7 @@ description = "Natives egui-Frontend für pi (Nachfolger-Prototyp von pi-lite)"
 
 [features]
 default = []
-cocopi = ["dep:pi-net", "dep:qrcodegen", "dep:pi-sync", "dep:sha2"]
+cocopi = ["dep:pi-net", "dep:qrcodegen", "dep:pi-sync", "dep:sha2", "pi-backend/cocopi"]
 
 [[bin]]
 name = "cocopi"
