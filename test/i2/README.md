@@ -39,7 +39,9 @@ für solche Pfade positionale, gequotete Argumente verwenden.
   und temporäre Slots; Check-in → Upload → Vorschau → Archiv → lokale Sicherung
   → Erhalten → N7-Leerbeleg → freier Poolplatz. Alter Token ist ungültig.
   Fake-pi aus dem Hub antwortet auf `get_state` und wird vor dem Leeren beendet.
-  Dazu 20 parallele HTTP-Check-ins, FIFO-Promotion, fehlschlagendes Leeren und
+  Dazu 20 parallele HTTP-Check-ins von verschiedenen Absender-IPs über den
+  explizit vertrauten Loopback-Testproxy (N14 bleibt aktiv), FIFO-Promotion,
+  fehlschlagendes Leeren und
   verschlüsseltes Abholfach (fremde Person, falscher Signaturschlüssel,
   falscher Entschlüsselungsschlüssel, erfolgreicher Besitzer-Abruf).
 - `belegung.i2b.test.mjs`: echte v1-Hub-HTTP-Routen, flache Ed25519-Signaturen;
@@ -67,11 +69,24 @@ für solche Pfade positionale, gequotete Argumente verwenden.
   Identität, keine wartenden/reservierten Personen, keine Slot-/Geräteschlüssel;
   ohne Auth, mit falschem Schlüssel, im Check-out und nach Freigabe gesperrt.
   N11-Adressen sind als additive Felder zulässig; kein Adressvalidierungsnachweis.
+  N12: simulierte Handy-only-Hubaktivität verhindert Leerlauf-Zwang und erneuert
+  `zuletzt`; späteres `false` erlaubt ihn nach erneut mehr als acht Stunden.
+  Transportfehler und ungültige Aktivantworten erlauben erst nach zweiter Prüfung
+  bei ≥ fünf Minuten Abstand Zwang; bei −1 ms kein erneuter Hubaufruf. Erster
+  Fehlerzeitpunkt und erneuertes `zuletzt` überleben Empfang-Neustarts. Nach Zwang
+  werden Archivinhalt/Entschlüsselung, Freigabe und Leerbeleg geprüft.
+- `rate-limit.i4.test.mjs`: echte Loopback-HTTP-Anfragen prüfen N14 für Nonce
+  und Check-in: zehn je IP/Endpunkt, elfte 429 `zu_viele_anfragen` mit
+  `Retry-After`, andere IP unbetroffen. Auffüllen nach exakt sechs Sekunden
+  und Spoofing mit wechselndem XFF ohne Trust-Flag (Socket-Limit bleibt aktiv).
 - `abholfach.test.mjs`: Schlüsselbindung, Manipulation und 72-h-Ablauf.
 - `fixtures.test.mjs`: validiert die selbst erzeugten Miniarchive/Auswertung.
 
 **Testdoubles:** `empfang-harness.mjs` injiziert einen expliziten Service-Adapter
-für Belegung/Freigabe/Archiv. Dieser prüft S7-Signaturen und registriert Geräte
+für Belegung/Freigabe/Archiv und N12-Aktivprüfung. `isActive(slot)` liefert
+standardmäßig ausdrücklich `false`; Tests injizieren gezielt Aktivität oder
+Fehler. Dies ist kein Handy-/SSE-Nachweis am produktiven Hubrouter. Der Adapter
+prüft S7-Signaturen und registriert Geräte
 im echten DeviceStore, ersetzt aber die produktiven `/v1/belegung`-/
 `/v1/freigabe`-Routen. Auch `clearSlot` ist eine sichere Implementierung nur für
 `mkdtemp`-Ordner, **nicht** `cocopi-slotctl`. Der Archivadapter benutzt die echte
