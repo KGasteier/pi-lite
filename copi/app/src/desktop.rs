@@ -69,6 +69,22 @@ pub enum SessionState {
     Done,
     Error,
 }
+/// N15: nur nichtlokale Hub-Sessions, ohne Inhalte oder Pfade.
+fn seminar_ankuendigung(sessions: &[Session]) -> Vec<pi_net::wire::SessionAnkuendigung> {
+    sessions
+        .iter()
+        .filter(|s| !s.local)
+        .take(32)
+        .map(|s| pi_net::wire::SessionAnkuendigung {
+            id: s.id.clone(),
+            label: s.title.chars().take(120).collect(),
+            zustand: match s.state.text() {
+                "" => "bereit".into(),
+                t => t.into(),
+            },
+        })
+        .collect()
+}
 impl SessionState {
     pub fn text(self) -> &'static str {
         match self {
@@ -651,30 +667,27 @@ impl Desktop {
                 if self.selected.is_none() {
                     self.selected = sessions.first().map(|s| s.id.clone());
                 }
-                let changed = self
-                    .sessions
-                    .iter()
-                    .map(|s| (&s.id, &s.title))
-                    .collect::<Vec<_>>()
-                    != sessions
-                        .iter()
-                        .map(|s| (&s.id, &s.title))
-                        .collect::<Vec<_>>();
                 self.sessions = sessions;
                 self.connected = true;
-                if !self.demo && self.flow.receipt.is_some() && (changed || self.seminar.is_none())
-                {
-                    if let Some(previous) = &mut self.seminar {
-                        previous.checkout();
-                    }
-                    self.seminar = None;
-                    match self.api.seminar(&self.sessions) {
-                        Ok(seminar) => {
-                            self.seminar = seminar;
-                            self.verzeichnis_anwenden();
+                if !self.demo && self.flow.receipt.is_some() {
+                    if self.seminar.is_none() {
+                        match self.api.seminar(&self.sessions) {
+                            Ok(seminar) => {
+                                self.seminar = seminar;
+                                self.verzeichnis_anwenden();
+                            }
+                            Err(error) => {
+                                self.error = Some(format!("Seminar noch nicht verbunden. {error}"))
+                            }
                         }
-                        Err(error) => {
-                            self.error = Some(format!("Seminar noch nicht verbunden. {error}"))
+                    }
+                    // N15: eigene Sessions ankündigen, ohne das Seminar neu aufzubauen.
+                    let ankuendigung = seminar_ankuendigung(&self.sessions);
+                    if let Some(seminar) = &mut self.seminar {
+                        if let Err(error) = seminar.sessions_aktualisieren(ankuendigung) {
+                            self.error = Some(format!(
+                                "Sessions konnten im Seminar nicht angezeigt werden. {error}"
+                            ));
                         }
                     }
                 }
