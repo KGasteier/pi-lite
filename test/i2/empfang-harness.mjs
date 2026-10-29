@@ -8,7 +8,10 @@ import { once } from 'node:events';
 import assert from 'node:assert/strict';
 import { hubDir, importHub, identity, login, request, syncFixture, hash } from './harness.mjs';
 
-export async function empfangFixture(t, count = 10, { registerAfter, archiveBefore, detectEmpty = false, now = Date.now } = {}) {
+export async function empfangFixture(t, count = 10, {
+  registerAfter, archiveBefore, detectEmpty = false, now = Date.now,
+  isActive = async () => false, trustProxy = false,
+} = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cocopi-i2-empfang-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const { createFakeOidc } = await importHub('empfang/test/fake-oidc.mjs');
@@ -27,6 +30,9 @@ export async function empfangFixture(t, count = 10, { registerAfter, archiveBefo
   }
   // Service-Adapter ist ausdrücklich ein Testdouble; echte Sync-/Geräte-Routen laufen auf Loopback.
   const adapter = {
+    // N12: false ist ein ausdrücklicher Inaktivitätsnachweis des Testdoubles.
+    // Tests können Hubaktivität oder fehlgeschlagene Prüfungen gezielt einspeisen.
+    isActive,
     async isEmpty(slot) {
       return detectEmpty && Object.values(hubFixtures[slot].roots).every(root => fs.readdirSync(root).length === 0);
     },
@@ -64,7 +70,7 @@ export async function empfangFixture(t, count = 10, { registerAfter, archiveBefo
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   const boxesDir = path.join(tmp, 'empfang/abholfach');
-  const configuration = { dir: path.join(tmp, 'empfang'), slots, oidc, origin: base, adapter, epochenDir, now,
+  const configuration = { dir: path.join(tmp, 'empfang'), slots, oidc, origin: base, adapter, epochenDir, now, trustProxy,
     sleep: async ms => { delays.push(ms); },
     clearSlot: async (slot, action) => {
       const f = hubFixtures[slot]; events.push(`${action}:${slot}`);
@@ -86,9 +92,10 @@ export async function empfangFixture(t, count = 10, { registerAfter, archiveBefo
   const restart = () => { empfang = createEmpfang(configuration); return empfang; };
   restart();
   let serial = 0;
-  async function checkin({ sub = `person-${++serial}`, leader = false, owner = identity(), net_pubkey } = {}) {
+  async function checkin({ sub = `person-${++serial}`, leader = false, owner = identity(), net_pubkey, ip } = {}) {
+    const headers = ip === undefined ? {} : { 'x-forwarded-for': ip };
     const nonceRequestedAt = now();
-    const nonceResponse = await request(base, '/v1/empfang/nonce', { body: { geraet_pubkey: owner.pubkey } });
+    const nonceResponse = await request(base, '/v1/empfang/nonce', { headers, body: { geraet_pubkey: owner.pubkey } });
     assert.equal(nonceResponse.status, 200, 'Check-in braucht eine echte Server-Nonce');
     const noncePacket = await nonceResponse.json();
     assert.equal(noncePacket.typ, 'checkin_nonce');
@@ -98,7 +105,7 @@ export async function empfangFixture(t, count = 10, { registerAfter, archiveBefo
     const sec = Math.floor(now() / 1000);
     const claims = { sub, nonce, iat: sec, exp: sec + 3600, jti: crypto.randomUUID(),
       groups: [leader ? 'cocopi-seminarleitung' : 'cocopi-teilnehmende'] };
-    const response = await request(base, '/v1/empfang/checkin', { body: {
+    const response = await request(base, '/v1/empfang/checkin', { headers, body: {
       nachweis: { art: 'oidc', id_token: fake.token(claims), nonce },
       geraet: { pubkey: owner.pubkey, name: 'I2-Testgerät', art: 'desktop' }, archiv_pubkey: owner.archiv_pubkey,
       ...(net_pubkey === undefined ? {} : { net_pubkey }),

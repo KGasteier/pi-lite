@@ -102,6 +102,74 @@ test('N8 Tagesende: Check-in nach 23:30 nutzt den Folgetag; Tagesende erzwingt t
   await assertForced(f, person, clock);
 });
 
+test('N12 Handy-only: Hubaktivität verhindert Leerlauf-Zwang; nach Inaktivität wird sicher ausgecheckt', options, async t => {
+  const started = new Date(2026, 9, 29, 0, 0).getTime(); let clock = started;
+  // Das Handy ist nur am Hub aktiv, nicht über Empfangs-Aktivpulse des Desktops.
+  const devices = { desktop: 0, mobil: 1 }, checks = [];
+  const f = await empfangFixture(t, 1, { now: () => clock, isActive: async slot => {
+    checks.push({ slot, at: clock, ...devices });
+    return devices.desktop + devices.mobil > 0;
+  } });
+  const person = await f.checkin(); assert.equal(person.response.status, 201);
+  const file = resultFile(f, person);
+  clock = started + 8 * hour + 1;
+  await f.empfang.sweep();
+  assert.deepEqual(checks, [{ slot: 'account01', at: clock, desktop: 0, mobil: 1 }]);
+  const [active] = f.empfang.pool.status().belegungen;
+  assert.equal(active.checkin_id, person.p.checkin_id);
+  assert.equal(active.zustand, 'belegt');
+  assert.equal(active.zuletzt, clock, 'N12: aktive Hubantwort erneuert zuletzt');
+  assert.equal(f.empfang.pool.status().slots_frei, 0);
+  assert.ok(fs.existsSync(file));
+  assert.deepEqual(f.events, ['belegung:account01']);
+  assert.deepEqual(fs.readdirSync(f.boxesDir), []);
+  const lastActive = clock;
+  devices.mobil = 0;
+  f.restart();
+  clock = lastActive + 8 * hour;
+  await f.empfang.sweep();
+  assert.equal(checks.length, 1, 'Exakt acht Stunden reichen auch nach Neustart nicht');
+  assert.equal(f.empfang.pool.status().slots_frei, 0);
+  assert.ok(fs.existsSync(file));
+  clock++;
+  await f.empfang.sweep();
+  assert.deepEqual(checks[1], { slot: 'account01', at: clock, desktop: 0, mobil: 0 });
+  await assertForced(f, person, clock);
+});
+
+test('N12 Hubfehler: Zwang erst nach zweiter Fehlprüfung mit mindestens fünf Minuten Abstand', options, async t => {
+  for (const failure of ['Transportfehler', 'ungültige Antwort']) await t.test(failure, async t => {
+    const started = new Date(2026, 9, 29, 0, 0).getTime(); let clock = started;
+    const checks = [];
+    const f = await empfangFixture(t, 1, { now: () => clock, isActive: async slot => {
+      checks.push({ slot, at: clock });
+      if (failure === 'Transportfehler') throw new Error('Simulierter Hub-Timeout');
+      return undefined; // Kein boolesches false: darf keinen sofortigen Zwang erlauben.
+    } });
+    const person = await f.checkin(); assert.equal(person.response.status, 201);
+    const file = resultFile(f, person);
+    const firstFailure = started + 8 * hour + 1;
+    clock = firstFailure;
+    await f.empfang.sweep();
+    assert.deepEqual(checks, [{ slot: 'account01', at: firstFailure }]);
+    assert.equal(f.empfang.pool.get(person.p.checkin_id).aktiv_fehler_seit, firstFailure);
+    f.restart(); // Der erste Fehlschlag muss persistent sein, nicht nur im RAM.
+    for (const at of [firstFailure, firstFailure + 30000, firstFailure + 5 * 60000 - 1]) {
+      clock = at;
+      await f.empfang.sweep();
+      assert.equal(checks.length, 1, 'Kein erneuter Hubaufruf innerhalb des Fünf-Minuten-Abstands');
+      assert.equal(f.empfang.pool.status().slots_frei, 0);
+      assert.ok(fs.existsSync(file));
+      assert.deepEqual(f.events, ['belegung:account01'], 'Keine Sicherung/Freigabe nach nur einem Fehlschlag');
+      assert.deepEqual(fs.readdirSync(f.boxesDir), []);
+    }
+    clock = firstFailure + 5 * 60000;
+    await f.empfang.sweep();
+    assert.deepEqual(checks, [{ slot: 'account01', at: firstFailure }, { slot: 'account01', at: clock }]);
+    await assertForced(f, person, clock);
+  });
+});
+
 async function empfangToken(f, person) {
   const c = await packet(await request(f.base, '/v1/empfang/anmelden/challenge', {
     body: { geraet_id: person.p.geraet_id },

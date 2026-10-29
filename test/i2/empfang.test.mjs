@@ -53,8 +53,12 @@ test('Empfang E2E: Check-in → Projekt → Vorschau → Archiv → Check-out �
 });
 
 test('Empfang HTTP: 20 parallele OIDC-Check-ins → 10 eindeutige Slots, 10 FIFO-Wartende', options, async t => {
-  const f = await empfangFixture(t);
-  const people = await Promise.all(Array.from({ length: 20 }, (_, i) => f.checkin({ sub: `parallel-${i}`, leader: i === 19 })));
+  // Verschiedene Personen hinter dem explizit vertrauten Loopback-Testproxy.
+  // N14 bleibt aktiv; weder Uhrsprünge noch erhöhte Limits umgehen die Grenze.
+  const f = await empfangFixture(t, 10, { trustProxy: true });
+  const people = await Promise.all(Array.from({ length: 20 }, (_, i) => f.checkin({
+    sub: `parallel-${i}`, leader: i === 19, ip: `192.0.2.${i + 1}`,
+  })));
   const occupied = people.filter(x => x.response.status === 201), waiting = people.filter(x => x.response.status === 202);
   assert.equal(occupied.length, 10, JSON.stringify(people.map(x => x.p)));
   assert.equal(waiting.length, 10);
