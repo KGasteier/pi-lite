@@ -959,6 +959,26 @@ mod tests {
                 .count(),
             2
         );
+        // Falls das Verzeichnis vor der Seminar-Runtime eintrifft, bleibt es anwendbar.
+        let seminar = desktop.seminar.take().unwrap();
+        desktop.verzeichnis_anwenden();
+        desktop.seminar = Some(seminar);
+        desktop.verzeichnis_anwenden();
+        desktop.verzeichnis_zuletzt = Some(std::time::Instant::now() - Duration::from_secs(61));
+        desktop.empfang_tick();
+        while desktop.verzeichnis_pending {
+            let reply = desktop.rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            desktop.apply(reply);
+        }
+        assert_eq!(desktop.seminar.as_ref().unwrap().state.people.len(), 1);
+        // Ein alter Worker darf nach Wechsel des Verbindungszyklus nichts anwenden.
+        let old_epoch = desktop.connection_epoch;
+        desktop.connection_epoch += 1;
+        desktop.apply(Reply::ConnectionEvent {
+            epoch: old_epoch,
+            reply: Box::new(Reply::VerzeichnisCompleted(Err("alter Fehler".into()))),
+        });
+        assert!(desktop.error.is_none());
         // 60-s-Verzeichnisrefresh und Fehler bleiben nicht blockierend sichtbar.
         std::fs::write(f.root.join("directory-error"), b"yes").unwrap();
         desktop.verzeichnis_zuletzt = Some(std::time::Instant::now() - Duration::from_secs(61));
@@ -1489,6 +1509,7 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         }) else {
             panic!("Check-in fehlt")
         };
+        adapter.aktiv_signal(true).unwrap();
         let Reply::Flow(FlowReply::Preview(p)) =
             adapter.call(Request::CheckoutPreview(receipt.checkin_id.clone()))
         else {
@@ -1507,6 +1528,18 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
             "{reply:?}"
         );
         assert!(f.root.join("pool-frei").exists());
+        assert_eq!(
+            std::fs::read_to_string(f.root.join("aktiv-anfragen"))
+                .unwrap()
+                .lines()
+                .count(),
+            2,
+            "true-Puls und false vor Check-out"
+        );
+        assert!(
+            adapter.aktiv_signal(true).is_err(),
+            "kein verspäteter Puls nach Freigabe"
+        );
         assert!(adapter.state.lock().unwrap().checkout.as_ref().unwrap()["typ"] == "ausgecheckt");
     }
     #[test]
