@@ -109,6 +109,8 @@ pub enum FlowReply {
     Uploaded,
     Preview(CheckoutPreview),
     CheckedOut(ReturnSummary),
+    /// Dateien sind geprüft lokal; Freigabe/Leer-Nachweis fehlt noch.
+    ClearUnconfirmed(ReturnSummary),
     Collected(ReturnSummary),
     Cancelled,
     Waiting,
@@ -128,6 +130,7 @@ pub enum Stage {
     Preview,
     Cancelling,
     Done,
+    ClearUnconfirmed,
 }
 #[derive(Clone, Debug)]
 pub struct CancelTarget {
@@ -343,6 +346,9 @@ impl Flow {
                     Stage::Starting | Stage::Browser | Stage::Queue { .. }
                 ) =>
             {
+                if matches!(self.stage, Stage::Queue { .. }) {
+                    self.notice = Some("Ein Arbeitsplatz wird für dich frei".into());
+                }
                 self.receipt = Some(receipt);
                 self.browser_url = None;
                 if self.receipt.as_ref().is_some_and(|r| r.pickup.is_some()) {
@@ -352,6 +358,9 @@ impl Flow {
                 }
             }
             FlowReply::Plan(plan) if self.stage == Stage::Planning => {
+                if self.notice.as_deref() == Some("Ein Arbeitsplatz wird für dich frei") {
+                    self.notice = None;
+                }
                 self.plan = plan;
                 self.stage = Stage::Selection;
             }
@@ -383,6 +392,16 @@ impl Flow {
                 self.stage = Stage::Done;
                 self.receipt = None;
                 self.progress = None;
+            }
+            FlowReply::ClearUnconfirmed(summary)
+                if matches!(
+                    self.stage,
+                    Stage::Transfer(TransferKind::Checkout) | Stage::Cancelling
+                ) =>
+            {
+                self.summary = Some(summary);
+                self.progress = None;
+                self.stage = Stage::ClearUnconfirmed;
             }
             FlowReply::Collected(summary)
                 if self.stage == Stage::Transfer(TransferKind::Pickup) =>
@@ -705,6 +724,32 @@ mod tests {
         let request = flow.begin(CheckinMethod::Guest("mock".into())).unwrap();
         apply(&api, &mut flow, request);
         (api, flow)
+    }
+    #[test]
+    fn queue_transition_notice_only_after_confirmed_assignment() {
+        let mut flow = Flow {
+            stage: Stage::Queue {
+                id: "q".into(),
+                position: 2,
+            },
+            attempt: 1,
+            ..Flow::default()
+        };
+        flow.apply(FlowReply::Queue {
+            attempt: 1,
+            id: "q".into(),
+            position: 1,
+        });
+        assert!(flow.notice.is_none());
+        let request = flow.apply(FlowReply::CheckedIn(MemoryApi::receipt()));
+        assert!(matches!(request, Some(Request::SyncPlan(_))));
+        assert_eq!(
+            flow.notice.as_deref(),
+            Some("Ein Arbeitsplatz wird für dich frei")
+        );
+        flow.apply(FlowReply::Plan(MemoryApi::sync_plan()));
+        assert_eq!(flow.stage, Stage::Selection);
+        assert!(flow.notice.is_none());
     }
     #[test]
     fn no_upload_without_confirmation_and_only_last_project_selected() {
