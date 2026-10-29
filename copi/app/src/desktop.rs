@@ -160,6 +160,7 @@ pub enum Reply {
     Completed(Box<Reply>),
     Heartbeat,
     AktivCompleted(Result<(), String>),
+    VerzeichnisCompleted(Result<Option<pi_backend::hub_v1::empfang::Verzeichnis>, String>),
     Disconnected(String),
     Sent(String, String),
     #[cfg(test)]
@@ -198,6 +199,14 @@ pub trait DesktopApi: Send + Sync {
     /// Wird auf einem Worker aufgerufen, nie während eines UI-Frames blockierend.
     fn aktiv_signal(&self, _connected: bool) -> Result<(), String> {
         Ok(())
+    }
+    fn trennen(&self) -> Result<(), String> {
+        self.aktiv_signal(false)
+    }
+    fn seminar_verzeichnis(
+        &self,
+    ) -> Result<Option<pi_backend::hub_v1::empfang::Verzeichnis>, String> {
+        Ok(None)
     }
     fn seminar(&self, _sessions: &[Session]) -> Result<Option<seminar::Seminar>, String> {
         Ok(None)
@@ -301,6 +310,9 @@ pub struct Desktop {
     aktiv_clock: Instant,
     aktiv_takt: flow_adapter::AktivTakt,
     aktiv_pending: bool,
+    verzeichnis_pending: bool,
+    verzeichnis_zuletzt: Option<Instant>,
+    verzeichnis: Option<pi_backend::hub_v1::empfang::Verzeichnis>,
     chat_by_session: std::collections::HashMap<String, Vec<ChatMessage>>,
     streaming: std::collections::HashMap<String, String>,
 }
@@ -347,6 +359,14 @@ impl Profile {
             .and_then(|_| file.sync_all())
             .map_err(|e| e.to_string())?;
         std::fs::rename(temp, root.join("desktop-v3.json")).map_err(|e| e.to_string())
+    }
+}
+impl Drop for Desktop {
+    fn drop(&mut self) {
+        if !self.demo && self.api_configured {
+            // Fensterende: vor Prozessende bestätigen lassen; kein detach-and-forget.
+            let _ = self.api.trennen();
+        }
     }
 }
 impl Desktop {
@@ -411,6 +431,9 @@ impl Desktop {
             aktiv_clock: Instant::now(),
             aktiv_takt: flow_adapter::AktivTakt::default(),
             aktiv_pending: false,
+            verzeichnis_pending: false,
+            verzeichnis_zuletzt: None,
+            verzeichnis: None,
             chat_by_session: Default::default(),
             streaming: Default::default(),
         }
@@ -451,6 +474,8 @@ impl Desktop {
             Reply::Flow(reply) => {
                 if matches!(reply, FlowReply::CheckedIn(_)) {
                     self.connected = true;
+                    self.verzeichnis_zuletzt = None;
+                    self.verzeichnis = None;
                 }
                 if let FlowReply::Browser { attempt, url } = &reply {
                     if !self.demo
@@ -487,6 +512,9 @@ impl Desktop {
                     self.last_event = None;
                     self.account = None;
                     self.connected = false;
+                    self.verzeichnis = None;
+                    self.verzeichnis_zuletzt = None;
+                    self.verzeichnis_pending = false;
                     self.welcome_done = false;
                     self.sessions.clear();
                     self.messages.clear();
@@ -510,6 +538,23 @@ impl Desktop {
                 self.aktiv_pending = false;
                 if let Err(error) = result {
                     self.error = Some(error);
+                }
+            }
+            Reply::VerzeichnisCompleted(result) => {
+                self.verzeichnis_pending = false;
+                if self.flow.receipt.is_some() {
+                    match result {
+                        Ok(Some(verzeichnis)) => {
+                            self.verzeichnis = Some(verzeichnis);
+                            self.verzeichnis_anwenden();
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            self.error = Some(format!(
+                                "Das Seminarverzeichnis konnte nicht aktualisiert werden. Du kannst weiterarbeiten. {error}"
+                            ));
+                        }
+                    }
                 }
             }
             Reply::Heartbeat => {
@@ -622,7 +667,10 @@ impl Desktop {
                     }
                     self.seminar = None;
                     match self.api.seminar(&self.sessions) {
-                        Ok(seminar) => self.seminar = seminar,
+                        Ok(seminar) => {
+                            self.seminar = seminar;
+                            self.verzeichnis_anwenden();
+                        }
                         Err(error) => {
                             self.error = Some(format!("Seminar noch nicht verbunden. {error}"))
                         }
@@ -646,6 +694,9 @@ impl Desktop {
                     self.pending = 0;
                     self.account = None;
                     self.flow = Flow::default();
+                    self.verzeichnis = None;
+                    self.verzeichnis_zuletzt = None;
+                    self.verzeichnis_pending = false;
                     self.flow_generation += 1;
                     self.flow_pending = false;
                     self.welcome_done = false;
@@ -870,17 +921,8 @@ impl Desktop {
             self.connected = false;
             self.error = Some("Die Verbindung zu R2 ist veraltet. Prüfe den letzten Auftrag, bevor du erneut sendest.".into());
         }
-        if !self.demo && !self.aktiv_pending {
-            let connected = self.connected && self.flow.receipt.is_some();
-            if let Some(signal) = self.aktiv_takt.next(self.aktiv_clock.elapsed(), connected) {
-                self.aktiv_pending = true;
-                let (api, tx) = (self.api.clone(), self.tx.clone());
-                std::thread::spawn(move || {
-                    let _ = tx.send(Reply::AktivCompleted(api.aktiv_signal(signal)));
-                });
-            }
-        }
-        if self.aktiv_pending || self.flow.receipt.is_some() {
+        self.empfang_tick();
+        if self.aktiv_pending || self.verzeichnis_pending || self.flow.receipt.is_some() {
             ui.ctx().request_repaint_after(Duration::from_secs(1));
         }
         if self.watch_started {
@@ -1412,6 +1454,69 @@ impl Desktop {
                 if ui.button("Abbrechen").clicked() {
                     self.limit = false;
                 }
+            });
+        }
+    }
+    /// N11-Haken: nur direkte IP-Adressen aus der eigenen bestätigten Netzruntime.
+    /// K übergibt sie nach S3/S8-Merge an `aktiv_mit_adressen`.
+    fn eigene_adressen(&self) -> Vec<String> {
+        self.seminar
+            .as_ref()
+            .and_then(|s| s.address())
+            .and_then(|a| serde_json::from_str::<serde_json::Value>(a).ok())
+            .and_then(|a| a["addrs"].as_array().cloned())
+            .into_iter()
+            .flatten()
+            .filter_map(|a| a["Ip"].as_str()?.parse::<std::net::SocketAddr>().ok())
+            .take(8)
+            .map(|a| a.to_string())
+            .collect()
+    }
+    fn verzeichnis_anwenden(&mut self) {
+        if let (Some(seminar), Some(verzeichnis)) = (&mut self.seminar, &self.verzeichnis) {
+            seminar.verzeichnis_uebernehmen(
+                verzeichnis
+                    .personen
+                    .iter()
+                    .map(|p| seminar::VerzeichnisEintrag {
+                        person: p.person.clone(),
+                        anzeige: p.anzeige.clone(),
+                        rolle: p.rolle.clone(),
+                        net_pubkey: p.net_pubkey.clone(),
+                    })
+                    .collect(),
+            );
+        }
+    }
+    fn empfang_tick(&mut self) {
+        if self.demo {
+            return;
+        }
+        if !self.aktiv_pending {
+            let connected = self.connected && self.flow.receipt.is_some();
+            if let Some(signal) = self.aktiv_takt.next(self.aktiv_clock.elapsed(), connected) {
+                self.aktiv_pending = true;
+                let _adressen = self.eigene_adressen(); // N11: K verdrahtet nach API-Merge.
+                let (api, tx) = (self.api.clone(), self.tx.clone());
+                std::thread::spawn(move || {
+                    let _ = tx.send(Reply::AktivCompleted(api.aktiv_signal(signal)));
+                });
+            }
+        }
+        if self.flow.receipt.is_some()
+            && !self.verzeichnis_pending
+            && self
+                .verzeichnis_zuletzt
+                .is_none_or(|t| t.elapsed() >= Duration::from_secs(60))
+        {
+            self.verzeichnis_pending = true;
+            self.verzeichnis_zuletzt = Some(Instant::now());
+            let (api, tx, epoch) = (self.api.clone(), self.tx.clone(), self.connection_epoch);
+            std::thread::spawn(move || {
+                let _ = tx.send(Reply::ConnectionEvent {
+                    epoch,
+                    reply: Box::new(Reply::VerzeichnisCompleted(api.seminar_verzeichnis())),
+                });
             });
         }
     }
@@ -2264,7 +2369,7 @@ mod tests {
         assert!(d.account.is_none());
         assert!(d.sessions.is_empty());
         assert!(!d.flow_pending);
-        assert_eq!(d.flow.summary.unwrap().conflicts, 2);
+        assert_eq!(d.flow.summary.as_ref().unwrap().conflicts, 2);
     }
     #[test]
     fn revoked_returns_to_welcome() {

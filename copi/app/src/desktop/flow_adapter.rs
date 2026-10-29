@@ -42,6 +42,32 @@ impl AktivTakt {
 }
 type AktivSignal = Arc<dyn Fn(bool) -> Result<(), String> + Send + Sync>;
 
+/// Nur die bereits geprüfte Belegung; keine Transfer-Sperre und kein Hub-Bearer.
+struct EmpfangZugang {
+    origin: String,
+    key_dir: PathBuf,
+    pin: String,
+    result: Value,
+}
+impl EmpfangZugang {
+    fn oeffnen(&self) -> Result<Empfang, String> {
+        let mut empfang = Empfang::new(&self.origin)?;
+        let mut key = DeviceKey::at(&self.key_dir, "seminar-desktop")?;
+        empfang.uebernehmen(&self.result, &mut key, &self.pin, now_ms())?;
+        Ok(empfang)
+    }
+}
+type HintergrundZugang = Arc<Mutex<Option<EmpfangZugang>>>;
+fn empfang_oeffnen(zugang: &HintergrundZugang) -> Result<Option<Empfang>, String> {
+    // Schlüsselübernahme serialisieren, danach HTTP ohne irgendeine State-Sperre.
+    zugang
+        .lock()
+        .map_err(|_| "Die Empfangsverbindung wurde unterbrochen.".to_owned())?
+        .as_ref()
+        .map(EmpfangZugang::oeffnen)
+        .transpose()
+}
+
 /// Geprüfte SHA-256-Implementierung (RustCrypto `sha2`, bereits über pi-sync im Lockfile).
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     use sha2::Digest;
@@ -88,6 +114,8 @@ pub struct FlowAdapter {
     archive_key: pi_backend::hub_v1::abholfach::Schluessel,
     identity: pi_net::identity::Identity,
     aktiv_signal: Mutex<Option<AktivSignal>>,
+    hintergrund: HintergrundZugang,
+    signal_gate: Arc<Mutex<()>>,
 }
 impl FlowAdapter {
     pub fn new(config: Config) -> Result<Self, String> {
@@ -102,10 +130,14 @@ impl FlowAdapter {
         let key = DeviceKey::at(&config.key_dir, "seminar-desktop")?;
         let identity =
             pi_net::identity::Identity::load_or_create(&config.key_dir.join("seminar-net.key"))?;
-        Ok(Self {
+        let hintergrund = Arc::new(Mutex::new(None));
+        let signal_gate = Arc::new(Mutex::new(()));
+        let adapter = Self {
             config,
             archive_key,
             identity,
+            hintergrund: hintergrund.clone(),
+            signal_gate: signal_gate.clone(),
             aktiv_signal: Mutex::new(None),
             transfer: sync_flow::Transfer::default(),
             cancelled_attempt: AtomicU64::new(0),
@@ -132,9 +164,23 @@ impl FlowAdapter {
                 ausweis: None,
                 seminar_hub: None,
             }),
-        })
+        };
+        adapter.set_aktiv_signal(move |connected| {
+            // Ordnungsbarriere gegen einen verspäteten true-Puls beim Check-out.
+            let _signal = signal_gate
+                .lock()
+                .map_err(|_| "Das Aktiv-Signal wurde unterbrochen.")?;
+            if let Some(empfang) = empfang_oeffnen(&hintergrund)? {
+                empfang.aktiv(connected)
+            } else if connected {
+                Err("Das Aktiv-Signal wartet auf den bestätigten Check-in.".into())
+            } else {
+                Ok(())
+            }
+        });
+        Ok(adapter)
     }
-    /// K verbindet hier nach S3-Merge den authentifizierten Empfang::aktiv-Aufruf.
+    /// Authentifizierter, kurzlebiger Empfangszugang, unabhängig vom Transfer-State.
     /// Der Callback muss unabhängig vom Transfer-State bleiben: Uploads dürfen
     /// Aktiv-Signale nicht hinter dem langen State-Mutex blockieren.
     pub fn set_aktiv_signal(
@@ -142,6 +188,34 @@ impl FlowAdapter {
         signal: impl Fn(bool) -> Result<(), String> + Send + Sync + 'static,
     ) {
         *self.aktiv_signal.lock().unwrap() = Some(Arc::new(signal));
+    }
+    fn empfang_beenden(&self) -> Result<(), String> {
+        let _signal = self
+            .signal_gate
+            .lock()
+            .map_err(|_| "Das Aktiv-Signal wurde unterbrochen.")?;
+        // Erst lokal schließen: auch bei HTTP-Fehler darf kein verspäteter true-Puls folgen.
+        let zugang = self
+            .hintergrund
+            .lock()
+            .map_err(|_| "Die Empfangsverbindung wurde unterbrochen.")?
+            .take();
+        if let Some(zugang) = zugang {
+            zugang.oeffnen()?.aktiv(false)?;
+        }
+        Ok(())
+    }
+    fn login_begin(&self, s: &State, hello: &Value) -> Result<oidc::Login, String> {
+        let hash = self.config.sha256.ok_or("Der geprüfte SHA-256-Callback ist in dieser App noch nicht angebunden. Keine Browseranmeldung gestartet.")?;
+        let discovery = oidc::Discovery::load(&self.config.issuer)?;
+        let nonce = s.empfang.nonce(&s.key.public_key())?;
+        oidc::Login::begin_with_nonce(
+            discovery,
+            &field(&hello["oidc"], "client_id")?,
+            &["openid", "profile", "groups"],
+            &nonce,
+            hash,
+        )
     }
     fn checkin(&self, s: &mut State, proof: Value) -> Result<FlowReply, String> {
         let mut body = json!({
@@ -171,6 +245,15 @@ impl FlowAdapter {
         }
         s.empfang
             .uebernehmen(&result, &mut s.key, &self.config.empfang_pubkey, now_ms())?;
+        *self
+            .hintergrund
+            .lock()
+            .map_err(|_| "Die Empfangsverbindung wurde unterbrochen.")? = Some(EmpfangZugang {
+            origin: self.config.origin.clone(),
+            key_dir: self.config.key_dir.clone(),
+            pin: self.config.empfang_pubkey.clone(),
+            result: result.clone(),
+        });
         s.ausweis = Some(result["geraeteausweis"].clone());
         let id = field(&result, "checkin_id")?;
         let slot = field(&result, "slot")?;
@@ -196,11 +279,13 @@ impl FlowAdapter {
         s.queue = None;
         if s.cancelled || self.cancelled_attempt.load(Ordering::SeqCst) == s.attempt {
             // N6: Rückgabe vor Slot-Login, kein Upload nach Vergabe.
+            self.empfang_beenden()?;
             s.checkout = Some(s.empfang.checkout(&receipt.checkin_id)?);
             if s.checkout
                 .as_ref()
                 .is_some_and(|v| v["typ"] == "ausgecheckt")
             {
+                *self.hintergrund.lock().unwrap() = None;
                 s.receipt = None;
                 return Ok(FlowReply::Cancelled);
             }
@@ -282,14 +367,7 @@ impl FlowAdapter {
                         if hello["oidc"]["issuer"] != self.config.issuer {
                             return Err("Der Empfang meldet einen anderen Anmeldedienst.".into());
                         }
-                        let hash = self.config.sha256.ok_or("Der geprüfte SHA-256-Callback ist in dieser App noch nicht angebunden. Keine Browseranmeldung gestartet.")?;
-                        let discovery = oidc::Discovery::load(&self.config.issuer)?;
-                        let login = oidc::Login::begin(
-                            discovery,
-                            &field(&hello["oidc"], "client_id")?,
-                            &["openid", "profile", "groups"],
-                            hash,
-                        )?;
+                        let login = self.login_begin(&s, &hello)?;
                         let mut url = String::new();
                         login.open_browser(|u| {
                             validate_browser_url(&self.config.issuer, u)?;
@@ -352,11 +430,13 @@ impl FlowAdapter {
                     .or_else(|| s.receipt.as_ref().map(|r| r.checkin_id.clone()))
                 {
                     require_receipt(&s, &id)?;
+                    self.empfang_beenden()?;
                     s.checkout = Some(s.empfang.checkout(&id)?);
                     if s.checkout
                         .as_ref()
                         .is_some_and(|v| v["typ"] == "ausgecheckt")
                     {
+                        *self.hintergrund.lock().unwrap() = None;
                         s.receipt = None;
                         s.hub = None;
                         return Ok(Reply::Flow(FlowReply::Cancelled));
@@ -449,6 +529,8 @@ impl FlowAdapter {
                 }
                 let _transfer = self.transfer.scope(TransferKind::Checkout, &checkin_id, 0);
                 self.transfer.check()?;
+                // Vor der Freigabe melden, solange die Geräte-Challenge noch gilt.
+                self.empfang_beenden()?;
                 // Empfang baut das autoritative Archiv; kein zweites, abweichendes Clientarchiv.
                 let meta = match &s.checkout {
                     Some(v) => v.clone(),
@@ -466,6 +548,7 @@ impl FlowAdapter {
                         &folder,
                         json!({"ereignis":"ausgecheckt","checkin_id":checkin_id,"direkt":true}),
                     )?;
+                    *self.hintergrund.lock().unwrap() = None;
                     s.receipt = None;
                     s.hub = None;
                     s.seminar_hub = None;
@@ -490,6 +573,7 @@ impl FlowAdapter {
                 };
                 self.transfer.check()?;
                 // Keine Wiederholung nach verlorener Antwort: serverseitig fehlt ein Tombstone.
+                self.empfang_beenden()?;
                 s.receipt_unconfirmed = true;
                 let confirmed = s
                     .empfang
@@ -502,6 +586,7 @@ impl FlowAdapter {
                     &folder,
                     json!({"ereignis":"ausgecheckt","checkin_id":checkin_id,"sha256":meta["sha256"]}),
                 )?;
+                *self.hintergrund.lock().unwrap() = None;
                 s.receipt = None;
                 s.hub = None;
                 s.seminar_hub = None;
@@ -584,6 +669,16 @@ impl FlowAdapter {
     }
 }
 impl DesktopApi for FlowAdapter {
+    fn trennen(&self) -> Result<(), String> {
+        self.empfang_beenden()
+    }
+    fn seminar_verzeichnis(
+        &self,
+    ) -> Result<Option<pi_backend::hub_v1::empfang::Verzeichnis>, String> {
+        empfang_oeffnen(&self.hintergrund)?
+            .map(|empfang| empfang.seminar_verzeichnis())
+            .transpose()
+    }
     fn aktiv_signal(&self, connected: bool) -> Result<(), String> {
         let signal = self
             .aktiv_signal
@@ -676,6 +771,31 @@ fn now_ms() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64
 }
+/// Strikte HTTPS-Originbindung; kein Prefixvergleich mit täuschenden Hostnamen.
+pub(super) fn validate_browser_url(issuer: &str, url: &str) -> Result<(), String> {
+    fn authority(url: &str) -> Option<&str> {
+        let rest = url.strip_prefix("https://")?;
+        let host = rest.split(['/', '?']).next()?;
+        if host.is_empty()
+            || host.contains(['@', '\\', '#'])
+            || url.chars().any(|c| c.is_whitespace() || c.is_control())
+            || url.contains(['\\', '#'])
+        {
+            None
+        } else {
+            Some(host)
+        }
+    }
+    if authority(issuer)
+        .zip(authority(url))
+        .is_some_and(|(a, b)| a == b)
+    {
+        Ok(())
+    } else {
+        Err("Der Browserlink gehört nicht zum konfigurierten HTTPS-Anmeldedienst.".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -736,6 +856,149 @@ mod tests {
         adapter.aktiv_signal(true).unwrap();
         adapter.aktiv_signal(false).unwrap();
         assert_eq!(*signals.lock().unwrap(), [true, false]);
+    }
+
+    #[test]
+    fn login_begin_uses_real_empfang_nonce_bound_to_own_device() {
+        let f = Fixture::start().expect("Node-Fixture erforderlich");
+        let mut adapter = f.adapter("server-nonce");
+        adapter.config.issuer = format!("{}/oidc", f.info["origin"].as_str().unwrap());
+        let state = adapter.state.lock().unwrap();
+        let hello = state.empfang.hallo().unwrap();
+        let login = adapter.login_begin(&state, &hello).unwrap();
+        let issued: Value =
+            serde_json::from_slice(&std::fs::read(f.root.join("server-nonce.json")).unwrap())
+                .unwrap();
+        assert_eq!(issued["geraet_pubkey"], state.key.public_key());
+        login
+            .open_browser(|url| {
+                assert!(
+                    url.split('?')
+                        .nth(1)
+                        .unwrap()
+                        .split('&')
+                        .any(|p| p == format!("nonce={}", issued["nonce"].as_str().unwrap()))
+                );
+                assert!(url.contains("code_challenge_method=S256"));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn node_empfang_activity_and_directory_reach_desktop_without_transfer_lock() {
+        let f = Fixture::start().expect("Node-Fixture erforderlich");
+        let adapter = Arc::new(f.adapter("presence"));
+        let Reply::Flow(FlowReply::CheckedIn(receipt)) = adapter.call(Request::Checkin {
+            attempt: 1,
+            method: CheckinMethod::Guest("test-invitation-one".into()),
+        }) else {
+            panic!("Check-in fehlt")
+        };
+        // Derselbe Mutex wie beim langen Upload bleibt absichtlich gehalten.
+        let transfer = adapter.state.lock().unwrap();
+        let mut desktop = super::super::Desktop::new(true);
+        desktop.demo = false;
+        desktop.flow.receipt = Some(receipt.clone());
+        desktop.connected = true;
+        desktop.set_api(adapter.clone());
+        // Andere lokale Identität, damit der echte Empfangseintrag nicht als Du entfällt.
+        let viewer =
+            pi_net::identity::Identity::load_or_create(&f.root.join("viewer.key")).unwrap();
+        desktop.seminar = Some(super::super::seminar::Seminar::new(
+            super::super::seminar::SeminarState::new(
+                viewer.peer(),
+                "Verzeichnis-Test",
+                f.info["pubkey"].as_str().unwrap().into(),
+                pi_net::model::SpaceId("seminar".into()),
+            ),
+            Box::new(super::super::seminar::MemoryNet::default()),
+        ));
+        desktop.empfang_tick();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while desktop.aktiv_pending || desktop.verzeichnis_pending {
+            let reply = desktop
+                .rx
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .unwrap();
+            desktop.apply(reply);
+        }
+        let pool = || -> Value {
+            serde_json::from_slice(&std::fs::read(f.root.join("empfang/pool.json")).unwrap())
+                .unwrap()
+        };
+        assert_eq!(pool()["belegt"][0]["verbunden"], true);
+        let seminar = desktop.seminar.as_ref().unwrap();
+        assert!(seminar.error.is_none(), "{:?}", seminar.error);
+        assert!(
+            seminar
+                .state
+                .people
+                .iter()
+                .any(|p| p.peer == adapter.identity.peer())
+        );
+        assert!(
+            seminar
+                .state
+                .chats
+                .contacts
+                .iter()
+                .any(|p| p.peer == adapter.identity.peer())
+        );
+        // Zweiter Puls mit logischer Zeit, aber echter authentifizierter HTTP-Anfrage.
+        desktop.aktiv_clock = std::time::Instant::now() - Duration::from_secs(61);
+        desktop.empfang_tick();
+        while desktop.aktiv_pending {
+            let reply = desktop.rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            desktop.apply(reply);
+        }
+        assert_eq!(
+            std::fs::read_to_string(f.root.join("aktiv-anfragen"))
+                .unwrap()
+                .lines()
+                .count(),
+            2
+        );
+        // 60-s-Verzeichnisrefresh und Fehler bleiben nicht blockierend sichtbar.
+        std::fs::write(f.root.join("directory-error"), b"yes").unwrap();
+        desktop.verzeichnis_zuletzt = Some(std::time::Instant::now() - Duration::from_secs(61));
+        desktop.empfang_tick();
+        while desktop.verzeichnis_pending {
+            let reply = desktop.rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            desktop.apply(reply);
+        }
+        assert!(
+            desktop
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Du kannst weiterarbeiten")
+        );
+        assert!(
+            desktop
+                .seminar
+                .as_ref()
+                .unwrap()
+                .state
+                .people
+                .iter()
+                .any(|p| p.peer == adapter.identity.peer())
+        );
+        desktop.connected = false;
+        desktop.empfang_tick();
+        while desktop.aktiv_pending {
+            let reply = desktop.rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            desktop.apply(reply);
+        }
+        assert_eq!(pool()["belegt"][0]["verbunden"], false);
+        adapter.aktiv_signal(true).unwrap();
+        assert_eq!(pool()["belegt"][0]["verbunden"], true);
+        // Fensterende sendet false und sperrt einen verspäteten true-Puls.
+        drop(desktop);
+        assert_eq!(pool()["belegt"][0]["verbunden"], false);
+        assert!(adapter.aktiv_signal(true).is_err());
+        assert_eq!(pool()["belegt"][0]["verbunden"], false);
+        drop(transfer);
     }
 
     #[test]
@@ -811,6 +1074,20 @@ const {createFakeOidc}=await import(pathToFileURL(path.join(source,'empfang/test
 const {createV1}=await import(pathToFileURL(path.join(source,'lib/hub-v1.mjs')));
 const fake=await createFakeOidc(); let reception,hub,origin;
 const server=http.createServer((req,res)=>{
+  if(req.url==='/oidc/.well-known/openid-configuration') {
+    res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({issuer:origin+'/oidc',authorization_endpoint:origin+'/oidc/authorize',token_endpoint:origin+'/oidc/token',code_challenge_methods_supported:['S256']}));return;
+  }
+  if(req.url==='/v1/empfang/nonce') {
+    (async()=>{let body='';for await(const c of req)body+=c;const input=JSON.parse(body);const value=reception.issueNonce(input.geraet_pubkey);fs.writeFileSync(path.join(root,'server-nonce.json'),JSON.stringify({...value,geraet_pubkey:input.geraet_pubkey}));res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(value));})();return;
+  }
+  if(req.url.startsWith('/fixture/proof/')) {
+    const pubkey=decodeURIComponent(req.url.slice('/fixture/proof/'.length));
+    (async()=>{const n=await (await fetch(origin+'/v1/empfang/nonce',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({protokoll:1,geraet_pubkey:pubkey})})).json();
+    const proof=JSON.stringify({art:'oidc',id_token:fake.token({sub:'rust-adapter',jti:crypto.randomUUID(),nonce:n.nonce}),nonce:n.nonce});
+    res.writeHead(200,{'content-type':'application/json','content-length':Buffer.byteLength(proof)});res.end(proof);})();return;
+  }
+  if(req.url==='/v1/empfang/aktiv')fs.appendFileSync(path.join(root,'aktiv-anfragen'),'1\n');
+  if(req.url==='/v1/empfang/seminar'&&fs.existsSync(path.join(root,'directory-error'))) {res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({protokoll:1,typ:'fehler',code:'intern',was:'Testausfall',tun:'Später versuchen'}));return;}
   if(req.url.startsWith('/fixture/force/')) {
     reception.forceCheckout(req.url.split('/').at(-1)).then(value=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(value));}).catch(error=>{res.writeHead(500);res.end(String(error));});return;
   }
@@ -845,6 +1122,12 @@ reception=createEmpfang({dir:path.join(root,'empfang'),origin,slots:{account01:m
    calls.push(action);fs.writeFileSync(path.join(root,'calls.json'),JSON.stringify(calls));
    if(action==='leeren')for(const p of [work,path.join(root,'home/.pi')]){fs.rmSync(p,{recursive:true,force:true});fs.mkdirSync(p,{recursive:true});}
    if(action==='pruefen')fs.writeFileSync(path.join(root,'pool-frei'),'bestätigt');
+   if(action==='leeren') {
+     fs.writeFileSync(path.join(root,'pool-frei'),'bestätigt');
+     const epoch=Number(fs.readFileSync(path.join(root,'epochen/account01.epoche'),'utf8'))+1;
+     fs.writeFileSync(path.join(root,'epochen/account01.epoche'),String(epoch)+'\n');
+     return {zustand:'leer',nachweis:'vor_hubstart',slot:'account01',epoche:epoch};
+   }
  }});
 hub=createV1({dir:path.join(root,'hub'),slot:'account01',hubUrl:origin,roots:[work],inRoots:p=>p===work?p:null,
  empfangPubkey:reception.ausweis.pubkey,epochFile:path.join(root,'epochen/account01.epoche'),createInstance:()=>{throw Error('Modellstart verboten');}});
@@ -879,6 +1162,26 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
             f.info =
                 serde_json::from_str(&line).expect("Lokaler Empfang muss seine Testadresse melden");
             Some(f)
+        }
+        fn proof(&self, adapter: &FlowAdapter) -> Value {
+            use std::io::{Read, Write};
+            let origin = self.info["origin"].as_str().unwrap();
+            let key = adapter.state.lock().unwrap().key.public_key();
+            let mut stream =
+                std::net::TcpStream::connect(origin.strip_prefix("http://").unwrap()).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            write!(
+                stream,
+                "GET /fixture/proof/{key} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+            // Node sendet hier chunked; explizit Content-Length in der Fixture setzen.
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
         }
         fn force(&self, id: &str) {
             use std::io::{Read, Write};
@@ -1355,8 +1658,9 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         .unwrap();
         let first = f.adapter("locker");
         first.state.lock().unwrap().attempt = 1;
+        let proof = f.proof(&first);
         let FlowReply::CheckedIn(r) = first
-            .checkin(&mut first.state.lock().unwrap(), f.info["proof"].clone())
+            .checkin(&mut first.state.lock().unwrap(), proof)
             .unwrap()
         else {
             panic!("Check-in fehlt")
@@ -1370,8 +1674,9 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         let adapter = f.adapter("locker");
         assert_eq!(public, adapter.archive_key.public_b64url);
         adapter.state.lock().unwrap().attempt = 2;
+        let proof = f.proof(&adapter);
         let FlowReply::CheckedIn(r) = adapter
-            .checkin(&mut adapter.state.lock().unwrap(), f.info["proof2"].clone())
+            .checkin(&mut adapter.state.lock().unwrap(), proof)
             .unwrap()
         else {
             panic!("Zweiter Check-in fehlt")
@@ -1470,8 +1775,9 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         .unwrap();
         let first = f.adapter("locker-ack");
         first.state.lock().unwrap().attempt = 1;
+        let proof = f.proof(&first);
         let FlowReply::CheckedIn(r) = first
-            .checkin(&mut first.state.lock().unwrap(), f.info["proof"].clone())
+            .checkin(&mut first.state.lock().unwrap(), proof)
             .unwrap()
         else {
             panic!("Check-in fehlt")
@@ -1483,8 +1789,9 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         drop(first);
         let adapter = f.adapter("locker-ack");
         adapter.state.lock().unwrap().attempt = 2;
+        let proof = f.proof(&adapter);
         let FlowReply::CheckedIn(r) = adapter
-            .checkin(&mut adapter.state.lock().unwrap(), f.info["proof2"].clone())
+            .checkin(&mut adapter.state.lock().unwrap(), proof)
             .unwrap()
         else {
             panic!("Check-in fehlt")
@@ -1641,37 +1948,11 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
             return;
         };
         let adapter = f.adapter("oidc");
+        let proof = f.proof(&adapter);
         let mut state = adapter.state.lock().unwrap();
         state.attempt = 1;
-        let reply = adapter
-            .checkin(&mut state, f.info["proof"].clone())
-            .unwrap();
+        let reply = adapter.checkin(&mut state, proof).unwrap();
         assert!(matches!(reply, FlowReply::CheckedIn(_)));
         assert_eq!(state.receipt.as_ref().unwrap().account.person, "Testperson");
-    }
-}
-
-/// Strikte HTTPS-Originbindung; kein Prefixvergleich mit täuschenden Hostnamen.
-pub(super) fn validate_browser_url(issuer: &str, url: &str) -> Result<(), String> {
-    fn authority(url: &str) -> Option<&str> {
-        let rest = url.strip_prefix("https://")?;
-        let host = rest.split(['/', '?']).next()?;
-        if host.is_empty()
-            || host.contains(['@', '\\', '#'])
-            || url.chars().any(|c| c.is_whitespace() || c.is_control())
-            || url.contains(['\\', '#'])
-        {
-            None
-        } else {
-            Some(host)
-        }
-    }
-    if authority(issuer)
-        .zip(authority(url))
-        .is_some_and(|(a, b)| a == b)
-    {
-        Ok(())
-    } else {
-        Err("Der Browserlink gehört nicht zum konfigurierten HTTPS-Anmeldedienst.".into())
     }
 }
