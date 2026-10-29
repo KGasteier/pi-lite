@@ -15,12 +15,15 @@ const CYAN: Color32 = Color32::from_rgb(0x4f, 0xb8, 0xd8);
 
 /// N9: ausschließlich aus dem vom Empfang bereits signaturgeprüften Verzeichnis.
 /// `rolle` ist eine Suchangabe, niemals eine Autorisierungsquelle.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub struct VerzeichnisEintrag {
     pub person: String,
     pub anzeige: String,
     pub rolle: String,
     pub net_pubkey: String,
+    /// N11: direkte IP-Adressen aus dem signaturgeprüften Verzeichnis.
+    #[serde(default)]
+    pub adressen: Vec<String>,
 }
 
 pub struct Seminar {
@@ -85,8 +88,13 @@ impl Seminar {
             Err(e) => self.error = Some(e),
         }
     }
-    pub fn address(&self) -> Option<&str> {
-        self.net.address()
+    /// Eigene direkte Adressen für N11-Aktivmeldungen, keine Knoten-ID/Relays.
+    /// Vor Netzstart und nach Check-out leer; maximal acht gültige SocketAddr.
+    pub fn address(&self) -> Vec<String> {
+        self.net
+            .address()
+            .map(seminar_net::direct_addresses)
+            .unwrap_or_default()
     }
     pub fn set_contacts(&mut self, peers: Vec<(PeerId, String)>) -> Result<(), String> {
         if peers
@@ -113,8 +121,8 @@ impl Seminar {
     }
     /// Nach Check-in und danach alle 60 s mit S3s geprüften N9-Daten aufrufen.
     /// Rollen werden bewusst verworfen; erst der Peer-Ausweis bestätigt sie.
-    /// N9 enthält keine IP-Adresse. Bereits separat bestätigte Kontaktadressen
-    /// bleiben erhalten; neue Kontakte bekommen zunächst nur die Knoten-ID.
+    /// N11-Adressen ersetzen bei jedem Abruf die bisherige direkte Adressliste;
+    /// leere Listen löschen veraltete Ziele. Der TLS-Peer muss weiterhin passen.
     pub fn verzeichnis_uebernehmen(&mut self, personen: Vec<VerzeichnisEintrag>) {
         if let Err(error) = self.apply_directory(personen) {
             self.error = Some(format!("Seminarverzeichnis nicht übernommen: {error}"));
@@ -141,22 +149,16 @@ impl Seminar {
             // Absichtlich keine Übernahme von entry.rolle in SeminarState.
             let _discovery_role = entry.rolle;
             if peer != self.state.chats.me {
-                entries.push((peer, entry.anzeige));
+                let address = seminar_net::directory_contact(&peer, &entry.adressen);
+                entries.push((peer, entry.anzeige, address));
             }
         }
         // Fehlende Einträge allein sind KEIN Verbindungsabbruch. Nur der
         // Transport meldet Presence; tick merkt sie unabhängig von people.
         self.state.people.retain(|p| keys.contains(&p.peer));
         let mut contacts = vec![];
-        for (peer, name) in &entries {
-            let address = self
-                .state
-                .chats
-                .contact(peer)
-                .filter(|c| !c.addr.is_empty())
-                .map(|c| c.addr.clone())
-                .unwrap_or_else(|| seminar_net::directory_address(peer));
-            contacts.push((peer.clone(), address));
+        for (peer, name, address) in &entries {
+            contacts.push((peer.clone(), address.clone()));
             if let Some(person) = self.state.people.iter_mut().find(|p| &p.peer == peer) {
                 person.name.clone_from(name);
             } else {
@@ -291,7 +293,7 @@ impl Seminar {
                 );
             });
             ui.add_space(16.0);
-            if let Some(address) = self.address().map(str::to_owned) {
+            if let Some(address) = self.net.address().map(str::to_owned) {
                 if ui.button("Verbindungsadresse kopieren").clicked() {
                     ui.ctx().copy_text(address);
                 }
@@ -728,6 +730,7 @@ mod tests {
             anzeige: "Jonas".into(),
             rolle: "seminarleitung".into(),
             net_pubkey: jonas.to_string(),
+            adressen: vec![],
         };
         seminar.verzeichnis_uebernehmen(vec![entry()]);
         seminar.verzeichnis_uebernehmen(vec![entry()]);
@@ -758,7 +761,7 @@ mod tests {
         assert_eq!(seminar.state.people[0].peer, previous);
     }
     #[test]
-    fn directory_adds_new_peer_and_keeps_confirmed_direct_address_on_refresh() {
+    fn directory_adds_new_peer_and_replaces_addresses_on_refresh() {
         let mut seminar = scene("v3-seminar-chat").unwrap();
         let peer = seminar.state.people[0].peer.clone();
         let address =
@@ -766,23 +769,111 @@ mod tests {
         seminar
             .set_contacts(vec![(peer.clone(), address.clone())])
             .unwrap();
-        let entry = || VerzeichnisEintrag {
+        let mut entry = VerzeichnisEintrag {
             person: "person-id".into(),
             anzeige: "Suchname".into(),
             rolle: "gast".into(),
             net_pubkey: peer.to_string(),
+            adressen: vec!["[::1]:23456".into(), "not-an-ip:1234".into()],
         };
-        seminar.verzeichnis_uebernehmen(vec![entry()]);
-        assert_eq!(seminar.state.chats.contact(&peer).unwrap().addr, address);
+        seminar.verzeichnis_uebernehmen(vec![entry.clone()]);
+        let replaced: serde_json::Value =
+            serde_json::from_str(&seminar.state.chats.contact(&peer).unwrap().addr).unwrap();
+        assert_eq!(replaced["addrs"], serde_json::json!([{"Ip":"[::1]:23456"}]));
         // Verzeichnisrolle darf einen gültigen Leitungs-Ausweis nicht ändern.
         assert_eq!(seminar.state.badge(&peer, seminar.now()), "Seminarleitung");
         seminar.state.people.clear();
-        seminar.verzeichnis_uebernehmen(vec![entry()]);
+        entry.adressen.clear();
+        seminar.verzeichnis_uebernehmen(vec![entry]);
+        assert_eq!(
+            seminar.state.chats.contact(&peer).unwrap().addr,
+            seminar_net::directory_address(&peer)
+        );
         assert!(seminar.error.is_none(), "{:?}", seminar.error);
         assert_eq!(seminar.state.people.len(), 1);
         assert_eq!(seminar.state.people[0].name, "Suchname");
         assert!(!seminar.state.people[0].online);
         assert!(seminar.state.people[0].sessions.is_empty());
+    }
+    #[test]
+    fn directory_addresses_default_filter_bound_and_update_contacts_automatically() {
+        let mut seminar = scene("v3-seminar-chat").unwrap();
+        let peer = seminar.state.people[0].peer.clone();
+        let mut entry: VerzeichnisEintrag = serde_json::from_value(serde_json::json!({
+            "person":"test-person", "anzeige":"Suchname", "rolle":"seminarleitung", "net_pubkey":peer.as_str()
+        })).unwrap();
+        assert!(
+            entry.adressen.is_empty(),
+            "Ältere N9-Antworten bleiben gültig"
+        );
+        entry.adressen = vec![
+            "https://relay.invalid".into(),
+            "example.invalid:1234".into(),
+            "127.0.0.1".into(),
+            "127.0.0.1:70000".into(),
+        ];
+        entry
+            .adressen
+            .extend((1..=12).map(|port| format!("192.0.2.1:{port}")));
+        seminar.verzeichnis_uebernehmen(vec![entry.clone()]);
+        assert!(seminar.error.is_none(), "{:?}", seminar.error);
+        let address = &seminar.state.chats.contact(&peer).unwrap().addr;
+        assert_eq!(pi_net::node::parse_address(address).unwrap(), peer);
+        assert_eq!(
+            seminar_net::direct_addresses(address),
+            (1..=8)
+                .map(|port| format!("192.0.2.1:{port}"))
+                .collect::<Vec<_>>()
+        );
+        entry.adressen = vec!["invalid".into()];
+        seminar.verzeichnis_uebernehmen(vec![entry]);
+        assert!(
+            seminar_net::direct_addresses(&seminar.state.chats.contact(&peer).unwrap().addr)
+                .is_empty()
+        );
+    }
+    #[test]
+    fn own_address_returns_only_bounded_direct_sockets() {
+        struct AddressNet(String);
+        impl SeminarNet for AddressNet {
+            fn send(&mut self, _: &PeerId, _: pi_net::wire::Payload) -> Result<(), String> {
+                Ok(())
+            }
+            fn senden(
+                &mut self,
+                _: &pi_net::remote::SessionRef,
+                _: &str,
+                _: &pi_net::seminar::Von,
+            ) -> Result<(), String> {
+                Ok(())
+            }
+            fn address(&self) -> Option<&str> {
+                Some(&self.0)
+            }
+        }
+        let mut seminar = scene("v3-seminar-chat").unwrap();
+        assert!(seminar.address().is_empty(), "Vor Netzstart keine Adressen");
+        let mut addrs = vec![
+            serde_json::json!({"Relay":"https://relay.invalid"}),
+            serde_json::json!({"Ip":"hostname.invalid:1234"}),
+            serde_json::json!({"Ip":"[2001:db8::1]:1234"}),
+            serde_json::json!({"Ip":"[2001:0db8::1]:1234"}),
+        ];
+        addrs.extend((1..=12).map(|port| serde_json::json!({"Ip":format!("192.0.2.1:{port}")})));
+        seminar.net = Box::new(AddressNet(
+            serde_json::json!({"id":seminar.state.chats.me.as_str(),"addrs":addrs}).to_string(),
+        ));
+        let addresses = seminar.address();
+        assert_eq!(addresses.len(), 8);
+        assert_eq!(addresses[0], "[2001:db8::1]:1234");
+        assert_eq!(addresses[7], "192.0.2.1:7");
+        assert!(
+            addresses
+                .iter()
+                .all(|a| a.parse::<std::net::SocketAddr>().is_ok())
+        );
+        seminar.net = Box::new(AddressNet("broken".into()));
+        assert!(seminar.address().is_empty());
     }
     #[test]
     fn empty_directory_does_not_immediately_end_active_grant() {
@@ -977,6 +1068,7 @@ pub fn scene(name: &str) -> Option<Seminar> {
             anzeige: p.name.clone(),
             rolle: String::new(),
             net_pubkey: p.peer.to_string(),
+            adressen: vec![],
         })
         .collect();
     s.verzeichnis_uebernehmen(verzeichnis);
