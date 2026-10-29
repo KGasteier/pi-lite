@@ -161,9 +161,12 @@ pub struct Verzeichnis {
     pub personen: Vec<VerzeichnisPerson>,
 }
 
+const ABHOLFACH_MAX_BYTES: u64 = 600 * 1024 * 1024;
+
 pub struct Empfang {
     origin: String,
     agent: ureq::Agent,
+    abholfach_agent: ureq::Agent,
     auth: Option<(String, ed25519_dalek::SigningKey)>,
     empfang_pubkey: Option<String>,
 }
@@ -174,6 +177,7 @@ impl Empfang {
         Ok(Self {
             origin: origin.to_string(),
             agent: agent(false),
+            abholfach_agent: agent(true),
             auth: None,
             empfang_pubkey: None,
         })
@@ -200,12 +204,23 @@ impl Empfang {
             wait,
         )
     }
-    fn request_once(
+    fn request_once(&self, method: &str, path: &str, body: Value) -> Result<Value, RequestError> {
+        self.request_once_with_limit(method, path, body, ABHOLFACH_MAX_BYTES)
+    }
+    // Kleines injizierbares Leselimit für Transporttests ohne 600-MiB-Testdaten.
+    fn request_once_with_limit(
         &self,
         method: &str,
         path: &str,
         mut body: Value,
+        abholfach_limit: u64,
     ) -> Result<Value, RequestError> {
+        let download = method == "GET" && path.starts_with("abholfach/");
+        let transport = if download {
+            &self.abholfach_agent
+        } else {
+            &self.agent
+        };
         let url = format!("{}/v1/empfang/{path}", self.origin);
         let auth_headers = if !matches!(path, "hallo" | "checkin" | "challenge" | "nonce")
             && !path.starts_with("warten/")
@@ -232,7 +247,7 @@ impl Empfang {
             None
         };
         let mut response = if method == "GET" {
-            let mut req = self.agent.get(&url);
+            let mut req = transport.get(&url);
             if let Some((id, cid, sig)) = &auth_headers {
                 req = req
                     .header("X-Cocopi-Checkin", id)
@@ -256,16 +271,40 @@ impl Empfang {
         }
         .map_err(|e| request_error(e, "Der Empfang ist nicht erreichbar. Prüfe die Verbindung."))?;
         let status = response.status().as_u16();
+        // N14: keine automatische Wiederholung, auch nicht für sonst idempotente
+        // Routen. Die Wartezeit kommt vom Empfang, nicht aus einem Retry-Timer.
+        if status == 429 {
+            let message = match response
+                .headers()
+                .get("Retry-After")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<u64>().ok())
+            {
+                Some(seconds) => format!(
+                    "Gerade melden sich sehr viele an. Bitte in {seconds} Sekunden erneut versuchen."
+                ),
+                None => {
+                    "Gerade melden sich sehr viele an. Bitte warte kurz und versuche es erneut."
+                        .into()
+                }
+            };
+            return Err(RequestError::Dauerhaft(message));
+        }
+        let limit = if download {
+            abholfach_limit
+        } else {
+            2 * 1024 * 1024
+        };
+        if response.body().content_length().is_some_and(|n| n > limit) {
+            return Err("Die Antwort des Empfangs ist zu groß oder unvollständig.".into());
+        }
         let text = response
             .body_mut()
             .with_config()
-            .limit(if method == "GET" && path.starts_with("abholfach/") {
-                // Empfang liefert das Chiffrat base64url im JSON (bis 2 GiB Archiv).
-                // Nur die einzelne, ausdrücklich abgeholte Box darf so groß sein.
-                (2 * 1024 * 1024 * 1024u64).div_ceil(3) * 4 + 65536
-            } else {
-                2 * 1024 * 1024
-            })
+            // Auch ohne Längenangabe während des Lesens abbrechen. ureq 3.4
+            // meldet bereits BEIM Erreichen des Limits einen Fehler, bevor es
+            // EOF prüft. Ein Probe-Byte lässt exakt `limit` Bytes noch zu.
+            .limit(limit + 1)
             .read_to_string()
             .map_err(|e| {
                 request_error(
@@ -273,6 +312,9 @@ impl Empfang {
                     "Die Antwort des Empfangs ist zu groß oder unvollständig.",
                 )
             })?;
+        if text.len() as u64 > limit {
+            return Err("Die Antwort des Empfangs ist zu groß oder unvollständig.".into());
+        }
         let value: Value = serde_json::from_str(&text)
             .map_err(|_| "Der Empfang hat keine gültige Antwort gesendet.")?;
         // N9 ist eine signierte Protokollhülle ohne typ; Integritätsprüfung
@@ -485,13 +527,15 @@ impl Empfang {
             json!({"checkin_id":identifier(checkin_id)?,"auswahl":auswahl}),
         )
     }
-    /// GET abholfach → abholfaecher {archive:[{checkin_id,ablauf,sha256}]}.
+    /// GET abholfach → abholfaecher {archive:[{checkin_id,ablauf,sha256,bytes}]}.
+    /// bytes = Größe des entschlüsselten Archivs, nicht der HTTP-Antwort.
     /// Zugriff wie Checkout: aktuelle Geräte-Challenge, nur eigene Person.
     pub fn abholfach(&self) -> Result<Value, String> {
         self.request("GET", "abholfach", Value::Null)
     }
     /// GET abholfach/:checkin_id → abholfach {archiv: verschlüsselter Umschlag}.
     /// Keine Bestätigung vor Entschlüsselung, Hashprüfung und lokalem Rückspielen.
+    /// N13: höchstens 600 MiB Antwort, Abbruch nach 45 s ohne neue Daten.
     pub fn abholfach_holen(&self, checkin_id: &str) -> Result<Value, String> {
         self.request(
             "GET",
@@ -542,6 +586,188 @@ fn box_id(id: &str) -> Result<&str, String> {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
+    #[test]
+    fn abholfach_steady_body_can_take_more_than_fifteen_seconds() {
+        use std::io::Write;
+        use std::time::{Duration, Instant};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = Empfang::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        // Nur der bewusste Download hat kein Gesamtbudget; kurze Anfragen behalten es.
+        assert_eq!(
+            client.agent.config().timeouts().global,
+            Some(Duration::from_secs(15))
+        );
+        assert_eq!(client.abholfach_agent.config().timeouts().global, None);
+        assert_eq!(client.abholfach_agent.config().timeouts().recv_body, None);
+        assert!(client.abholfach_agent.config().proxy().is_none());
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut r = std::io::BufReader::new(stream);
+            let request = read_mock_request(&mut r);
+            assert!(request.starts_with("GET /v1/empfang/abholfach/"));
+            let text = r#"{"protokoll":1,"typ":"abholfach","archiv":{"chiffrat":"stetig"}}"#;
+            // Whitespace gehört zu gültigem JSON. Header und Body werden nicht auf
+            // einmal geliefert; die Antwort dauert nachweislich länger als 15 s.
+            write!(
+                r.get_mut(),
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                text.len() + 64
+            )
+            .unwrap();
+            for _ in 0..64 {
+                r.get_mut().write_all(b" ").unwrap();
+                r.get_mut().flush().unwrap();
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            r.get_mut().write_all(text.as_bytes()).unwrap();
+        });
+        let start = Instant::now();
+        let packet = client
+            .abholfach_holen("12345678-1234-1234-1234-123456789abc")
+            .unwrap();
+        assert!(start.elapsed() > Duration::from_secs(15));
+        assert_eq!(packet["archiv"]["chiffrat"], "stetig");
+        server.join().unwrap();
+    }
+    #[test]
+    fn abholfach_stalled_body_hits_injected_idle_timeout() {
+        use std::io::Write;
+        use std::time::Duration;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client =
+            Empfang::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        client.abholfach_agent = super::super::idle_transport::agent(Duration::from_millis(300));
+        let (finished, receive) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut r = std::io::BufReader::new(stream);
+            read_mock_request(&mut r);
+            r.get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{")
+                .unwrap();
+            // Erst der Client-Abbruch darf die Gegenstelle schließen: kein EOF
+            // statt des erwarteten Leerlauf-Timeouts vortäuschen.
+            receive.recv_timeout(Duration::from_secs(3)).unwrap();
+        });
+        let result = client.request_once("GET", "abholfach/test", Value::Null);
+        finished.send(()).unwrap();
+        assert!(matches!(result, Err(RequestError::Verbindung(_))));
+        server.join().unwrap();
+    }
+    #[test]
+    fn abholfach_rejects_announced_body_over_six_hundred_mib_before_reading() {
+        use std::io::Write;
+        use std::time::Duration;
+        assert_eq!(ABHOLFACH_MAX_BYTES, 629_145_600);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = Empfang::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let (finished, receive) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut r = std::io::BufReader::new(stream);
+            read_mock_request(&mut r);
+            write!(
+                r.get_mut(),
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                ABHOLFACH_MAX_BYTES + 1
+            )
+            .unwrap();
+            receive.recv_timeout(Duration::from_secs(3)).unwrap();
+        });
+        let result = client.request_once("GET", "abholfach/test", Value::Null);
+        finished.send(()).unwrap();
+        assert!(matches!(result, Err(RequestError::Dauerhaft(ref m)) if m.contains("zu groß")));
+        server.join().unwrap();
+    }
+    #[test]
+    fn abholfach_chunked_body_is_bounded_during_read_not_after_eof() {
+        use std::io::Write;
+        use std::time::Duration;
+        for bytes in [128, 129] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let client =
+                Empfang::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+            let (finished, receive) = std::sync::mpsc::channel();
+            let server = std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let mut r = std::io::BufReader::new(stream);
+                read_mock_request(&mut r);
+                r.get_mut().write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").unwrap();
+                let mut body = r#"{"protokoll":1,"typ":"abholfach"}"#.to_owned();
+                body.extend(std::iter::repeat_n(' ', bytes - body.len()));
+                write!(r.get_mut(), "{bytes:x}\r\n{body}\r\n").unwrap();
+                if bytes == 128 {
+                    r.get_mut().write_all(b"0\r\n\r\n").unwrap();
+                }
+                // Bei Überschreitung fehlen bewusst Abschlusschunk und EOF.
+                receive.recv_timeout(Duration::from_secs(3)).unwrap();
+            });
+            let result = client.request_once_with_limit("GET", "abholfach/test", Value::Null, 128);
+            finished.send(()).unwrap();
+            if bytes == 128 {
+                assert_eq!(result.unwrap()["typ"], "abholfach");
+            } else {
+                assert!(
+                    matches!(result, Err(RequestError::Dauerhaft(ref m)) if m.contains("zu groß"))
+                );
+            }
+            server.join().unwrap();
+        }
+    }
+    #[test]
+    fn rate_limit_names_wait_from_retry_after_and_never_retries() {
+        use std::io::Write;
+        let public_key = B64.encode(SigningKey::from_bytes(&[17; 32]).verifying_key().as_bytes());
+        for route in ["nonce", "checkin", "hallo", "abholfach/test"] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let client =
+                Empfang::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+            let server = std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let mut r = std::io::BufReader::new(stream);
+                assert!(read_mock_request(&mut r).contains(&format!("/v1/empfang/{route} ")));
+                let body = r#"{"protokoll":1,"typ":"fehler","code":"zu_viele_anfragen","was":"Limit erreicht","tun":"Warten"}"#;
+                write!(r.get_mut(), "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 37\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            });
+            let result = match route {
+                "nonce" => client.nonce(&public_key).map(|_| Value::Null),
+                "checkin" => client.checkin(json!({})),
+                "abholfach/test" => client.request("GET", route, Value::Null),
+                // hallo dürfte bei Transportfehlern wiederholen. Bei 429 niemals.
+                _ => {
+                    client.request_with_wait("POST", route, json!({}), |_| panic!("429 wiederholt"))
+                }
+            };
+            assert_eq!(
+                result.unwrap_err(),
+                "Gerade melden sich sehr viele an. Bitte in 37 Sekunden erneut versuchen."
+            );
+            server.join().unwrap();
+        }
+    }
+    #[test]
+    fn rate_limit_without_valid_retry_after_does_not_invent_wait_seconds() {
+        use std::io::Write;
+        for header in ["", "Retry-After: ungueltig\r\n", "Retry-After: -5\r\n"] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let client =
+                Empfang::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+            let server = std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let mut r = std::io::BufReader::new(stream);
+                read_mock_request(&mut r);
+                // Auch ein leerer/proxy-erzeugter 429-Body bleibt verständlich.
+                write!(r.get_mut(), "HTTP/1.1 429 Too Many Requests\r\n{header}Content-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            });
+            let result =
+                client.request_with_wait("POST", "hallo", json!({}), |_| panic!("429 wiederholt"));
+            assert_eq!(
+                result.unwrap_err(),
+                "Gerade melden sich sehr viele an. Bitte warte kurz und versuche es erneut."
+            );
+            server.join().unwrap();
+        }
+    }
     #[test]
     fn retry_only_connections_and_idempotent_calls_with_n2_backoff() {
         use std::cell::Cell;
@@ -826,6 +1052,7 @@ mod tests {
         let c = Empfang {
             origin,
             agent: agent(false),
+            abholfach_agent: agent(true),
             auth: Some(("test-checkin".into(), key)),
             empfang_pubkey: None,
         };
@@ -890,6 +1117,7 @@ mod tests {
         let c = Empfang {
             origin,
             agent: agent(false),
+            abholfach_agent: agent(true),
             auth: Some(("active".into(), key)),
             empfang_pubkey: None,
         };
