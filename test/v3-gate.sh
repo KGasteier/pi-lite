@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Merge-Gate: bash test/v3-gate.sh <worktree> [hub-worktree ...]
 # Alternativ/zusätzlich: V3_GATE_HUBS="/pfad/hub-a /pfad/hub-b" (ohne Leerzeichen in Pfaden).
+# V3_GATE_NODE_ONLY=1: nur Node-/Skriptstufen, keine Rust- oder Desktop-Abnahme.
 # Logs bleiben unter /tmp; nur eine Ergebniszeile je Gate auf stdout.
 set -euo pipefail
 usage() { echo "Aufruf: $0 <worktree> [hub-worktree ...]" >&2; exit 2; }
@@ -21,9 +22,16 @@ for candidate in "${env_hubs[@]}" "$@"; do
     (( duplicate )) || hubs+=("$hub")
 done
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-for tool in cargo rustc rustfmt node python3 timeout git; do
+node_only=${V3_GATE_NODE_ONLY:-0}
+[[ "$node_only" == 0 || "$node_only" == 1 ]] || usage
+for tool in node python3 timeout git; do
     command -v "$tool" >/dev/null || { echo "Fehlt: $tool" >&2; exit 2; }
 done
+if [[ "$node_only" == 0 ]]; then
+    for tool in cargo rustc rustfmt; do
+        command -v "$tool" >/dev/null || { echo "Fehlt: $tool" >&2; exit 2; }
+    done
+fi
 name=$(basename -- "$worktree")
 name=${name//[^a-zA-Z0-9_.-]/_}
 # Absichtlich nicht aus CARGO_TARGET_DIR: kein versehentlich geteilter Target-Cache.
@@ -45,7 +53,7 @@ safe_env=(env -i "PATH=$PATH" "HOME=$logs/home" "USERPROFILE=$logs/home"
     CARGO_NET_OFFLINE=true CARGO_TERM_COLOR=never RUSTUP_AUTO_INSTALL=0
     "PI_HUB_DIR=$logs/no-hub" HUB_HOST=127.0.0.1 HUB_TOKEN=v3-gate-mock HUB_STATE=off
     "HUB_ROOTS=$logs/tmp" "HUB_PI_BIN=$logs/no-real-pi" "LC_ALL=C.UTF-8"
-    "I2_SEMINAR_DIR=${I2_SEMINAR_DIR:-$worktree}")
+    "I2_SEMINAR_DIR=${I2_SEMINAR_DIR:-$worktree}" "V3_GATE_NODE_ONLY=$node_only")
 # Der erste V3_GATE_HUBS-Eintrag ist auch für die Rust/Node-Kreuztests maßgeblich.
 if ((${#hubs[@]})); then
     safe_env+=("COCOPI_PI_HUB=${hubs[0]}" "COCOPI_V1_TEST_MODULE=${hubs[0]}/lib/hub-v1.mjs")
@@ -58,7 +66,7 @@ run() {
     if (( rc == 0 )); then
         if [[ "$id" == js-tests ]] && grep -q '^KNOWN ' "$logs/$id.log"; then
             printf 'KNOWN %s | bekannte Basisfehler, keine neuen Fehler; log=%s\n' "$id" "$logs/$id.log"
-        elif [[ "$id" == i2-* || "$id" == i2b-* || "$id" == mobile-tests ]] && grep -Eq '^# (skipped|todo) [1-9][0-9]*$' "$logs/$id.log"; then
+        elif [[ "$id" == i2-* || "$id" == i2b-* || "$id" == i2c-* || "$id" == mobile-tests ]] && grep -Eq '^# (skipped|todo) [1-9][0-9]*$' "$logs/$id.log"; then
             printf 'SKIP %s | Abnahme unvollständig; log=%s\n' "$id" "$logs/$id.log"
         elif [[ "$id" == fmt ]]; then
             printf 'PASS %s | %s log=%s\n' "$id" "$(head -n 1 "$logs/$id.log")" "$logs/$id.log"
@@ -75,8 +83,11 @@ run() {
     date -Is
     git -C "$worktree" rev-parse HEAD
     git -C "$worktree" status --short
-    "${safe_env[@]}" cargo --version
-    "${safe_env[@]}" rustc --version
+    if [[ "$node_only" == 0 ]]; then
+        "${safe_env[@]}" cargo --version
+        "${safe_env[@]}" rustc --version
+    fi
+    printf 'node_only=%s\n' "$node_only"
     "${safe_env[@]}" node --version
     printf 'worktree=%s\ntarget=%s\n' "$worktree" "$target"
     for hub in "${hubs[@]}"; do
@@ -85,6 +96,7 @@ run() {
         git -C "$hub" status --short
     done
 } >"$logs/context.log" 2>&1
+if [[ "$node_only" == 0 ]]; then
 run fmt "$worktree" python3 "$script_dir/gate-checks.py" fmt "$worktree" "${V3_GATE_BASE:-cocopi-v3}"
 
 # JSON-Diagnosen zählen, nicht die menschlichen „generated N warnings“-Summen.
@@ -122,6 +134,9 @@ else
     printf 'SKIP sync-rust-tests | copi/crates/pi-sync/Cargo.toml nicht vorhanden\n'
 fi
 run copi-check "$worktree/copi" cargo check --offline --locked -p copi --bin copi
+else
+    printf 'SKIP rust-desktop | V3_GATE_NODE_ONLY=1; fmt/clippy/Rust/consent nicht geprüft\n'
+fi
 # nullglob + explizite Leerprüfung verhindert ein stilles Grün ohne Prüflinge.
 run js-syntax "$worktree" bash -c '
     shopt -s nullglob; files=(ui/*.js); ((${#files[@]})) || exit 2
@@ -150,10 +165,7 @@ if ((${#hubs[@]})); then
             printf 'SKIP hub-smoke%s | smoke.mjs oder ausführbares fake-pi.mjs fehlt: %s\n' "$suffix" "$hub"
         fi
         if compgen -G "$hub/empfang/test/*.mjs" >/dev/null; then
-            run "hub-empfang$suffix" "$hub" bash -c '
-                failed=0
-                for file in empfang/test/*.mjs; do echo "CHECK $file"; node "$file" || failed=1; done
-                exit "$failed"'
+            run "hub-empfang$suffix" "$hub" bash -c 'node --test empfang/test/*.mjs'
         else
             printf 'SKIP hub-empfang%s | keine empfang/test/*.mjs: %s\n' "$suffix" "$hub"
         fi
@@ -165,6 +177,7 @@ if ((${#hubs[@]})); then
         if compgen -G "$worktree/test/i2/*.test.mjs" >/dev/null; then
             run "i2-szenarien$suffix" "$worktree" env "I2_HUB_DIR=$hub" bash -c '
                 files=(); for file in test/i2/*.test.mjs; do
+                    [[ "$V3_GATE_NODE_ONLY" != 1 || "$file" != */consent.test.mjs ]] || continue
                     [[ "$file" == *.i2b.test.mjs || "$file" == *.i2c.test.mjs ]] || files+=("$file")
                 done
                 ((${#files[@]})) || exit 2
@@ -173,6 +186,9 @@ if ((${#hubs[@]})); then
             # die nachgewiesene I2-Basis nicht als pauschales SKIP verdecken.
             if compgen -G "$worktree/test/i2/*.i2b.test.mjs" >/dev/null; then
                 run "i2b-szenarien$suffix" "$worktree" env "I2_HUB_DIR=$hub" bash -c 'node --test test/i2/*.i2b.test.mjs'
+            fi
+            if [[ "$node_only" == 1 ]] && compgen -G "$worktree/test/i2/*.i2c.test.mjs" >/dev/null; then
+                run "i2c-node-szenarien$suffix" "$worktree" env "I2_HUB_DIR=$hub" bash -c 'node --test test/i2/*.i2c.test.mjs'
             fi
         else
             printf 'SKIP i2-szenarien%s | keine test/i2/*.test.mjs vorhanden\n' "$suffix"
