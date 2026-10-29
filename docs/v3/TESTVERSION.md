@@ -75,7 +75,8 @@ Fertige Bilder aller Szenen liegen in `coord/shots/I3/final/` (siehe `INDEX.md`)
 - **Noch nicht:** produktiver Pool-Betrieb auf R2. Accounts, systemd und Quoten sind noch nicht eingerichtet (Freigabe ausstehend).
 - **Noch nicht:** authentik-Anmeldung, weil die App bei auth.udk.digital noch nicht angelegt ist.
 - **Stand I3 (Gate grün, 178 App-Tests):** UdK-Login mit Server-nonce, Aktiv-Signal alle 30–60 s (kein 8-h-Zwang für aktive Personen), signiertes Seminarverzeichnis mit direkten Adressen (Seminar findet sich im LAN ohne manuellen Austausch), Abholfach ohne Download beim Check-in.
-- **Bekannte Grenzen:** wer nur am Handy arbeitet, wird nach 8 h ausgecheckt (Handy sendet noch kein Aktiv-Signal); Abholfach > 15 s Download auf langsamen Leitungen; `/v1/empfang/nonce` braucht im Betrieb eine Ratenbegrenzung im Proxy; nicht über WAN/echtes authentik getestet.
+- **Stand I4:** Auch wer nur am Handy arbeitet, wird nicht nach 8 h ausgecheckt (der Empfang fragt vorher beim Arbeitsplatz nach). Abholfach-Download bricht nur nach 45 s ohne Daten ab (max. 600 MiB), Größe wird vorab angezeigt. Anmeldung ist je Adresse auf 10 Versuche pro Minute begrenzt (mit verständlicher Wartezeit). Sessions anderer erscheinen automatisch im Seminar.
+- **Bekannte Grenzen:** nicht über WAN, echtes authentik oder auf R2 live getestet; hinter einem Proxy `EMPFANG_TRUST_PROXY=1` setzen (siehe `empfang/README.md`).
 - Rückmeldungen bitte mit Szene/Name, Rechner (`uname -m`) und Screenshot.
 
 ## 5. Probleme
