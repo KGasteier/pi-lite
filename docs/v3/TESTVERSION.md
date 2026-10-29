@@ -62,12 +62,20 @@ COPI_SCENE=v3-checkin cocopi --shot a.png  # nur Bild speichern
 | `v3-geraete` | Gekoppelte Geräte verwalten |
 | `v3-main-remote` | Remote-Session (klassisch) |
 | `v3-grenze` | Hinweis auf eine Grenze (z. B. Speicher) |
+| `v3-checkout-leeren-unbestaetigt` | Archiv ist zurück, aber das Leeren des Platzes ist noch nicht bestätigt |
+| `v3-seminar-platzhalter` | Seminarbereich ohne andere Personen |
+| `v3-hybrid-dialog` | Auswahl Remote/Hybrid |
+| `v3-modus` | Arbeitsmodus wechseln |
+
+Fertige Bilder aller Szenen liegen in `coord/shots/I3/final/` (siehe `INDEX.md`).
 
 ## 4. Was die Testversion kann und was nicht
 
 - **Kann:** alle Ansichten, Demo-Daten, lokale Ordnerauswahl, Remote-Sessions zu einem bestehenden pi-hub, P2P-Chat im LAN.
 - **Noch nicht:** produktiver Pool-Betrieb auf R2. Accounts, systemd und Quoten sind noch nicht eingerichtet (Freigabe ausstehend).
 - **Noch nicht:** authentik-Anmeldung, weil die App bei auth.udk.digital noch nicht angelegt ist.
+- **Stand I3 (Gate grün, 178 App-Tests):** UdK-Login mit Server-nonce, Aktiv-Signal alle 30–60 s (kein 8-h-Zwang für aktive Personen), signiertes Seminarverzeichnis mit direkten Adressen (Seminar findet sich im LAN ohne manuellen Austausch), Abholfach ohne Download beim Check-in.
+- **Bekannte Grenzen:** wer nur am Handy arbeitet, wird nach 8 h ausgecheckt (Handy sendet noch kein Aktiv-Signal); Abholfach > 15 s Download auf langsamen Leitungen; `/v1/empfang/nonce` braucht im Betrieb eine Ratenbegrenzung im Proxy; nicht über WAN/echtes authentik getestet.
 - Rückmeldungen bitte mit Szene/Name, Rechner (`uname -m`) und Screenshot.
 
 ## 5. Probleme
