@@ -12,6 +12,23 @@ use pi_net::{
     },
 };
 
+/// N4-Knoten-ID validieren, ohne in der App eine zweite iroh-Abhängigkeit.
+pub(super) fn directory_peer(key: &str) -> Result<pi_net::model::PeerId, String> {
+    let peer: pi_net::model::PeerId = key.into();
+    if key.len() != 64
+        || !key
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        || pi_net::node::parse_address(&directory_address(&peer))? != peer
+    {
+        return Err("Ungültige Knoten-ID im Seminarverzeichnis".into());
+    }
+    Ok(peer)
+}
+pub(super) fn directory_address(peer: &pi_net::model::PeerId) -> String {
+    serde_json::json!({"id":peer.as_str(), "addrs":[]}).to_string()
+}
+
 pub struct SlotHub {
     hub: HubV1,
     /// Nur eigene, vom Hub bestätigte Sessions. cwd ist keine Remote-Adresse.
@@ -76,13 +93,302 @@ pub fn production(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pi_net::ausweis::Rolle;
+    use pi_net::ausweis::{Inhalt, Rolle, base64url, kanonisch};
+    use pi_net::{
+        model::{PeerId, now_ms},
+        remote::{GrantState, RemoteScope},
+    };
     use serde_json::json;
     use std::{
         io::{Read, Write},
         net::TcpListener,
-        time::Duration,
+        time::{Duration, Instant},
     };
+
+    fn wait_until(deadline: Instant, mut condition: impl FnMut() -> bool) {
+        while !condition() {
+            assert!(
+                Instant::now() < deadline,
+                "Zwei-Knoten-Ablauf muss unter 30 s bleiben"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    fn certificate(issuer: &Identity, peer: &PeerId, person: &str, rolle: Rolle) -> Ausweis {
+        let inhalt = Inhalt {
+            v: 1,
+            typ: "geraeteausweis".into(),
+            pid: format!("test-{person}"),
+            person: person.into(),
+            rolle,
+            net_pubkey: peer.to_string(),
+            geraet_pubkey: base64url(&[73; 32]),
+            iat: now_ms() / 1000 - 1,
+            exp: now_ms() / 1000 + 3600,
+        };
+        let signatur = base64url(&issuer.secret.sign(&kanonisch(&inhalt).unwrap()).to_bytes());
+        Ausweis { inhalt, signatur }
+    }
+    fn loopback(address: &str) -> String {
+        let mut value: serde_json::Value = serde_json::from_str(address).unwrap();
+        let ips: Vec<_> = value["addrs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|a| {
+                let socket: std::net::SocketAddr = a.get("Ip")?.as_str()?.parse().ok()?;
+                let ip = if socket.is_ipv4() { "127.0.0.1" } else { "::1" }
+                    .parse()
+                    .unwrap();
+                Some(json!({"Ip":std::net::SocketAddr::new(ip, socket.port()).to_string()}))
+            })
+            .collect();
+        assert!(!ips.is_empty());
+        value["addrs"] = json!(ips);
+        value.to_string()
+    }
+    fn deliver(seminar: &mut Seminar, out: pi_net::store::Outbox) {
+        seminar.dispatch(Ok(out));
+        assert!(seminar.error.is_none(), "{:?}", seminar.error);
+    }
+    fn directory_entry(peer: &PeerId, name: &str) -> super::super::VerzeichnisEintrag {
+        super::super::VerzeichnisEintrag {
+            person: format!("test-{name}"),
+            anzeige: name.into(),
+            // Absichtlich gefälscht: diese Angabe darf keine Rechte verleihen.
+            rolle: "seminarleitung".into(),
+            net_pubkey: peer.to_string(),
+        }
+    }
+    #[test]
+    fn two_nodes_directory_chat_dm_consent_send_as_mock_hub_and_expiry_under_30s() {
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(25);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let hub_address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut accepted = None;
+            wait_until(deadline, || match listener.accept() {
+                Ok((socket, _)) => {
+                    accepted = Some(socket);
+                    true
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => false,
+                Err(e) => panic!("Mock-Hub: {e}"),
+            });
+            let mut socket = accepted.unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut header = vec![];
+            while !header.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                socket.read_exact(&mut byte).unwrap();
+                header.push(byte[0]);
+                assert!(header.len() < 16_384);
+            }
+            let header = String::from_utf8(header).unwrap();
+            assert!(
+                header.starts_with("POST /v1/sessions/own-id/senden HTTP/1.1\r\n"),
+                "{header}"
+            );
+            let length: usize = header
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|n| n.trim().parse().unwrap())
+                })
+                .unwrap();
+            let mut body = vec![0; length];
+            socket.read_exact(&mut body).unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(
+                body,
+                json!({"protokoll":1,"text":"Bitte gliedern", "von":{"person":"Aylin","rolle":"seminarleitung"}})
+            );
+            let reply = json!({"protokoll":1,"typ":"gesendet"}).to_string();
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len()).unwrap();
+            body
+        });
+        let issuer = Identity::ephemeral();
+        let pin = base64url(issuer.secret.public().as_bytes());
+        let ia = Identity::ephemeral();
+        let ib = Identity::ephemeral();
+        let pa = ia.peer();
+        let pb = ib.peer();
+        let ca = certificate(&issuer, &pa, "Aylin", Rolle::Seminarleitung);
+        let cb = certificate(&issuer, &pb, "Mira", Rolle::Teilnehmende);
+        let session = SessionRef {
+            label: "Handout".into(),
+            cwd: "not-a-hub-id".into(),
+        };
+        let mut state_a = SeminarState::new(pa.clone(), "Aylin", pin.clone(), "seminar".into());
+        state_a.identify(&pa, &ca, now_ms()).unwrap();
+        let mut state_b = SeminarState::new(pb.clone(), "Mira", pin.clone(), "seminar".into());
+        state_b.identify(&pb, &cb, now_ms()).unwrap();
+        state_b.sessions = vec![session.clone()];
+        let hub = HubV1::new(&format!("http://{hub_address}")).unwrap();
+        let slot = SlotHub::new(hub, vec![(session.clone(), "own-id".into())]).unwrap();
+        let na = NodeNet::start(ia, ca, pin.clone(), Box::new(slot)).unwrap();
+        let hub = HubV1::new(&format!("http://{hub_address}")).unwrap();
+        let slot = SlotHub::new(hub, vec![(session.clone(), "own-id".into())]).unwrap();
+        let nb = NodeNet::start(ib, cb, pin, Box::new(slot)).unwrap();
+        let mut a = Seminar::new(state_a, Box::new(na));
+        let mut b = Seminar::new(state_b, Box::new(nb));
+        wait_until(deadline, || {
+            a.tick();
+            b.tick();
+            a.address().is_some() && b.address().is_some()
+        });
+        let aa = loopback(a.address().unwrap());
+        let ba = loopback(b.address().unwrap());
+        a.verzeichnis_uebernehmen(vec![
+            directory_entry(&pa, "Aylin"),
+            directory_entry(&pb, "Mira"),
+        ]);
+        b.verzeichnis_uebernehmen(vec![
+            directory_entry(&pa, "Aylin"),
+            directory_entry(&pb, "Mira"),
+        ]);
+        assert_eq!(a.state.badge(&pb, now_ms()), "unbestätigt");
+        assert!(a.state.direct(&pb, now_ms()).is_err());
+        // N9 findet die IDs; der aktuelle Minimal-Transport braucht zusätzlich
+        // direkte Adressen (hier nur Loopback). Keine öffentliche Discovery.
+        a.set_contacts(vec![(pb.clone(), ba)]).unwrap();
+        b.set_contacts(vec![(pa.clone(), aa)]).unwrap();
+        wait_until(deadline, || {
+            a.tick();
+            b.tick();
+            a.state.message_unavailable(&pb, now_ms()).is_none()
+                && b.state.message_unavailable(&pa, now_ms()).is_none()
+        });
+        // Frühe Allowlist-Rennen dürfen vor bestätigtem Netzstart Fehler melden.
+        a.error = None;
+        b.error = None;
+        assert_eq!(a.state.badge(&pb, now_ms()), "Teilnehmende");
+        assert_eq!(b.state.badge(&pa, now_ms()), "Seminarleitung");
+        // Session-Discovery ist nicht Teil von N9. Explizite Test-Fixture, kein
+        // stilles Lesen fremder Sessions oder Ableiten einer ID aus einem cwd.
+        a.state.people[0].sessions = vec![session.clone()];
+        let out = a.state.create_group(now_ms()).unwrap();
+        deliver(&mut a, out);
+        wait_until(deadline, || {
+            b.tick();
+            !b.state.chats.invites.is_empty()
+        });
+        let group = b.state.chats.invites[0].chat.id.clone();
+        let out = b.state.chats.accept_invite(&group).unwrap();
+        deliver(&mut b, out);
+        b.state.group = Some(group.clone());
+        b.state.selected = Some(group.clone());
+        let out = a.state.post("Hallo Seminar").unwrap();
+        deliver(&mut a, out);
+        wait_until(deadline, || {
+            b.tick();
+            !b.state.chats.chat(&group).unwrap().messages.is_empty()
+        });
+        assert_eq!(
+            b.state
+                .chats
+                .chat(&group)
+                .unwrap()
+                .messages
+                .last()
+                .unwrap()
+                .body
+                .text(),
+            "Hallo Seminar"
+        );
+        let out = a.state.direct(&pb, now_ms()).unwrap();
+        deliver(&mut a, out);
+        wait_until(deadline, || {
+            b.tick();
+            !b.state.chats.invites.is_empty()
+        });
+        let dm = b.state.chats.invites[0].chat.id.clone();
+        assert_ne!(dm, group);
+        let out = b.state.chats.accept_invite(&dm).unwrap();
+        deliver(&mut b, out);
+        let out = a.state.post("Nur für Mira").unwrap();
+        deliver(&mut a, out);
+        wait_until(deadline, || {
+            b.tick();
+            !b.state.chats.chat(&dm).unwrap().messages.is_empty()
+        });
+        assert_eq!(
+            b.state
+                .chats
+                .chat(&dm)
+                .unwrap()
+                .messages
+                .last()
+                .unwrap()
+                .body
+                .text(),
+            "Nur für Mira"
+        );
+        let out = a
+            .state
+            .request(&pb, &session, RemoteScope::Control, now_ms())
+            .unwrap();
+        deliver(&mut a, out);
+        wait_until(deadline, || {
+            b.tick();
+            !b.state.remote.grants.is_empty()
+        });
+        assert!(b.marked_prompts.is_empty());
+        let req = b.state.remote.grants[0].req.clone();
+        assert!(a.state.control(&req, "Noch nicht", now_ms()).is_err());
+        let out = b
+            .state
+            .accept(&req, RemoteScope::Control, &session, now_ms())
+            .unwrap();
+        deliver(&mut b, out);
+        wait_until(deadline, || {
+            a.tick();
+            a.state
+                .remote
+                .get(&req)
+                .is_some_and(|g| matches!(g.state, GrantState::Active { .. }))
+        });
+        let out = a.state.control(&req, "Bitte gliedern", now_ms()).unwrap();
+        deliver(&mut a, out);
+        wait_until(deadline, || {
+            b.tick();
+            !b.marked_prompts.is_empty()
+        });
+        assert_eq!(b.marked_prompts.len(), 1);
+        assert_eq!(b.marked_prompts[0].von.label(), "Aylin · Seminarleitung");
+        assert_eq!(server.join().unwrap()["text"], "Bitte gliedern");
+        let GrantState::Active { expires_ms } = b.state.remote.get(&req).unwrap().state else {
+            panic!()
+        };
+        // Logische Zeit statt 30 Minuten Schlaf. Ablauf-Ende geht über QUIC zurück.
+        b.demo_now = Some(expires_ms);
+        b.tick();
+        assert!(b.state.remote.grants.is_empty());
+        wait_until(deadline, || {
+            a.tick();
+            a.state
+                .remote
+                .get(&req)
+                .is_none_or(|g| matches!(g.state, GrantState::Ended { .. }))
+        });
+        assert!(a.state.control(&req, "Zu spät", now_ms()).is_err());
+        a.checkout();
+        b.checkout();
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "{:?}",
+            started.elapsed()
+        );
+        eprintln!(
+            "Zwei-Knoten-Ablauf einschließlich Mock-Hub: {:?}",
+            started.elapsed()
+        );
+    }
 
     #[test]
     fn slot_hub_posts_sender_and_own_id_not_untrusted_cwd() {

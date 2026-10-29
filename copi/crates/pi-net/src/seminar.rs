@@ -67,6 +67,7 @@ pub struct MemoryNet {
     pub sent: Outbox,
     pub hub: Vec<HubPrompt>,
     pub incoming: Outbox,
+    pub contacts: Vec<(PeerId, String)>,
 }
 impl SeminarNet for MemoryNet {
     fn send(&mut self, to: &PeerId, payload: Payload) -> Result<(), String> {
@@ -79,6 +80,10 @@ impl SeminarNet for MemoryNet {
             text: text.into(),
             von: von.clone(),
         });
+        Ok(())
+    }
+    fn set_contacts(&mut self, peers: Vec<(PeerId, String)>) -> Result<(), String> {
+        self.contacts = peers;
         Ok(())
     }
     fn poll(&mut self) -> Outbox {
@@ -102,6 +107,8 @@ pub struct SeminarState {
     pub checked_in: bool,
     issuer: String,
     verified: BTreeMap<PeerId, Bestaetigt>,
+    /// Transportausfall unabhängig vom (zeitweise leeren) Verzeichnis merken.
+    disconnected: BTreeMap<PeerId, u64>,
 }
 impl SeminarState {
     pub fn new(me: PeerId, name: &str, issuer: String, space: SpaceId) -> Self {
@@ -116,6 +123,7 @@ impl SeminarState {
             checked_in: true,
             issuer,
             verified: BTreeMap::new(),
+            disconnected: BTreeMap::new(),
         }
     }
     /// Bereits durch den Konto-Dialog bestätigter Empfangsschlüssel.
@@ -126,6 +134,9 @@ impl SeminarState {
         self.verified.get(peer).filter(|c| c.gueltig(now / 1000))
     }
     pub fn name(&self, peer: &PeerId, now: u64) -> String {
+        if peer == &self.chats.me {
+            return "Du".into();
+        }
         self.verified(peer, now)
             .map(|c| c.person().to_string())
             .or_else(|| {
@@ -134,7 +145,7 @@ impl SeminarState {
                     .find(|p| &p.peer == peer)
                     .map(|p| p.name.clone())
             })
-            .unwrap_or_else(|| "Du".into())
+            .unwrap_or_else(|| "Unbekannt".into())
     }
     pub fn badge(&self, peer: &PeerId, now: u64) -> &'static str {
         self.verified(peer, now)
@@ -193,9 +204,17 @@ impl SeminarState {
         self.selected = Some(id);
         Ok(out)
     }
+    /// Nur online und mit geprüftem Ausweis einen neuen Einzelchat beginnen.
+    pub fn message_unavailable(&self, peer: &PeerId, now: u64) -> Option<String> {
+        (!self.checked_in
+            || !self.available(peer)
+            || self.verified(peer, now).is_none()
+            || !self.chats.accepts_from(peer))
+        .then(|| format!("{} ist nicht eingecheckt.", self.name(peer, now)))
+    }
     pub fn direct(&mut self, peer: &PeerId, now: u64) -> Result<Outbox, String> {
-        if !self.chats.accepts_from(peer) {
-            return Err("Person nicht im Seminar".into());
+        if let Some(reason) = self.message_unavailable(peer, now) {
+            return Err(reason);
         }
         let (id, out) = self.chats.open_direct(self.member(peer, now))?;
         self.selected = Some(id);
@@ -293,6 +312,11 @@ impl SeminarState {
         peer.zip(p).into_iter().collect()
     }
     pub fn status(&mut self, peer: &PeerId, online: bool, now: u64) {
+        if online {
+            self.disconnected.remove(peer);
+        } else {
+            self.disconnected.entry(peer.clone()).or_insert(now);
+        }
         if let Some(p) = self.people.iter_mut().find(|p| &p.peer == peer) {
             p.online = online;
             if online {
@@ -314,14 +338,16 @@ impl SeminarState {
                         || self.verified(&self.chats.me, now).is_none()
                         || self.verified(&g.peer, now).is_none()
                         || self
-                            .people
-                            .iter()
-                            .find(|p| p.peer == g.peer)
-                            .is_none_or(|p| {
-                                p.slot.is_none()
-                                    || p.offline_since_ms
-                                        .is_some_and(|t| now.saturating_sub(t) > 60_000)
-                            }))
+                            .disconnected
+                            .get(&g.peer)
+                            .copied()
+                            .or_else(|| {
+                                self.people
+                                    .iter()
+                                    .find(|p| p.peer == g.peer)
+                                    .and_then(|p| p.offline_since_ms)
+                            })
+                            .is_some_and(|t| now.saturating_sub(t) > 60_000))
             })
             .map(|g| g.req.clone())
             .collect();
@@ -341,6 +367,7 @@ impl SeminarState {
             out.extend(self.end(&req, "Check-out"));
         }
         self.verified.clear();
+        self.disconnected.clear();
         self.chats.chats.clear();
         self.chats.invites.clear();
         self.chats.contacts.clear();
@@ -671,6 +698,53 @@ mod tests {
         a.receive(&b.chats.me, out.into_iter().next().unwrap().1, NOW)
             .unwrap();
         req
+    }
+    #[test]
+    fn names_never_attribute_unknown_peers_to_self() {
+        let (a, b, _, _) = pair();
+        assert_eq!(a.name(&PeerId::from("unknown"), NOW), "Unbekannt");
+        assert_eq!(a.name(&a.chats.me, NOW), "Du");
+        assert_eq!(a.name(&b.chats.me, NOW), "Mira");
+    }
+    #[test]
+    fn empty_roster_does_not_end_grant_but_real_disconnect_does() {
+        let (mut a, mut b, _, _) = pair();
+        let req = active(&mut a, &mut b);
+        b.people.clear();
+        assert!(b.tick(NOW + 60_001).is_empty());
+        assert!(b.remote.get(&req).is_some());
+        b.status(&a.chats.me, false, NOW + 60_001);
+        assert!(b.tick(NOW + 120_001).is_empty());
+        assert_eq!(b.tick(NOW + 120_002).len(), 1);
+        assert!(b.remote.grants.is_empty());
+    }
+    #[test]
+    fn reconnect_clears_disconnect_even_without_roster() {
+        let (mut a, mut b, _, _) = pair();
+        active(&mut a, &mut b);
+        b.people.clear();
+        b.status(&a.chats.me, false, NOW);
+        b.status(&a.chats.me, false, NOW + 30_000);
+        b.status(&a.chats.me, true, NOW + 59_000);
+        assert!(b.tick(NOW + 120_000).is_empty());
+        b.status(&a.chats.me, false, NOW + 120_001);
+        b.status(&a.chats.me, false, NOW + 150_000);
+        assert_eq!(b.tick(NOW + 180_002).len(), 1);
+    }
+    #[test]
+    fn new_dm_requires_online_and_verified_peer() {
+        let (mut a, b, _, _) = pair();
+        assert!(a.message_unavailable(&b.chats.me, NOW).is_none());
+        a.status(&b.chats.me, false, NOW);
+        assert_eq!(
+            a.message_unavailable(&b.chats.me, NOW).as_deref(),
+            Some("Mira ist nicht eingecheckt.")
+        );
+        assert!(a.direct(&b.chats.me, NOW).is_err());
+        a.status(&b.chats.me, true, NOW);
+        a.verified.remove(&b.chats.me);
+        assert_eq!(a.badge(&b.chats.me, NOW), "unbestätigt");
+        assert!(a.direct(&b.chats.me, NOW).is_err());
     }
     #[test]
     fn no_certificate_no_control() {

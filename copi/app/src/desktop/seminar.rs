@@ -13,6 +13,16 @@ use pi_net::{
 pub use seminar_net::production;
 const CYAN: Color32 = Color32::from_rgb(0x4f, 0xb8, 0xd8);
 
+/// N9: ausschließlich aus dem vom Empfang bereits signaturgeprüften Verzeichnis.
+/// `rolle` ist eine Suchangabe, niemals eine Autorisierungsquelle.
+#[derive(Clone, Debug)]
+pub struct VerzeichnisEintrag {
+    pub person: String,
+    pub anzeige: String,
+    pub rolle: String,
+    pub net_pubkey: String,
+}
+
 pub struct Seminar {
     pub state: SeminarState,
     net: Box<dyn SeminarNet>,
@@ -85,7 +95,84 @@ impl Seminar {
         {
             return Err("Kontakt fehlt im bestätigten Seminarverzeichnis".into());
         }
-        self.net.set_contacts(peers)
+        let result = self.net.set_contacts(peers.clone());
+        if result.is_ok() {
+            for (peer, address) in peers {
+                if let Some(contact) = self
+                    .state
+                    .chats
+                    .contacts
+                    .iter_mut()
+                    .find(|c| c.peer == peer)
+                {
+                    contact.addr = address;
+                }
+            }
+        }
+        result
+    }
+    /// Nach Check-in und danach alle 60 s mit S3s geprüften N9-Daten aufrufen.
+    /// Rollen werden bewusst verworfen; erst der Peer-Ausweis bestätigt sie.
+    /// N9 enthält keine IP-Adresse. Bereits separat bestätigte Kontaktadressen
+    /// bleiben erhalten; neue Kontakte bekommen zunächst nur die Knoten-ID.
+    pub fn verzeichnis_uebernehmen(&mut self, personen: Vec<VerzeichnisEintrag>) {
+        if let Err(error) = self.apply_directory(personen) {
+            self.error = Some(format!("Seminarverzeichnis nicht übernommen: {error}"));
+        }
+    }
+    fn apply_directory(&mut self, personen: Vec<VerzeichnisEintrag>) -> Result<(), String> {
+        use std::collections::BTreeSet;
+        if !self.state.checked_in || personen.len() > 64 {
+            return Err("Nicht eingecheckt oder zu viele Personen".into());
+        }
+        let mut keys = BTreeSet::new();
+        let mut entries = vec![];
+        for entry in personen {
+            let peer = seminar_net::directory_peer(&entry.net_pubkey)?;
+            if entry.person.trim().is_empty()
+                || entry.person.len() > 320
+                || entry.anzeige.trim().is_empty()
+                || entry.anzeige.len() > 320
+                || entry.anzeige.chars().any(char::is_control)
+                || !keys.insert(peer.clone())
+            {
+                return Err("Unvollständiger oder doppelter Eintrag".into());
+            }
+            // Absichtlich keine Übernahme von entry.rolle in SeminarState.
+            let _discovery_role = entry.rolle;
+            if peer != self.state.chats.me {
+                entries.push((peer, entry.anzeige));
+            }
+        }
+        // Fehlende Einträge allein sind KEIN Verbindungsabbruch. Nur der
+        // Transport meldet Presence; tick merkt sie unabhängig von people.
+        self.state.people.retain(|p| keys.contains(&p.peer));
+        let mut contacts = vec![];
+        for (peer, name) in &entries {
+            let address = self
+                .state
+                .chats
+                .contact(peer)
+                .filter(|c| !c.addr.is_empty())
+                .map(|c| c.addr.clone())
+                .unwrap_or_else(|| seminar_net::directory_address(peer));
+            contacts.push((peer.clone(), address));
+            if let Some(person) = self.state.people.iter_mut().find(|p| &p.peer == peer) {
+                person.name.clone_from(name);
+            } else {
+                self.state.add_person(pi_net::seminar::Person {
+                    peer: peer.clone(),
+                    name: name.clone(),
+                    online: false,
+                    // N9 bestätigt den Check-in, nennt aber keine Slot-ID.
+                    slot: Some("eingecheckt".into()),
+                    sessions: vec![],
+                    offline_since_ms: None,
+                })?;
+            }
+        }
+        self.set_contacts(contacts)?;
+        Ok(())
     }
     pub fn checkout(&mut self) {
         let out = self.state.checkout();
@@ -120,10 +207,7 @@ impl Seminar {
             self.error = Some(error);
         }
         for (from, p) in incoming {
-            match self.state.receive(&from, p, now) {
-                Ok(e) => self.effects(e),
-                Err(e) => self.error = Some(e),
-            }
+            self.receive(&from, p);
         }
         let out = self.state.tick(now);
         self.dispatch(Ok(out));
@@ -207,6 +291,16 @@ impl Seminar {
                 );
             });
             ui.add_space(16.0);
+            if let Some(address) = self.address().map(str::to_owned) {
+                if ui.button("Verbindungsadresse kopieren").clicked() {
+                    ui.ctx().copy_text(address);
+                }
+                ui.label(
+                    RichText::new("Nur mit Seminarteilnehmenden teilen · enthält Netzwerkadressen")
+                        .small()
+                        .weak(),
+                );
+            }
             self.remote_bar(ui);
             if let Some(e) = &self.error {
                 ui.colored_label(Color32::from_rgb(240, 171, 126), e);
@@ -256,9 +350,16 @@ impl Seminar {
                     .small()
                     .weak(),
                 );
-                if ui.button("Nachricht").clicked() {
+                let unavailable = self.state.message_unavailable(&p.peer, now);
+                if ui
+                    .add_enabled(unavailable.is_none(), egui::Button::new("Nachricht"))
+                    .clicked()
+                {
                     let out = self.state.direct(&p.peer, now);
                     self.dispatch(out);
+                }
+                if let Some(reason) = unavailable {
+                    ui.label(RichText::new(reason).small().weak());
                 }
                 if self.state.can_request(&p.peer, now) {
                     let mut index = *self.session_indices.get(&p.peer).unwrap_or(&0);
@@ -600,6 +701,86 @@ mod tests {
         }
     }
     #[test]
+    fn directory_populates_contacts_without_trusting_role_and_refresh_is_idempotent() {
+        let mut seminar = scene("v3-seminar-chat").unwrap();
+        let jonas = seminar
+            .state
+            .people
+            .iter()
+            .find(|p| p.name == "Jonas")
+            .unwrap()
+            .peer
+            .clone();
+        let entry = || VerzeichnisEintrag {
+            person: "opaque-person-id".into(),
+            anzeige: "Jonas".into(),
+            rolle: "seminarleitung".into(),
+            net_pubkey: jonas.to_string(),
+        };
+        seminar.verzeichnis_uebernehmen(vec![entry()]);
+        seminar.verzeichnis_uebernehmen(vec![entry()]);
+        assert!(seminar.error.is_none(), "{:?}", seminar.error);
+        assert_eq!(seminar.state.people.len(), 1);
+        assert_eq!(seminar.state.badge(&jonas, seminar.now()), "unbestätigt");
+        assert_eq!(seminar.state.name(&jonas, seminar.now()), "Jonas");
+        assert!(
+            seminar
+                .state
+                .chats
+                .contact(&jonas)
+                .is_some_and(|c| !c.addr.is_empty())
+        );
+        assert_eq!(
+            seminar
+                .state
+                .message_unavailable(&jonas, seminar.now())
+                .as_deref(),
+            Some("Jonas ist nicht eingecheckt.")
+        );
+        assert!(!seminar.state.can_request(&jonas, seminar.now()));
+        let previous = seminar.state.people[0].peer.clone();
+        let mut invalid = entry();
+        invalid.net_pubkey = "wrong".into();
+        seminar.verzeichnis_uebernehmen(vec![invalid]);
+        assert!(seminar.error.is_some());
+        assert_eq!(seminar.state.people[0].peer, previous);
+    }
+    #[test]
+    fn directory_adds_new_peer_and_keeps_confirmed_direct_address_on_refresh() {
+        let mut seminar = scene("v3-seminar-chat").unwrap();
+        let peer = seminar.state.people[0].peer.clone();
+        let address =
+            serde_json::json!({"id":peer.as_str(), "addrs":[{"Ip":"127.0.0.1:12345"}]}).to_string();
+        seminar
+            .set_contacts(vec![(peer.clone(), address.clone())])
+            .unwrap();
+        let entry = || VerzeichnisEintrag {
+            person: "person-id".into(),
+            anzeige: "Suchname".into(),
+            rolle: "gast".into(),
+            net_pubkey: peer.to_string(),
+        };
+        seminar.verzeichnis_uebernehmen(vec![entry()]);
+        assert_eq!(seminar.state.chats.contact(&peer).unwrap().addr, address);
+        // Verzeichnisrolle darf einen gültigen Leitungs-Ausweis nicht ändern.
+        assert_eq!(seminar.state.badge(&peer, seminar.now()), "Seminarleitung");
+        seminar.state.people.clear();
+        seminar.verzeichnis_uebernehmen(vec![entry()]);
+        assert!(seminar.error.is_none(), "{:?}", seminar.error);
+        assert_eq!(seminar.state.people.len(), 1);
+        assert_eq!(seminar.state.people[0].name, "Suchname");
+        assert!(!seminar.state.people[0].online);
+        assert!(seminar.state.people[0].sessions.is_empty());
+    }
+    #[test]
+    fn empty_directory_does_not_immediately_end_active_grant() {
+        let mut seminar = scene("v3-mitsteuern-aktiv-student").unwrap();
+        seminar.verzeichnis_uebernehmen(vec![]);
+        seminar.tick();
+        assert!(seminar.error.is_none(), "{:?}", seminar.error);
+        assert_eq!(seminar.state.remote.grants.len(), 1);
+    }
+    #[test]
     fn all_scenes_render_and_unknown_declines() {
         assert!(scene("unknown").is_none());
         for name in [
@@ -737,6 +918,20 @@ pub fn scene(name: &str) -> Option<Seminar> {
         Box::<MemoryNet>::default(),
     );
     s.demo_now = Some(now);
+    // Auch die vorführbaren Szenen nutzen denselben Verzeichnisweg wie die
+    // spätere Empfang-Anbindung; keine zweite handgepflegte Kontaktliste.
+    let verzeichnis = s
+        .state
+        .people
+        .iter()
+        .map(|p| VerzeichnisEintrag {
+            person: format!("demo-{}", p.name),
+            anzeige: p.name.clone(),
+            rolle: String::new(),
+            net_pubkey: p.peer.to_string(),
+        })
+        .collect();
+    s.verzeichnis_uebernehmen(verzeichnis);
     s.marked_prompts = marked;
     Some(s)
 }
