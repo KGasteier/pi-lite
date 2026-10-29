@@ -727,7 +727,7 @@ mod tests {
         nb.checkout();
     }
     #[test]
-    fn oversized_session_lists_cross_quic_but_never_replace_the_roster() {
+    fn invalid_or_unconfirmed_session_lists_cross_quic_but_never_replace_the_roster() {
         let (a, mut na, mut b, mut nb, hub) = pair();
         let before = b.people[0].sessions.clone();
         let item = SessionAnkuendigung {
@@ -777,6 +777,45 @@ mod tests {
             assert_eq!(b.people[0].sessions, before);
             assert_eq!(b.session_announcements[&a.chats.me][0].id, session().cwd);
         }
+        // Derselbe echte Transport, jetzt ohne bestätigten Absenderausweis.
+        // Rohereignisse erst sammeln, dann Ausweisnachrichten bewusst nicht
+        // zustellen: so kann kein nebenläufiger Handshake den Test bestätigen.
+        nb.forget(&a.chats.me);
+        nb.errors();
+        na.raw(
+            &b.chats.me,
+            Payload::SeminarPacket {
+                id: random_id(),
+                sent_ms: now_ms(),
+                payload: Box::new(Payload::SeminarSessions {
+                    sessions: vec![item],
+                }),
+            },
+        )
+        .unwrap();
+        let mut packet = None;
+        wait(|| {
+            while let Ok(event) = nb.node.events.try_recv() {
+                if let NodeEvent::Received { from, env } = event {
+                    if matches!(&env.payload, Payload::SeminarPacket { payload, .. }
+                        if matches!(payload.as_ref(), Payload::SeminarSessions { .. }))
+                    {
+                        packet = Some((from, env.payload));
+                    }
+                }
+            }
+            packet.is_some()
+        });
+        let (from, packet) = packet.unwrap();
+        let mut received = vec![];
+        nb.receive(from, packet, now_ms(), &mut received);
+        assert!(received.is_empty());
+        assert!(
+            nb.errors()
+                .iter()
+                .any(|e| e.contains("Nachricht ohne gültigen Geräteausweis"))
+        );
+        assert_eq!(b.people[0].sessions, before);
         assert!(hub.0.lock().unwrap().is_empty());
         na.checkout();
         nb.checkout();
