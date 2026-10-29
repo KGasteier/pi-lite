@@ -8,7 +8,7 @@ use crate::{
     model::{PeerId, now_ms, random_id},
     node::{Node, NodeEvent, Outgoing, parse_address},
     remote::SessionRef,
-    wire::{Envelope, Payload},
+    wire::{Envelope, Payload, SessionAnkuendigung},
 };
 use std::collections::{BTreeMap, VecDeque};
 
@@ -22,6 +22,9 @@ const MAX_CONTACTS: usize = 64;
 /// Erfolg heißt vom Hub bestätigt, nicht nur in eine Warteschlange gelegt.
 pub trait SeminarHub {
     fn senden(&mut self, session: &SessionRef, text: &str, von: &Von) -> Result<(), String>;
+    fn update_sessions(&mut self, _sessions: &[SessionAnkuendigung]) -> Result<(), String> {
+        Err("Dieser Hub unterstützt keine Session-Aktualisierung".into())
+    }
 }
 
 pub struct NodeNet {
@@ -176,6 +179,12 @@ impl NodeNet {
                     self.error("Seminarnachricht veraltet oder ungültig".into());
                     return;
                 }
+                if let Payload::SeminarSessions { sessions } = payload.as_ref() {
+                    if let Err(error) = SessionAnkuendigung::pruefen(sessions) {
+                        self.error(error);
+                        return;
+                    }
+                }
                 let seen = self.seen.entry(from.clone()).or_default();
                 while seen
                     .front()
@@ -306,6 +315,9 @@ impl SeminarNet for NodeNet {
         ) {
             return Err("Diese Nachricht ist dem Seminartransport vorbehalten".into());
         }
+        if let Payload::SeminarSessions { sessions } = &payload {
+            SessionAnkuendigung::pruefen(sessions)?;
+        }
         self.raw(
             to,
             Payload::SeminarPacket {
@@ -358,6 +370,10 @@ impl SeminarNet for NodeNet {
     }
     fn set_contacts(&mut self, peers: Vec<(PeerId, String)>) -> Result<(), String> {
         NodeNet::set_contacts(self, peers)
+    }
+    fn update_sessions(&mut self, sessions: &[SessionAnkuendigung]) -> Result<(), String> {
+        SessionAnkuendigung::pruefen(sessions)?;
+        self.hub.update_sessions(sessions)
     }
     fn checkout(&mut self) {
         self.node.set_allowed(vec![]);
@@ -500,7 +516,7 @@ mod tests {
                     name: "Unbestätigter Rostername".into(),
                     online: false,
                     slot: Some("account01".into()),
-                    sessions: vec![session()],
+                    sessions: vec![],
                     offline_since_ms: None,
                 })
                 .unwrap();
@@ -523,6 +539,22 @@ mod tests {
                 && b.verified(&a.chats.me, now_ms()).is_some()
                 && a.people[0].online
                 && b.people[0].online
+        });
+        // Nur eigene Sessions sind bekannt. Fremde Listen kommen über den Draht.
+        assert!(a.people[0].sessions.is_empty() && b.people[0].sessions.is_empty());
+        let announce = || Payload::SeminarSessions {
+            sessions: vec![SessionAnkuendigung {
+                id: session().cwd,
+                label: session().label,
+                zustand: "ruht".into(),
+            }],
+        };
+        na.send(&b.chats.me, announce()).unwrap();
+        nb.send(&a.chats.me, announce()).unwrap();
+        wait(|| {
+            assert!(pump(&mut a, &mut na, now_ms()).is_empty());
+            assert!(pump(&mut b, &mut nb, now_ms()).is_empty());
+            a.people[0].sessions == vec![session()] && b.people[0].sessions == vec![session()]
         });
         (a, na, b, nb, hub)
     }
@@ -692,6 +724,126 @@ mod tests {
         );
         assert!(!nb.verified.contains_key(&a.chats.me));
         assert!(nb.send(&a.chats.me, Payload::SeminarPresence).is_err());
+        nb.checkout();
+    }
+    #[test]
+    fn oversized_session_lists_cross_quic_but_never_replace_the_roster() {
+        let (a, mut na, mut b, mut nb, hub) = pair();
+        let before = b.people[0].sessions.clone();
+        let item = SessionAnkuendigung {
+            id: "wire-session".into(),
+            label: "Plakat".into(),
+            zustand: "ruht".into(),
+        };
+        for sessions in [
+            (0..33)
+                .map(|i| SessionAnkuendigung {
+                    id: format!("session-{i}"),
+                    ..item.clone()
+                })
+                .collect(),
+            vec![SessionAnkuendigung {
+                label: "ä".repeat(121),
+                ..item.clone()
+            }],
+        ] {
+            assert!(
+                na.send(
+                    &b.chats.me,
+                    Payload::SeminarSessions {
+                        sessions: sessions.clone()
+                    }
+                )
+                .is_err()
+            );
+            nb.errors();
+            // Absichtlich unterhalb der send-Prüfung einspeisen, damit nicht nur
+            // der lokale Validator, sondern der reale QUIC-Empfang geprüft wird.
+            na.raw(
+                &b.chats.me,
+                Payload::SeminarPacket {
+                    id: random_id(),
+                    sent_ms: now_ms(),
+                    payload: Box::new(Payload::SeminarSessions { sessions }),
+                },
+            )
+            .unwrap();
+            let mut errors = vec![];
+            wait(|| {
+                assert!(pump(&mut b, &mut nb, now_ms()).is_empty());
+                errors.extend(nb.errors());
+                errors.iter().any(|e| e.contains("Sessionliste ungültig"))
+            });
+            assert_eq!(b.people[0].sessions, before);
+            assert_eq!(b.session_announcements[&a.chats.me][0].id, session().cwd);
+        }
+        assert!(hub.0.lock().unwrap().is_empty());
+        na.checkout();
+        nb.checkout();
+    }
+
+    #[test]
+    fn session_packets_require_wrapper_contact_certificate_and_valid_bounds() {
+        let (a, mut na, _b, mut nb, _) = pair();
+        let now = now_ms();
+        let item = SessionAnkuendigung {
+            id: "hub-1".into(),
+            label: "Plakat".into(),
+            zustand: "ruht".into(),
+        };
+        let packet = |sessions| Payload::SeminarPacket {
+            id: random_id(),
+            sent_ms: now,
+            payload: Box::new(Payload::SeminarSessions { sessions }),
+        };
+        let peer = a.chats.me.clone();
+        let mut out = vec![];
+        nb.receive(
+            peer.clone(),
+            Payload::SeminarSessions {
+                sessions: vec![item.clone()],
+            },
+            now,
+            &mut out,
+        );
+        assert!(out.is_empty(), "Ohne SeminarPacket keine Ankündigung");
+        nb.receive(peer.clone(), packet(vec![item.clone()]), now, &mut out);
+        assert_eq!(out.len(), 1);
+        out.clear();
+        for sessions in [
+            (0..33)
+                .map(|i| SessionAnkuendigung {
+                    id: format!("hub-{i}"),
+                    ..item.clone()
+                })
+                .collect(),
+            vec![SessionAnkuendigung {
+                label: "ä".repeat(121),
+                ..item.clone()
+            }],
+        ] {
+            nb.receive(peer.clone(), packet(sessions), now, &mut out);
+            assert!(out.is_empty(), "Grenzen schon vor der UI prüfen");
+        }
+        nb.forget(&peer);
+        nb.receive(peer.clone(), packet(vec![item.clone()]), now, &mut out);
+        assert!(out.is_empty(), "Ohne Ausweis keine Ankündigung");
+        nb.receive(
+            peer.clone(),
+            Payload::Geraeteausweis {
+                ausweis: na.own.clone(),
+            },
+            now,
+            &mut out,
+        );
+        out.clear();
+        nb.contacts.remove(&peer);
+        nb.receive(peer, packet(vec![item]), now, &mut out);
+        assert!(
+            out.is_empty(),
+            "Ein Ausweis allein ersetzt nicht das Verzeichnis"
+        );
+        na.checkout();
         nb.checkout();
     }
     #[test]

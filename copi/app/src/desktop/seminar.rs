@@ -36,9 +36,20 @@ pub struct Seminar {
     pub error: Option<String>,
     pub marked_prompts: Vec<HubPrompt>,
     demo_now: Option<u64>,
+    own_sessions: Vec<pi_net::wire::SessionAnkuendigung>,
+    announced: std::collections::BTreeMap<PeerId, (Vec<pi_net::wire::SessionAnkuendigung>, u64)>,
 }
 impl Seminar {
     pub fn new(state: SeminarState, net: Box<dyn SeminarNet>) -> Self {
+        let own_sessions = state
+            .sessions
+            .iter()
+            .map(|s| pi_net::wire::SessionAnkuendigung {
+                id: s.cwd.clone(),
+                label: s.label.clone(),
+                zustand: "unbekannt".into(),
+            })
+            .collect();
         Self {
             state,
             net,
@@ -49,6 +60,8 @@ impl Seminar {
             error: None,
             marked_prompts: vec![],
             demo_now: None,
+            own_sessions,
+            announced: Default::default(),
         }
     }
     fn now(&self) -> u64 {
@@ -156,6 +169,10 @@ impl Seminar {
         // Fehlende Einträge allein sind KEIN Verbindungsabbruch. Nur der
         // Transport meldet Presence; tick merkt sie unabhängig von people.
         self.state.people.retain(|p| keys.contains(&p.peer));
+        self.state
+            .session_announcements
+            .retain(|peer, _| keys.contains(peer));
+        self.announced.retain(|peer, _| keys.contains(peer));
         let mut contacts = vec![];
         for (peer, name, address) in &entries {
             contacts.push((peer.clone(), address.clone()));
@@ -176,6 +193,66 @@ impl Seminar {
         self.set_contacts(contacts)?;
         Ok(())
     }
+    /// Nur die vom eigenen Hub bestätigten, nichtlokalen Sessions übergeben.
+    /// Keine Inhalte/Pfade; Updates beenden weder Netz noch bestehende Freigaben.
+    pub fn sessions_aktualisieren(
+        &mut self,
+        sessions: Vec<pi_net::wire::SessionAnkuendigung>,
+    ) -> Result<(), String> {
+        pi_net::wire::SessionAnkuendigung::pruefen(&sessions)?;
+        self.net.update_sessions(&sessions)?;
+        self.state.sessions = sessions
+            .iter()
+            .map(|s| pi_net::remote::SessionRef {
+                label: s.label.clone(),
+                cwd: s.id.clone(),
+            })
+            .collect();
+        self.own_sessions = sessions;
+        self.announce_sessions(self.now());
+        Ok(())
+    }
+    fn announce_sessions(&mut self, now: u64) {
+        if !self.state.checked_in
+            || self.state.verified(&self.state.chats.me, now).is_none()
+            || pi_net::wire::SessionAnkuendigung::pruefen(&self.own_sessions).is_err()
+        {
+            return;
+        }
+        self.announced.retain(|peer, _| {
+            self.state
+                .people
+                .iter()
+                .any(|p| &p.peer == peer && p.online)
+        });
+        for person in &self.state.people {
+            if !person.online || self.state.verified(&person.peer, now).is_none() {
+                continue;
+            }
+            let due = self
+                .announced
+                .get(&person.peer)
+                .is_none_or(|(sessions, sent)| {
+                    sessions != &self.own_sessions || now.saturating_sub(*sent) >= 60_000
+                });
+            if due {
+                match self.net.send(
+                    &person.peer,
+                    pi_net::wire::Payload::SeminarSessions {
+                        sessions: self.own_sessions.clone(),
+                    },
+                ) {
+                    Ok(()) => {
+                        self.announced
+                            .insert(person.peer.clone(), (self.own_sessions.clone(), now));
+                    }
+                    Err(error) => {
+                        self.error = Some(format!("Sessionliste nicht gesendet: {error}"))
+                    }
+                }
+            }
+        }
+    }
     pub fn checkout(&mut self) {
         let out = self.state.checkout();
         self.dispatch(Ok(out));
@@ -183,6 +260,8 @@ impl Seminar {
         self.marked_prompts.clear();
         self.input.clear();
         self.control_input.clear();
+        self.own_sessions.clear();
+        self.announced.clear();
     }
     /// Rahmen/Status muss der Desktop zusätzlich über dem Hauptchat sichtbar halten,
     /// wenn Seminar nicht der aktive Tab ist. Kein Zugriff auf lokale Prozesse.
@@ -213,6 +292,7 @@ impl Seminar {
         }
         let out = self.state.tick(now);
         self.dispatch(Ok(out));
+        self.announce_sessions(now);
     }
     pub fn remote_bar(&mut self, ui: &mut egui::Ui) {
         self.tick();
@@ -369,7 +449,8 @@ impl Seminar {
                     ui.label(RichText::new(reason).small().weak());
                 }
                 if self.state.can_request(&p.peer, now) {
-                    let mut index = *self.session_indices.get(&p.peer).unwrap_or(&0);
+                    let mut index = (*self.session_indices.get(&p.peer).unwrap_or(&0))
+                        .min(p.sessions.len().saturating_sub(1));
                     egui::ComboBox::from_id_salt(("session", p.peer.as_str()))
                         .selected_text(
                             p.sessions
@@ -383,6 +464,16 @@ impl Seminar {
                             }
                         });
                     self.session_indices.insert(p.peer.clone(), index);
+                    if let Some(session) = p.sessions.get(index) {
+                        if let Some(metadata) = self
+                            .state
+                            .session_announcements
+                            .get(&p.peer)
+                            .and_then(|sessions| sessions.iter().find(|s| s.id == session.cwd))
+                        {
+                            ui.label(RichText::new(&metadata.zustand).small().weak());
+                        }
+                    }
                     let existing = self
                         .state
                         .remote
@@ -412,6 +503,18 @@ impl Seminar {
                                 self.state
                                     .request(&p.peer, session, RemoteScope::Control, now);
                             self.dispatch(out);
+                        }
+                    }
+                } else if self.state.verified(&p.peer, now).is_some() {
+                    for session in &p.sessions {
+                        ui.label(&session.label);
+                        if let Some(metadata) = self
+                            .state
+                            .session_announcements
+                            .get(&p.peer)
+                            .and_then(|sessions| sessions.iter().find(|s| s.id == session.cwd))
+                        {
+                            ui.label(RichText::new(&metadata.zustand).small().weak());
                         }
                     }
                 }
@@ -719,6 +822,76 @@ mod tests {
             ..Default::default()
         }
     }
+    #[test]
+    fn announcements_send_on_change_and_each_minute_only_to_confirmed_directory_peers() {
+        use pi_net::wire::{Payload, SessionAnkuendigung};
+        use std::sync::{Arc, Mutex};
+        struct RecordingNet(Arc<Mutex<Outbox>>);
+        impl SeminarNet for RecordingNet {
+            fn send(&mut self, to: &PeerId, p: Payload) -> Result<(), String> {
+                self.0.lock().unwrap().push((to.clone(), p));
+                Ok(())
+            }
+            fn senden(
+                &mut self,
+                _: &pi_net::remote::SessionRef,
+                _: &str,
+                _: &pi_net::seminar::Von,
+            ) -> Result<(), String> {
+                panic!("Kein Hub-Prompt erwartet")
+            }
+        }
+        let now = 1_000_000;
+        let (mut state, other) = pi_net::seminar::demo_pair(now);
+        state.people[1].online = true; // Unbestätigte Person bleibt ausgeschlossen.
+        let sent = Arc::new(Mutex::new(vec![]));
+        let mut seminar = Seminar::new(state, Box::new(RecordingNet(sent.clone())));
+        seminar.demo_now = Some(now);
+        let item = SessionAnkuendigung {
+            id: "hub-1".into(),
+            label: "Plakat".into(),
+            zustand: "arbeitet".into(),
+        };
+        seminar.sessions_aktualisieren(vec![item.clone()]).unwrap();
+        assert_eq!(sent.lock().unwrap().len(), 1);
+        assert_eq!(sent.lock().unwrap()[0].0, other.chats.me);
+        seminar.tick();
+        seminar.demo_now = Some(now + 59_999);
+        seminar.tick();
+        assert_eq!(sent.lock().unwrap().len(), 1);
+        seminar.demo_now = Some(now + 60_000);
+        seminar.tick();
+        assert_eq!(sent.lock().unwrap().len(), 2);
+        seminar
+            .sessions_aktualisieren(vec![SessionAnkuendigung {
+                zustand: "fertig".into(),
+                ..item.clone()
+            }])
+            .unwrap();
+        assert_eq!(sent.lock().unwrap().len(), 3);
+        seminar.sessions_aktualisieren(vec![]).unwrap();
+        assert!(
+            matches!(&sent.lock().unwrap()[3].1, Payload::SeminarSessions { sessions } if sessions.is_empty())
+        );
+        assert!(seminar.state.sessions.is_empty());
+        assert!(
+            seminar
+                .sessions_aktualisieren(vec![SessionAnkuendigung {
+                    label: "a".repeat(121),
+                    ..item
+                }])
+                .is_err()
+        );
+        assert!(seminar.state.sessions.is_empty());
+        seminar.state.people.clear();
+        seminar.demo_now = Some(now + 120_000);
+        seminar.tick();
+        assert_eq!(sent.lock().unwrap().len(), 4);
+        seminar.checkout();
+        assert!(seminar.own_sessions.is_empty());
+        assert!(seminar.announced.is_empty());
+    }
+
     #[test]
     fn directory_populates_contacts_without_trusting_role_and_refresh_is_idempotent() {
         let mut seminar = scene("v3-seminar-chat").unwrap();
@@ -1077,6 +1250,24 @@ pub fn scene(name: &str) -> Option<Seminar> {
         })
         .collect();
     s.verzeichnis_uebernehmen(verzeichnis);
+    // Auch Demo-Szenen benutzen den N15-Empfangsweg; nur die Daten sind erfunden.
+    for person in s.state.people.clone() {
+        if s.state.verified(&person.peer, now).is_some() {
+            let sessions = person
+                .sessions
+                .iter()
+                .map(|session| pi_net::wire::SessionAnkuendigung {
+                    id: session.cwd.clone(),
+                    label: session.label.clone(),
+                    zustand: "ruht".into(),
+                })
+                .collect();
+            s.receive(
+                &person.peer,
+                pi_net::wire::Payload::SeminarSessions { sessions },
+            );
+        }
+    }
     s.marked_prompts = marked;
     Some(s)
 }

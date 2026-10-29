@@ -91,6 +91,28 @@ impl SlotHub {
     }
 }
 impl SeminarHub for SlotHub {
+    fn update_sessions(
+        &mut self,
+        sessions: &[pi_net::wire::SessionAnkuendigung],
+    ) -> Result<(), String> {
+        pi_net::wire::SessionAnkuendigung::pruefen(sessions)?;
+        if sessions.len() > 2 {
+            return Err("Am eigenen Arbeitsplatz sind höchstens zwei Sessions erlaubt".into());
+        }
+        self.sessions = sessions
+            .iter()
+            .map(|s| {
+                (
+                    SessionRef {
+                        label: s.label.clone(),
+                        cwd: s.id.clone(),
+                    },
+                    s.id.clone(),
+                )
+            })
+            .collect();
+        Ok(())
+    }
     fn senden(&mut self, session: &SessionRef, text: &str, von: &Von) -> Result<(), String> {
         let id = self
             .sessions
@@ -120,6 +142,28 @@ pub fn production(
         return Err("Check-in und Netzidentität passen nicht zusammen".into());
     }
     state.identify(&identity.peer(), &ausweis, pi_net::model::now_ms())?;
+    // Ausschließlich bestätigte Hub-IDs ankündigen, nie den historischen cwd.
+    let sessions: Vec<_> = sessions
+        .into_iter()
+        .map(|(session, id)| {
+            (
+                SessionRef {
+                    label: session.label,
+                    cwd: id.clone(),
+                },
+                id,
+            )
+        })
+        .collect();
+    let announcements: Vec<_> = sessions
+        .iter()
+        .map(|(session, id)| pi_net::wire::SessionAnkuendigung {
+            id: id.clone(),
+            label: session.label.clone(),
+            zustand: "unbekannt".into(),
+        })
+        .collect();
+    pi_net::wire::SessionAnkuendigung::pruefen(&announcements)?;
     let slot = SlotHub::new(hub, sessions)?;
     state.sessions = slot
         .sessions
@@ -262,15 +306,20 @@ mod tests {
         let cb = certificate(&issuer, &pb, "Mira", Rolle::Teilnehmende);
         let session = SessionRef {
             label: "Handout".into(),
-            cwd: "not-a-hub-id".into(),
+            cwd: "own-id".into(),
         };
         let mut state_a = SeminarState::new(pa.clone(), "Aylin", pin.clone(), "seminar".into());
         state_a.identify(&pa, &ca, now_ms()).unwrap();
+        let a_session = SessionRef {
+            label: "Kursplan".into(),
+            cwd: "a-own-id".into(),
+        };
+        state_a.sessions = vec![a_session.clone()];
         let mut state_b = SeminarState::new(pb.clone(), "Mira", pin.clone(), "seminar".into());
         state_b.identify(&pb, &cb, now_ms()).unwrap();
         state_b.sessions = vec![session.clone()];
         let hub = HubV1::new(&format!("http://{hub_address}")).unwrap();
-        let slot = SlotHub::new(hub, vec![(session.clone(), "own-id".into())]).unwrap();
+        let slot = SlotHub::new(hub, vec![(a_session.clone(), "a-own-id".into())]).unwrap();
         let na = NodeNet::start(ia, ca, pin.clone(), Box::new(slot)).unwrap();
         let hub = HubV1::new(&format!("http://{hub_address}")).unwrap();
         let slot = SlotHub::new(hub, vec![(session.clone(), "own-id".into())]).unwrap();
@@ -295,6 +344,7 @@ mod tests {
             directory_entry(&pb, "Mira", ba),
         ]);
         assert_eq!(a.state.badge(&pb, now_ms()), "unbestätigt");
+        assert!(a.state.people[0].sessions.is_empty());
         assert!(a.state.direct(&pb, now_ms()).is_err());
         wait_until(deadline, || {
             a.tick();
@@ -307,9 +357,37 @@ mod tests {
         b.error = None;
         assert_eq!(a.state.badge(&pb, now_ms()), "Teilnehmende");
         assert_eq!(b.state.badge(&pa, now_ms()), "Seminarleitung");
-        // Session-Discovery ist nicht Teil von N9. Explizite Test-Fixture, kein
-        // stilles Lesen fremder Sessions oder Ableiten einer ID aus einem cwd.
-        a.state.people[0].sessions = vec![session.clone()];
+        // N15: Die Session erreicht die Leitung über QUIC, ohne fremde Fixture.
+        wait_until(deadline, || {
+            a.tick();
+            b.tick();
+            a.state.people[0].sessions == vec![session.clone()]
+                && b.state.people[0].sessions == vec![a_session.clone()]
+        });
+        // Auch Zustandswechsel und Entfernen ohne Verbindungsneuaufbau.
+        let item = pi_net::wire::SessionAnkuendigung {
+            id: "a-own-id".into(),
+            label: "Kursplan".into(),
+            zustand: "arbeitet".into(),
+        };
+        a.sessions_aktualisieren(vec![item.clone()]).unwrap();
+        wait_until(deadline, || {
+            a.tick();
+            b.tick();
+            b.state
+                .session_announcements
+                .get(&pa)
+                .is_some_and(|s| s == &vec![item.clone()])
+        });
+        a.sessions_aktualisieren(vec![]).unwrap();
+        wait_until(deadline, || {
+            a.tick();
+            b.tick();
+            b.state.people[0].sessions.is_empty()
+        });
+        assert!(b.state.people[0].sessions.is_empty());
+        assert_eq!(a.state.session_announcements[&pb][0].id, "own-id");
+        assert_eq!(a.state.session_announcements[&pb][0].zustand, "unbekannt");
         let out = a.state.create_group(now_ms()).unwrap();
         deliver(&mut a, out);
         wait_until(deadline, || {
@@ -427,6 +505,43 @@ mod tests {
         eprintln!(
             "Zwei-Knoten-Ablauf einschließlich Mock-Hub: {:?}",
             started.elapsed()
+        );
+    }
+
+    #[test]
+    fn slot_session_updates_are_atomic_bounded_and_remove_stale_hub_targets() {
+        let hub = HubV1::new("http://127.0.0.1:1").unwrap();
+        let item = pi_net::wire::SessionAnkuendigung {
+            id: "hub-1".into(),
+            label: "Plakat".into(),
+            zustand: "ruht".into(),
+        };
+        let mut slot = SlotHub::new(hub, vec![]).unwrap();
+        slot.update_sessions(std::slice::from_ref(&item)).unwrap();
+        assert_eq!(slot.sessions[0].1, "hub-1");
+        assert_eq!(slot.sessions[0].0.cwd, "hub-1");
+        let before = slot.sessions.clone();
+        let three: Vec<_> = (0..3)
+            .map(|i| pi_net::wire::SessionAnkuendigung {
+                id: format!("hub-{i}"),
+                ..item.clone()
+            })
+            .collect();
+        assert!(slot.update_sessions(&three).is_err());
+        assert_eq!(slot.sessions, before);
+        slot.update_sessions(&[]).unwrap();
+        assert!(slot.sessions.is_empty());
+        assert!(
+            slot.senden(
+                &before[0].0,
+                "Nie",
+                &Von {
+                    person: "Aylin".into(),
+                    rolle: Rolle::Seminarleitung
+                }
+            )
+            .unwrap_err()
+            .contains("Session gehört nicht")
         );
     }
 

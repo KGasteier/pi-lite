@@ -5,7 +5,7 @@ use crate::{
     model::*,
     remote::*,
     store::{ChatStore, Contact, Outbox},
-    wire::Payload,
+    wire::{Payload, SessionAnkuendigung},
 };
 use std::collections::BTreeMap;
 
@@ -61,6 +61,10 @@ pub trait SeminarNet {
         Err("Dieser Seminaradapter unterstützt keine Netzverbindung".into())
     }
     fn checkout(&mut self) {}
+    /// Eigene bestätigte Hub-Ziele aktualisieren, ohne die Verbindung zu ersetzen.
+    fn update_sessions(&mut self, _sessions: &[SessionAnkuendigung]) -> Result<(), String> {
+        Ok(())
+    }
 }
 #[derive(Default)]
 pub struct MemoryNet {
@@ -101,6 +105,8 @@ pub struct SeminarState {
     pub remote: RemoteBook,
     pub people: Vec<Person>,
     pub sessions: Vec<SessionRef>,
+    /// N15-Metadaten getrennt von Freigaben; cwd in fremden SessionRefs ist nur ID.
+    pub session_announcements: BTreeMap<PeerId, Vec<SessionAnkuendigung>>,
     pub space: SpaceId,
     pub group: Option<ChatId>,
     pub selected: Option<ChatId>,
@@ -117,6 +123,7 @@ impl SeminarState {
             remote: RemoteBook::default(),
             people: vec![],
             sessions: vec![],
+            session_announcements: BTreeMap::new(),
             space,
             group: None,
             selected: None,
@@ -373,6 +380,7 @@ impl SeminarState {
         self.chats.contacts.clear();
         self.people.clear();
         self.sessions.clear();
+        self.session_announcements.clear();
         self.group = None;
         self.selected = None;
         self.chats.my_name.clear();
@@ -467,6 +475,25 @@ impl SeminarState {
         match p {
             Payload::Geraeteausweis { ausweis } => {
                 self.identify(from, &ausweis, now)?;
+            }
+            Payload::SeminarSessions { sessions } => {
+                // people stammt ausschließlich aus dem bestätigten Verzeichnis;
+                // ein gültiger Ausweis allein berechtigt nicht zur Ankündigung.
+                if self.verified(from, now).is_none()
+                    || !self.people.iter().any(|person| &person.peer == from)
+                {
+                    return Err("Sessionliste ohne bestätigten Seminarkontakt verworfen".into());
+                }
+                SessionAnkuendigung::pruefen(&sessions)?;
+                let person = self.people.iter_mut().find(|p| &p.peer == from).unwrap();
+                person.sessions = sessions
+                    .iter()
+                    .map(|s| SessionRef {
+                        label: s.label.clone(),
+                        cwd: s.id.clone(),
+                    })
+                    .collect();
+                self.session_announcements.insert(from.clone(), sessions);
             }
             Payload::RemoteRequest { ref space, .. } if space != &self.space => {
                 return Err("Fremdes Seminar".into());
@@ -698,6 +725,59 @@ mod tests {
         a.receive(&b.chats.me, out.into_iter().next().unwrap().1, NOW)
             .unwrap();
         req
+    }
+    #[test]
+    fn session_announcements_replace_atomically_and_require_directory_and_certificate() {
+        let (mut a, b, _, _) = pair();
+        let peer = b.chats.me.clone();
+        let item = SessionAnkuendigung {
+            id: "hub-1".into(),
+            label: "ä".repeat(120),
+            zustand: "arbeitet".into(),
+        };
+        let payload = |sessions| Payload::SeminarSessions { sessions };
+        a.receive(&peer, payload(vec![item.clone()]), NOW).unwrap();
+        assert_eq!(
+            a.people[0].sessions,
+            vec![SessionRef {
+                label: item.label.clone(),
+                cwd: "hub-1".into()
+            }]
+        );
+        let before = a.people[0].sessions.clone();
+        for sessions in [
+            (0..33)
+                .map(|i| SessionAnkuendigung {
+                    id: format!("hub-{i}"),
+                    ..item.clone()
+                })
+                .collect(),
+            vec![SessionAnkuendigung {
+                label: "ä".repeat(121),
+                ..item.clone()
+            }],
+            vec![SessionAnkuendigung {
+                id: "/home/private".into(),
+                ..item.clone()
+            }],
+            vec![SessionAnkuendigung {
+                zustand: "beliebiger Text".into(),
+                ..item.clone()
+            }],
+            vec![item.clone(), item.clone()],
+        ] {
+            assert!(a.receive(&peer, payload(sessions), NOW).is_err());
+            assert_eq!(a.people[0].sessions, before);
+        }
+        a.receive(&peer, payload(vec![]), NOW).unwrap();
+        assert!(a.people[0].sessions.is_empty());
+        a.verified.remove(&peer);
+        assert!(a.receive(&peer, payload(vec![item.clone()]), NOW).is_err());
+        assert!(a.people[0].sessions.is_empty());
+        let (mut a, _, _, _) = pair();
+        a.people.clear();
+        assert!(a.receive(&peer, payload(vec![item]), NOW).is_err());
+        assert!(!a.session_announcements.contains_key(&peer));
     }
     #[test]
     fn names_never_attribute_unknown_peers_to_self() {
