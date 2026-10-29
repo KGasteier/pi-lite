@@ -135,7 +135,7 @@ impl Desktop {
                             ui.heading("Dateien vom letzten Mal abholen");
                             ui.add_space(16.0);
                             if let Some(pickup) = self.flow.receipt.as_ref().and_then(|r| r.pickup.as_ref()) {
-                                ui.label(format!("Im verschlüsselten Abholfach liegen {}. Verfügbar bis {}.", bytes(pickup.bytes), pickup.expires));
+                                if pickup.bytes > 0 { ui.label(format!("Im verschlüsselten Abholfach liegen {}. Verfügbar bis {}.", bytes(pickup.bytes), pickup.expires)); } else { ui.label(format!("Im verschlüsselten Abholfach liegt ein Archiv. Verfügbar bis {}.", pickup.expires)); }
                             }
                             ui.label("Sie werden in ~/cocopi zurückgespielt. Lokale Änderungen bleiben erhalten.");
                             ui.add_space(20.0);

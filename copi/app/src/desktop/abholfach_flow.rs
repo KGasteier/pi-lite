@@ -4,7 +4,7 @@ use super::{
     checkin::{Pickup, ReturnSummary},
     sync_flow::{self, Transfer},
 };
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use pi_backend::hub_v1::{abholfach::Schluessel, empfang::Empfang};
 use pi_sync::LocalFolder;
 
@@ -19,24 +19,12 @@ pub(super) fn angebot(empfang: &Empfang) -> Result<Option<Pickup>, String> {
     let id = first["checkin_id"]
         .as_str()
         .ok_or("Die Abholfach-ID fehlt.")?;
-    // Die Liste enthält keine Größe; die Länge des AEAD-Chiffrats entspricht
-    // der Klartextarchivgröße (GCM-Tag liegt separat). Abruf ist nicht quittierend.
-    let response = empfang.abholfach_holen(id)?;
-    let meta = &response["archiv"];
-    if meta["checkin_id"] != id {
-        return Err("Das Abholfach gehört nicht zum Angebot.".into());
-    }
+    // N-4: Kein Download beim Check-in. Größe nur, falls der Empfang sie in der
+    // Liste meldet; sonst 0 = unbekannt. Geprüft wird erst beim Abholen.
     Ok(Some(Pickup {
         id: id.into(),
-        bytes: URL_SAFE_NO_PAD
-            .decode(
-                meta["chiffrat"]
-                    .as_str()
-                    .ok_or("Das verschlüsselte Archiv fehlt.")?,
-            )
-            .map_err(|_| "Das verschlüsselte Archiv ist beschädigt.")?
-            .len() as u64,
-        expires: sync_flow::zeitpunkt(meta["ablauf"].as_u64().ok_or("Die Abholfrist fehlt.")?),
+        bytes: first["bytes"].as_u64().unwrap_or(0),
+        expires: sync_flow::zeitpunkt(first["ablauf"].as_u64().ok_or("Die Abholfrist fehlt.")?),
     }))
 }
 

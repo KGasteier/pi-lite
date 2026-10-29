@@ -304,7 +304,8 @@ impl FlowAdapter {
         }
         // Empfangsignatur und Gerätebindung sind vor Slot-Login geprüft.
         // Erst nach geprüftem Check-in ist der Empfang mit dem Geräteausweis authentifiziert.
-        receipt.pickup = abholfach_flow::angebot(&s.empfang)?;
+        // Ein nicht abrufbares Abholfach darf den Check-in nie verhindern (N-4).
+        receipt.pickup = abholfach_flow::angebot(&s.empfang).unwrap_or(None);
         s.pickup = receipt.pickup.clone();
         s.receipt = Some(receipt.clone());
         let mut hub = pi_backend::hub_v1::HubV1::new(&format!(
