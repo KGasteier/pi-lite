@@ -405,56 +405,6 @@ fn epoch() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn meter_counts_stream_and_aborts_read_and_write() {
-        let transfer = Transfer::default();
-        {
-            let _scope = transfer.scope(TransferKind::Upload, "test", 3);
-            let mut reader = Meter {
-                io: std::io::Cursor::new(b"abc"),
-                transfer: &transfer,
-            };
-            let mut bytes = [0; 3];
-            assert_eq!(reader.read(&mut bytes).unwrap(), 3);
-            assert_eq!(transfer.progress().unwrap().bytes, 3);
-            transfer.cancel.store(true, Ordering::SeqCst);
-            assert!(reader.read(&mut bytes).is_err());
-            assert!(
-                Meter {
-                    io: Vec::new(),
-                    transfer: &transfer
-                }
-                .write(b"abc")
-                .is_err()
-            );
-        }
-        assert!(transfer.progress().is_none());
-        assert!(
-            transfer.check().is_err(),
-            "Guard darf Abbruch nicht zurücksetzen"
-        );
-    }
-    #[test]
-    fn backend_stream_hash_is_real_sha256() {
-        let mut h = hash();
-        h.update(b"a");
-        h.update(b"bc");
-        let actual: String = h.finish().iter().map(|b| format!("{b:02x}")).collect();
-        assert_eq!(
-            actual,
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
-    }
-    #[test]
-    fn server_archive_id_is_never_used_as_local_path() {
-        let name = sha256_name(b"../../secrets/evil");
-        assert_eq!(name.len(), 64);
-        assert!(name.bytes().all(|b| b.is_ascii_hexdigit()));
-    }
-}
 pub(super) fn zeitpunkt(ms: u64) -> String {
     let seconds = ms / 1000;
     // Unix-Zeit in einen plattformneutralen gregorianischen Kalendertag umrechnen.
@@ -504,4 +454,55 @@ pub(super) fn stamp() -> String {
         seconds / 3600 % 24,
         seconds / 60 % 60
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn meter_counts_stream_and_aborts_read_and_write() {
+        let transfer = Transfer::default();
+        {
+            let _scope = transfer.scope(TransferKind::Upload, "test", 3);
+            let mut reader = Meter {
+                io: std::io::Cursor::new(b"abc"),
+                transfer: &transfer,
+            };
+            let mut bytes = [0; 3];
+            assert_eq!(reader.read(&mut bytes).unwrap(), 3);
+            assert_eq!(transfer.progress().unwrap().bytes, 3);
+            transfer.cancel.store(true, Ordering::SeqCst);
+            assert!(reader.read(&mut bytes).is_err());
+            assert!(
+                Meter {
+                    io: Vec::new(),
+                    transfer: &transfer
+                }
+                .write(b"abc")
+                .is_err()
+            );
+        }
+        assert!(transfer.progress().is_none());
+        assert!(
+            transfer.check().is_err(),
+            "Guard darf Abbruch nicht zurücksetzen"
+        );
+    }
+    #[test]
+    fn backend_stream_hash_is_real_sha256() {
+        let mut h = hash();
+        h.update(b"a");
+        h.update(b"bc");
+        let actual: String = h.finish().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            actual,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+    #[test]
+    fn server_archive_id_is_never_used_as_local_path() {
+        let name = sha256_name(b"../../secrets/evil");
+        assert_eq!(name.len(), 64);
+        assert!(name.bytes().all(|b| b.is_ascii_hexdigit()));
+    }
 }
