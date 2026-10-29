@@ -26,7 +26,47 @@ pub(super) fn directory_peer(key: &str) -> Result<pi_net::model::PeerId, String>
     Ok(peer)
 }
 pub(super) fn directory_address(peer: &pi_net::model::PeerId) -> String {
-    serde_json::json!({"id":peer.as_str(), "addrs":[]}).to_string()
+    directory_contact(peer, &[])
+}
+
+/// Keine Hostnamen/Relay-URLs; dieselbe Begrenzung gilt beim Melden und Finden.
+fn bounded_addresses(addresses: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut direct = vec![];
+    for address in addresses {
+        let Ok(socket) = address.parse::<std::net::SocketAddr>() else {
+            continue;
+        };
+        let address = socket.to_string();
+        if !direct.contains(&address) {
+            direct.push(address);
+            if direct.len() == 8 {
+                break;
+            }
+        }
+    }
+    direct
+}
+
+pub(super) fn directory_contact(peer: &pi_net::model::PeerId, addresses: &[String]) -> String {
+    let addrs: Vec<_> = bounded_addresses(addresses.iter().cloned())
+        .into_iter()
+        .map(|address| serde_json::json!({"Ip": address}))
+        .collect();
+    serde_json::json!({"id":peer.as_str(), "addrs":addrs}).to_string()
+}
+
+pub(super) fn direct_addresses(address: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(address) else {
+        return vec![];
+    };
+    bounded_addresses(
+        value
+            .get("addrs")
+            .and_then(|a| a.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|a| a.get("Ip")?.as_str().map(str::to_owned)),
+    )
 }
 
 pub struct SlotHub {
@@ -129,35 +169,35 @@ mod tests {
         let signatur = base64url(&issuer.secret.sign(&kanonisch(&inhalt).unwrap()).to_bytes());
         Ausweis { inhalt, signatur }
     }
-    fn loopback(address: &str) -> String {
-        let mut value: serde_json::Value = serde_json::from_str(address).unwrap();
-        let ips: Vec<_> = value["addrs"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|a| {
-                let socket: std::net::SocketAddr = a.get("Ip")?.as_str()?.parse().ok()?;
+    fn loopback(addresses: Vec<String>) -> Vec<String> {
+        assert!(!addresses.is_empty());
+        addresses
+            .into_iter()
+            .map(|address| {
+                let socket: std::net::SocketAddr = address.parse().unwrap();
                 let ip = if socket.is_ipv4() { "127.0.0.1" } else { "::1" }
                     .parse()
                     .unwrap();
-                Some(json!({"Ip":std::net::SocketAddr::new(ip, socket.port()).to_string()}))
+                std::net::SocketAddr::new(ip, socket.port()).to_string()
             })
-            .collect();
-        assert!(!ips.is_empty());
-        value["addrs"] = json!(ips);
-        value.to_string()
+            .collect()
     }
     fn deliver(seminar: &mut Seminar, out: pi_net::store::Outbox) {
         seminar.dispatch(Ok(out));
         assert!(seminar.error.is_none(), "{:?}", seminar.error);
     }
-    fn directory_entry(peer: &PeerId, name: &str) -> super::super::VerzeichnisEintrag {
+    fn directory_entry(
+        peer: &PeerId,
+        name: &str,
+        adressen: Vec<String>,
+    ) -> super::super::VerzeichnisEintrag {
         super::super::VerzeichnisEintrag {
             person: format!("test-{name}"),
             anzeige: name.into(),
             // Absichtlich gefälscht: diese Angabe darf keine Rechte verleihen.
             rolle: "seminarleitung".into(),
             net_pubkey: peer.to_string(),
+            adressen,
         }
     }
     #[test]
@@ -240,24 +280,22 @@ mod tests {
         wait_until(deadline, || {
             a.tick();
             b.tick();
-            a.address().is_some() && b.address().is_some()
+            !a.address().is_empty() && !b.address().is_empty()
         });
-        let aa = loopback(a.address().unwrap());
-        let ba = loopback(b.address().unwrap());
+        // Nur Fixture-Adressen auf Loopback begrenzen; kein set_contacts oder
+        // manueller Kontaktweg. Genau der N11-Verzeichnisabruf verbindet beide.
+        let aa = loopback(a.address());
+        let ba = loopback(b.address());
         a.verzeichnis_uebernehmen(vec![
-            directory_entry(&pa, "Aylin"),
-            directory_entry(&pb, "Mira"),
+            directory_entry(&pa, "Aylin", aa.clone()),
+            directory_entry(&pb, "Mira", ba.clone()),
         ]);
         b.verzeichnis_uebernehmen(vec![
-            directory_entry(&pa, "Aylin"),
-            directory_entry(&pb, "Mira"),
+            directory_entry(&pa, "Aylin", aa),
+            directory_entry(&pb, "Mira", ba),
         ]);
         assert_eq!(a.state.badge(&pb, now_ms()), "unbestätigt");
         assert!(a.state.direct(&pb, now_ms()).is_err());
-        // N9 findet die IDs; der aktuelle Minimal-Transport braucht zusätzlich
-        // direkte Adressen (hier nur Loopback). Keine öffentliche Discovery.
-        a.set_contacts(vec![(pb.clone(), ba)]).unwrap();
-        b.set_contacts(vec![(pa.clone(), aa)]).unwrap();
         wait_until(deadline, || {
             a.tick();
             b.tick();
@@ -379,6 +417,8 @@ mod tests {
         assert!(a.state.control(&req, "Zu spät", now_ms()).is_err());
         a.checkout();
         b.checkout();
+        assert!(a.address().is_empty());
+        assert!(b.address().is_empty());
         assert!(
             started.elapsed() < Duration::from_secs(30),
             "{:?}",
