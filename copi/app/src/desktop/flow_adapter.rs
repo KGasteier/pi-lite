@@ -1,17 +1,16 @@
 //! Empfang in App-Workern. Fehlende Sync-HTTP-APIs werden nicht umgangen.
 //! Ohne bestätigten Empfangsschlüssel und eigenen Archivschlüssel kein Check-in.
 use super::{
-    Account, DesktopApi, InviteError, Reply, Request, abholfach_flow, checkin::*, hub::HubAdapter,
-    sync_flow,
+    abholfach_flow, checkin::*, hub::HubAdapter, sync_flow, Account, DesktopApi, InviteError,
+    Reply, Request,
 };
-use pi_backend::hub_v1::{DeviceKey, empfang::Empfang, oidc};
-use serde_json::{Value, json};
+use pi_backend::hub_v1::{empfang::Empfang, oidc, DeviceKey};
+use serde_json::{json, Value};
 use std::{
     path::PathBuf,
     sync::{
-        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
-        mpsc,
+        mpsc, Arc, Mutex,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -116,6 +115,7 @@ pub struct FlowAdapter {
     aktiv_signal: Mutex<Option<AktivSignal>>,
     hintergrund: HintergrundZugang,
     signal_gate: Arc<Mutex<()>>,
+    eigene_adressen: Arc<Mutex<Vec<String>>>,
 }
 impl FlowAdapter {
     pub fn new(config: Config) -> Result<Self, String> {
@@ -132,7 +132,10 @@ impl FlowAdapter {
             pi_net::identity::Identity::load_or_create(&config.key_dir.join("seminar-net.key"))?;
         let hintergrund = Arc::new(Mutex::new(None));
         let signal_gate = Arc::new(Mutex::new(()));
+        let eigene_adressen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let adressen_signal = eigene_adressen.clone();
         let adapter = Self {
+            eigene_adressen,
             config,
             archive_key,
             identity,
@@ -171,7 +174,15 @@ impl FlowAdapter {
                 .lock()
                 .map_err(|_| "Das Aktiv-Signal wurde unterbrochen.")?;
             if let Some(empfang) = empfang_oeffnen(&hintergrund)? {
-                empfang.aktiv(connected)
+                if connected {
+                    let adressen = adressen_signal
+                        .lock()
+                        .map(|a| a.clone())
+                        .unwrap_or_default();
+                    empfang.aktiv_mit_adressen(true, &adressen)
+                } else {
+                    empfang.aktiv(false)
+                }
             } else if connected {
                 Err("Das Aktiv-Signal wartet auf den bestätigten Check-in.".into())
             } else {
@@ -679,6 +690,11 @@ impl DesktopApi for FlowAdapter {
             .map(|empfang| empfang.seminar_verzeichnis())
             .transpose()
     }
+    fn set_eigene_adressen(&self, adressen: Vec<String>) {
+        if let Ok(mut a) = self.eigene_adressen.lock() {
+            *a = adressen.into_iter().take(8).collect();
+        }
+    }
     fn aktiv_signal(&self, connected: bool) -> Result<(), String> {
         let signal = self
             .aktiv_signal
@@ -834,12 +850,10 @@ mod tests {
                 (501, true)
             ]
         );
-        assert!(
-            signals
-                .windows(2)
-                .filter(|pair| pair[0].1 && pair[1].1)
-                .all(|pair| pair[1].0 - pair[0].0 <= 60)
-        );
+        assert!(signals
+            .windows(2)
+            .filter(|pair| pair[0].1 && pair[1].1)
+            .all(|pair| pair[1].0 - pair[0].0 <= 60));
     }
 
     #[test]
@@ -872,13 +886,12 @@ mod tests {
         assert_eq!(issued["geraet_pubkey"], state.key.public_key());
         login
             .open_browser(|url| {
-                assert!(
-                    url.split('?')
-                        .nth(1)
-                        .unwrap()
-                        .split('&')
-                        .any(|p| p == format!("nonce={}", issued["nonce"].as_str().unwrap()))
-                );
+                assert!(url
+                    .split('?')
+                    .nth(1)
+                    .unwrap()
+                    .split('&')
+                    .any(|p| p == format!("nonce={}", issued["nonce"].as_str().unwrap())));
                 assert!(url.contains("code_challenge_method=S256"));
                 Ok(())
             })
@@ -930,21 +943,17 @@ mod tests {
         assert_eq!(pool()["belegt"][0]["verbunden"], true);
         let seminar = desktop.seminar.as_ref().unwrap();
         assert!(seminar.error.is_none(), "{:?}", seminar.error);
-        assert!(
-            seminar
-                .state
-                .people
-                .iter()
-                .any(|p| p.peer == adapter.identity.peer())
-        );
-        assert!(
-            seminar
-                .state
-                .chats
-                .contacts
-                .iter()
-                .any(|p| p.peer == adapter.identity.peer())
-        );
+        assert!(seminar
+            .state
+            .people
+            .iter()
+            .any(|p| p.peer == adapter.identity.peer()));
+        assert!(seminar
+            .state
+            .chats
+            .contacts
+            .iter()
+            .any(|p| p.peer == adapter.identity.peer()));
         // Zweiter Puls mit logischer Zeit, aber echter authentifizierter HTTP-Anfrage.
         desktop.aktiv_clock = std::time::Instant::now() - Duration::from_secs(61);
         desktop.empfang_tick();
@@ -987,23 +996,19 @@ mod tests {
             let reply = desktop.rx.recv_timeout(Duration::from_secs(5)).unwrap();
             desktop.apply(reply);
         }
-        assert!(
-            desktop
-                .error
-                .as_ref()
-                .unwrap()
-                .contains("Du kannst weiterarbeiten")
-        );
-        assert!(
-            desktop
-                .seminar
-                .as_ref()
-                .unwrap()
-                .state
-                .people
-                .iter()
-                .any(|p| p.peer == adapter.identity.peer())
-        );
+        assert!(desktop
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("Du kannst weiterarbeiten"));
+        assert!(desktop
+            .seminar
+            .as_ref()
+            .unwrap()
+            .state
+            .people
+            .iter()
+            .any(|p| p.peer == adapter.identity.peer()));
         desktop.connected = false;
         desktop.empfang_tick();
         while desktop.aktiv_pending {
@@ -1346,11 +1351,9 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
             state.receipt.is_some(),
             "No fake release without server confirmation"
         );
-        assert!(
-            std::fs::read_to_string(f.root.join("calls.json"))
-                .unwrap()
-                .contains("archiv")
-        );
+        assert!(std::fs::read_to_string(f.root.join("calls.json"))
+            .unwrap()
+            .contains("archiv"));
     }
     #[test]
     fn ambiguous_checkin_never_retries_or_claims_cancelled() {
@@ -1415,11 +1418,10 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         else {
             panic!("Plan fehlt")
         };
-        assert!(
-            plan.items
-                .iter()
-                .any(|i| i.name.contains("film.mp4") && !i.selected)
-        );
+        assert!(plan
+            .items
+            .iter()
+            .any(|i| i.name.contains("film.mp4") && !i.selected));
         assert!(
             plan.items.iter().all(|i| !i.selected),
             "Kein zuletzt gewähltes Projekt: nichts vorausgewählt"
@@ -1441,12 +1443,10 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         );
         let repeated = adapter.state.lock().unwrap().plan.as_ref().unwrap().ui();
         assert_eq!(repeated.items.iter().filter(|i| i.selected).count(), 1);
-        assert!(
-            repeated
-                .items
-                .iter()
-                .any(|i| i.name == "Projekte / Buch" && i.selected)
-        );
+        assert!(repeated
+            .items
+            .iter()
+            .any(|i| i.name == "Projekte / Buch" && i.selected));
         let remote = f.root.join("home/arbeit/Projekte/Buch");
         assert!(!remote.join("film.mp4").exists());
         assert_eq!(std::fs::read_dir(&remote).unwrap().count(), 3);
@@ -1491,12 +1491,10 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
                 .collect::<Vec<_>>(),
             ["hochgeladen", "importiert", "ausgecheckt"]
         );
-        assert!(
-            std::fs::read_dir(root.join(".sync/archiv"))
-                .unwrap()
-                .next()
-                .is_some()
-        );
+        assert!(std::fs::read_dir(root.join(".sync/archiv"))
+            .unwrap()
+            .next()
+            .is_some());
     }
     #[test]
     fn local_node_empty_checkout_handles_n6_without_archive() {
@@ -1723,13 +1721,11 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
             Reply::Flow(FlowReply::Plan(_))
         ));
         assert_eq!(std::fs::read_dir(&boxes).unwrap().count(), 1);
-        assert!(
-            !adapter
-                .config
-                .local_root
-                .join("Projekte/Buch/text.md")
-                .exists()
-        );
+        assert!(!adapter
+            .config
+            .local_root
+            .join("Projekte/Buch/text.md")
+            .exists());
         let local = adapter.config.local_root.join("Projekte/Buch");
         std::fs::create_dir_all(&local).unwrap();
         std::fs::write(local.join("text.md"), "Lokale Änderung").unwrap();
@@ -1740,16 +1736,14 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         .unwrap();
         let state = adapter.state.lock().unwrap();
         let folder = pi_sync::LocalFolder::create(&adapter.config.local_root).unwrap();
-        assert!(
-            abholfach_flow::holen(
-                &state.empfang,
-                &wrong,
-                &folder,
-                &pickup.id,
-                &adapter.transfer
-            )
-            .is_err()
-        );
+        assert!(abholfach_flow::holen(
+            &state.empfang,
+            &wrong,
+            &folder,
+            &pickup.id,
+            &adapter.transfer
+        )
+        .is_err());
         drop(state);
         assert_eq!(std::fs::read_dir(&boxes).unwrap().count(), 1);
         #[cfg(unix)]
@@ -1932,11 +1926,10 @@ console.log(JSON.stringify({origin,issuer:fake.issuer,pubkey:reception.ausweis.p
         else {
             panic!("Vorschau fehlt")
         };
-        assert!(
-            p.personal
-                .iter()
-                .any(|f| f.large && !f.selected && f.path.ends_with("ergebnis.mov"))
-        );
+        assert!(p
+            .personal
+            .iter()
+            .any(|f| f.large && !f.selected && f.path.ends_with("ergebnis.mov")));
         assert!(matches!(
             adapter.call(Request::Checkout {
                 checkin_id: r.checkin_id.clone(),

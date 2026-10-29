@@ -15,7 +15,7 @@ use egui::{Color32, RichText, Ui};
 use pi_backend::mode::{self, Mode};
 use qrcodegen::{QrCode, QrCodeEcc};
 use std::{
-    sync::{Arc, mpsc},
+    sync::{mpsc, Arc},
     time::{Duration, Instant},
 };
 
@@ -203,6 +203,8 @@ pub trait DesktopApi: Send + Sync {
     fn trennen(&self) -> Result<(), String> {
         self.aktiv_signal(false)
     }
+    /// N11: eigene direkte Adressen für das nächste Aktiv-Signal (nur IP:Port).
+    fn set_eigene_adressen(&self, _adressen: Vec<String>) {}
     fn seminar_verzeichnis(
         &self,
     ) -> Result<Option<pi_backend::hub_v1::empfang::Verzeichnis>, String> {
@@ -1317,7 +1319,7 @@ impl Desktop {
                     ui.text_edit_singleline(&mut self.empfang_pubkey);
                     ui.label("Eigener X25519-Archivschlüssel · öffentlicher Anteil");
                     ui.label("Der Archivschlüssel wird vor dem Check-in automatisch lokal erzeugt und sicher aufbewahrt.");
-                    ui.label("Nur den öffentlichen Schlüssel eines eigenen, gesichert verwahrten Archivschlüssels eintragen. Erzeugung und Abholfach-Entschlüsselung sind hier noch nicht angebunden. Ohne Schlüssel kein Check-in; niemals einen Empfangsschlüssel automatisch übernehmen.");
+                    ui.label("Mit ihm kann nur dieser Rechner ein Abholfach öffnen. Der Empfangsschlüssel wird nie automatisch übernommen.");
                 }
             }
             if let Some(e) = &self.error { ui.add_space(16.0); ui.label(e); }
@@ -1458,16 +1460,14 @@ impl Desktop {
         }
     }
     /// N11-Haken: nur direkte IP-Adressen aus der eigenen bestätigten Netzruntime.
-    /// K übergibt sie nach S3/S8-Merge an `aktiv_mit_adressen`.
+    /// Werden mit dem nächsten Aktiv-Signal über `aktiv_mit_adressen` gemeldet.
     fn eigene_adressen(&self) -> Vec<String> {
         self.seminar
             .as_ref()
-            .and_then(|s| s.address())
-            .and_then(|a| serde_json::from_str::<serde_json::Value>(a).ok())
-            .and_then(|a| a["addrs"].as_array().cloned())
+            .map(|s| s.address())
+            .unwrap_or_default()
             .into_iter()
-            .flatten()
-            .filter_map(|a| a["Ip"].as_str()?.parse::<std::net::SocketAddr>().ok())
+            .filter_map(|a| a.parse::<std::net::SocketAddr>().ok())
             .take(8)
             .map(|a| a.to_string())
             .collect()
@@ -1483,6 +1483,7 @@ impl Desktop {
                         anzeige: p.anzeige.clone(),
                         rolle: p.rolle.clone(),
                         net_pubkey: p.net_pubkey.clone(),
+                        adressen: p.adressen.clone(),
                     })
                     .collect(),
             );
@@ -1496,7 +1497,8 @@ impl Desktop {
             let connected = self.connected && self.flow.receipt.is_some();
             if let Some(signal) = self.aktiv_takt.next(self.aktiv_clock.elapsed(), connected) {
                 self.aktiv_pending = true;
-                let _adressen = self.eigene_adressen(); // N11: K verdrahtet nach API-Merge.
+                let adressen = self.eigene_adressen();
+                self.api.set_eigene_adressen(adressen);
                 let (api, tx) = (self.api.clone(), self.tx.clone());
                 std::thread::spawn(move || {
                     let _ = tx.send(Reply::AktivCompleted(api.aktiv_signal(signal)));
@@ -1888,11 +1890,9 @@ mod tests {
             }
             if scene == "v3-mitsteuern-aktiv-student" {
                 assert!(!d.seminar_selected);
-                assert!(
-                    d.chat_by_session["a"]
-                        .iter()
-                        .any(|m| m.speaker == "Aylin · Seminarleitung")
-                );
+                assert!(d.chat_by_session["a"]
+                    .iter()
+                    .any(|m| m.speaker == "Aylin · Seminarleitung"));
             }
             assert_eq!(d.pending, 0);
         }
@@ -2096,11 +2096,9 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(
-            !texts
-                .iter()
-                .any(|t| t.contains("Nachricht an die gewählte Session"))
-        );
+        assert!(!texts
+            .iter()
+            .any(|t| t.contains("Nachricht an die gewählte Session")));
         assert!(texts.contains(&"Als Seminarleitung senden"));
     }
 
@@ -2150,12 +2148,10 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             assert!(texts.contains(&expected), "{scene}: {texts:?}");
-            assert!(
-                !texts
-                    .iter()
-                    .any(|t| t.contains("Ein Arbeitsplatz wird für dich frei")
-                        || t.ends_with("ist leer."))
-            );
+            assert!(!texts
+                .iter()
+                .any(|t| t.contains("Ein Arbeitsplatz wird für dich frei")
+                    || t.ends_with("ist leer.")));
         }
     }
 
