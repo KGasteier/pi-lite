@@ -78,3 +78,20 @@ Neue feste Entscheidungen (ergänzen E1–E6, ersetzen die personenfeste Slot-Zu
   `verbunden:false`.
 - `/v1/empfang/seminar` gibt je Person zusätzlich `adressen: [..]` (signiert, Feld kann leer sein). Client: `#[serde(default)]`.
 - Keine öffentliche Discovery, kein Relay. Verbindung nur, wenn `net_pubkey` per TLS-Peer bestätigt (wie bisher).
+
+## Nachtrag I4 (K) — N12–N15 (Grenzen 1–4 der Testversion)
+- **N12 Aktiv über Hub (Handy):** Vor einem Leerlauf-Zwangs-Check-out (8 h ohne `aktiv`) fragt der Empfang den Slot-Hub per
+  signiertem Dienstauftrag `{typ:'sync_dienst', aktion:'aktiv_pruefen', slot, checkin_id, iat, nonce}` an
+  `POST /v1/sync/dienst/aktiv` (nur 127.0.0.1, wie `leer`). Antwort `{typ:'sync_aktiv', aktiv:bool, geraete:{desktop:n, mobil:n},
+  zuletzt_ms}`; `aktiv` = mindestens ein Gerät der aktuellen Belegung hat in den letzten 90 s eine SSE-Verbindung oder einen
+  authentifizierten Request gehabt. Bei `aktiv:true` setzt der Empfang `zuletzt=now` (kein Zwang). Fehler/Timeout ⇒ wie bisher
+  (Zwang erlaubt), aber erst nach 2 fehlgeschlagenen Prüfungen im Abstand ≥ 5 min. Tagesende (23:30) bleibt hart.
+- **N13 Abholfach-Größe/Transport:** `GET /v1/empfang/abholfach` liefert je Eintrag zusätzlich `bytes` (Länge des entschlüsselten
+  Archivs laut Umschlag, Ganzzahl). Client `abholfach_holen` nutzt Leerlauf-Timeout (45 s ohne Daten) statt 15 s Gesamtbudget
+  und lehnt Antworten > 600 MiB ab.
+- **N14 Nonce-Ratenbegrenzung:** `POST /v1/empfang/nonce` und `POST /v1/empfang/checkin` je Absender-IP ≤ 10/min (Token-Bucket);
+  Antwort 429 `zu_viele_anfragen` mit `Retry-After`. Absender = `X-Forwarded-For` (letzter Eintrag) **nur** wenn
+  `EMPFANG_TRUST_PROXY=1` und Socket = Loopback; sonst Socket-Adresse. Globale Grenze bleibt, aber pro IP höchstens 20 offene Nonces.
+- **N15 Session-Ankündigung im Seminar:** additiver `Payload::SeminarSessions { sessions: Vec<SessionAnkuendigung> }`
+  (`id`, `label`, `zustand`), nur in `SeminarPacket`, nur eigene Sessions, max 32, Label ≤ 120 Zeichen. Senden bei Änderung und
+  alle 60 s; Empfang nur von verzeichnisbestätigten Peers; ersetzt deren `sessions` vollständig. Keine Inhalte, keine Pfade.
