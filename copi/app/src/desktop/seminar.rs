@@ -293,7 +293,12 @@ impl Seminar {
                 );
             });
             ui.add_space(16.0);
-            if let Some(address) = self.net.address().map(str::to_owned) {
+            if let Some(address) = self
+                .net
+                .address()
+                .filter(|_| !self.address().is_empty())
+                .map(str::to_owned)
+            {
                 if ui.button("Verbindungsadresse kopieren").clicked() {
                     ui.ctx().copy_text(address);
                 }
