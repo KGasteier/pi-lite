@@ -412,6 +412,18 @@ impl Seminar {
             ui.separator();
         }
     }
+    fn chat_title(&self, chat: &pi_net::model::Chat, now: u64) -> String {
+        if chat.kind == ChatKind::Direct {
+            chat.members
+                .iter()
+                .map(|member| member.who.device())
+                .find(|peer| *peer != &self.state.chats.me)
+                .map(|peer| self.state.name(peer, now))
+                .unwrap_or_else(|| "Unbekannt".into())
+        } else {
+            chat.title.clone()
+        }
+    }
     fn chat_ui(&mut self, ui: &mut egui::Ui, now: u64) {
         if self.state.group.is_none()
             && self
@@ -438,7 +450,7 @@ impl Seminar {
                 .chats
                 .iter()
                 .filter(|c| c.kind == ChatKind::Direct)
-                .map(|c| (c.id.clone(), c.title.clone()))
+                .map(|c| (c.id.clone(), self.chat_title(c, now)))
                 .collect();
             for (id, title) in dms {
                 if ui
@@ -456,7 +468,7 @@ impl Seminar {
         let invites = self.state.chats.invites.clone();
         for invite in invites {
             ui.horizontal(|ui| {
-                ui.label(format!("Einladung: {}", invite.chat.title));
+                ui.label(format!("Einladung: {}", self.chat_title(&invite.chat, now)));
                 if ui.button("Annehmen").clicked() {
                     let id = invite.chat.id.clone();
                     let group = invite.chat.kind == ChatKind::Group;
@@ -779,6 +791,42 @@ mod tests {
         seminar.tick();
         assert!(seminar.error.is_none(), "{:?}", seminar.error);
         assert_eq!(seminar.state.remote.grants.len(), 1);
+    }
+    #[test]
+    fn dm_title_is_the_other_person_in_both_views() {
+        let seminar = scene("v3-seminar-dm").unwrap();
+        let dm = seminar
+            .state
+            .chats
+            .chats
+            .iter()
+            .find(|c| c.kind == ChatKind::Direct)
+            .unwrap();
+        // Die Einladung trägt historisch den Namen der Empfängerin (Mira).
+        assert_eq!(dm.title, "Mira");
+        assert_eq!(seminar.chat_title(dm, seminar.now()), "Aylin");
+        let (state, _) = pi_net::seminar::demo_pair(seminar.now());
+        let other_view = Seminar::new(state, Box::<MemoryNet>::default());
+        assert_eq!(other_view.chat_title(dm, seminar.now()), "Mira");
+    }
+    #[test]
+    fn demo_mira_uses_account03_in_every_seminar_scene() {
+        for name in [
+            "v3-seminar-chat",
+            "v3-seminar-dm",
+            "v3-mitsteuern-anfrage",
+            "v3-mitsteuern-aktiv-student",
+            "v3-mitsteuern-aktiv-leitung",
+        ] {
+            let seminar = scene(name).unwrap();
+            for person in &seminar.state.people {
+                if person.name == "Mira" {
+                    assert_eq!(person.slot.as_deref(), Some("account03"), "{name}");
+                } else if person.name == "Aylin" {
+                    assert_eq!(person.slot.as_deref(), Some("account01"), "{name}");
+                }
+            }
+        }
     }
     #[test]
     fn all_scenes_render_and_unknown_declines() {

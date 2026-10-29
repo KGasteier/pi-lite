@@ -600,7 +600,7 @@ pub fn demo_pair(now: u64) -> (SeminarState, SeminarState) {
             peer: peers[other].clone(),
             name: certs[other].inhalt.person.clone(),
             online: true,
-            slot: Some(format!("account{:02}", other + 1)),
+            slot: Some(if other == 0 { "account01" } else { "account03" }.into()),
             sessions: s.sessions.clone(),
             offline_since_ms: None,
         })
