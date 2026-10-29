@@ -41,13 +41,14 @@ def main():
          "explicit_upload_header_is_only_sent_after_confirmation"),
     ]]
     env = dict(os.environ, I2_HUB_DIR=os.environ["COCOPI_PI_HUB"])
-    result = subprocess.run(["node", "--test", str(Path(__file__).parent / "i2/abholfach.i2c.test.mjs")],
+    node_files = sorted((Path(__file__).parent / "i2").glob("*.i2c.test.mjs"))
+    result = subprocess.run(["node", "--test", *map(str, node_files)],
                             cwd=worktree, env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)
     print(result.stdout, end="", flush=True)
     good = (result.returncode == 0 and bool(re.search(r"^# pass [1-9][0-9]*$", result.stdout, re.M))
             and not re.search(r"^# (skipped|todo) [1-9][0-9]*$", result.stdout, re.M))
-    print(f"{'PASS' if good else 'FAIL'} i2c-szenarien/zwangscheckout-zweitgeraet-72h", flush=True)
+    print(f"{'PASS' if good else 'FAIL'} i2c-szenarien/node-abholfach-aktiv-seminar", flush=True)
     return int(not (all(results) and good))
 
 

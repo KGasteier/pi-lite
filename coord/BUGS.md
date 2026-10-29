@@ -23,3 +23,14 @@ Stand: 28.10.2026. Basisfehler bleiben sichtbar, sperren aber nicht als neue Reg
 Quelle für B12–B15: `coord/runs/I2c-S2-sync-bericht.md` und `I2c-S3-api-bericht.md` im Koordinations-Worktree; Stand dieses Berichts ist `f06a541`, spätere UI-Fixes separat abnehmen.
 
 Quelle für B3–B5: `coord/runs/I1-S3-review-bericht.md` im Koordinations-Worktree. Der Review enthält weitere Merge-/Vor-I2-Auflagen; diese Tabelle ersetzt sie nicht. Fixberichte anderer Rollen wurden hier nicht sicherheitsgeprüft, daher keine Erledigt-Markierung.
+
+## Nachprüfung I3-O3-S6 · 29.10.2026
+
+| ID | Schwere | Fundort | Beschreibung | Besitzer | Status |
+|---|---|---|---|---|---|
+| B17 | Mittel (Testinfrastruktur) | `test/v3-gate.sh`, `test/i2/empfang-harness.mjs` | O2-Empfang verlangt N7-Leerbeleg sowie gerätegebundene Server-Nonce. Alte S6-Fixtures lieferten keinen Beleg und erzeugten Client-Nonces; Hubtests wurden ohne `node --test` gestartet. | S6 | Behoben mit `4c5c31c` und `bda45b8`: echter HTTP-Nonce-Weg, Leeren-Fake bestätigt neue Epoche und verbietet Live-`pruefen`; Hubtests mit Node-Testrunner. Isoliertes Node-Gate Exit 0 gegen Hub `5ba7cec`, Logs `/tmp/v3-gate.s6.e7alXjnt/`: I2 21/21, I2b 5/5, I2c-Node 7/7. Keine Assertions abgeschwächt. |
+| B18 | Mittel (Abnahmegrenze) | `empfang/empfang.mjs` im read-only Hub `5ba7cec`, FREEZE N11 | Dieser Hubstand liefert N9-Personen ohne `adressen`; N11-Adressweitergabe/-Validierung ist damit hier nicht nachgewiesen. Die neuen S6-N9-Tests erlauben additive `adressen`, prüfen aber keine N11-Adressregeln. | S7 + K | Offen zur Integration/gesonderten N11-Abnahme; kein Hubfix durch S6. |
+
+**Belegte Erweiterungen:** Neun Stunden signierte 60-s-Aktivpulse verhindern Zwang; verstummtes `true` und sauberes `false` erzwingen erst bei acht Stunden +1 ms seit dem letzten Puls, auch nach Empfang-Neustart. Check-in 23:45 nutzt Tagesende am Folgetag 23:30; dann Zwang trotz Verbindung. Zwangsarchive werden entschlüsselt geprüft, danach Temp-Slots leer. N9 prüft Empfangssignatur/Manipulation und sperrt fremde, anonyme, bereits auscheckende sowie freigegebene Geräte; wartende/reservierte Personen erscheinen nicht. Nachweis: `test/i2/aktiv-seminar.i2c.test.mjs` im obigen Gate.
+
+**Nicht pauschal grün:** B1 bleibt `KNOWN`; Hub-Empfang 30 bestanden, 1 optionaler S3-Router-/Standardadaptertest ohne `PI_HUB_S3` übersprungen. Rust/Desktop/fmt/Clippy/Consent wurden in diesem Auftrag mit `V3_GATE_NODE_ONLY=1` ausdrücklich ausgelassen; ältere B10/B12–B16 werden dadurch weder bestätigt noch erledigt. Kein Live-/Systemkonto-/authentik-/Geräte-Nachweis.

@@ -180,6 +180,7 @@ done
 if [[ "$*" == *mobile/test/* && -f "$PWD/skip-mobile" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
 if [[ "$*" == *test/i2/*.i2b.test.mjs* && -f "$PWD/skip-i2b" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
 if [[ "$*" == *test/i2/* && "$*" != */abholfach.i2c.test.mjs* && -f "$PWD/skip-i2" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
+if [[ "$*" == *test/i2/*.i2c.test.mjs* && -f "$PWD/skip-i2c-node" ]]; then printf '# skipped 1\\n# todo 0\\n'; fi
 exit 0
 ''')
         for repository in (worktree, hub):
@@ -360,8 +361,7 @@ exit 0
         self.assertIn("SKIP hub-empfang-2", result.stdout)
         self.assertNotIn("hub-smoke-3", result.stdout)  # Doppelte Pfade ignorieren.
         self.assertIn("cargo test --offline --locked -p pi-sync", calls.read_text())
-        self.assertIn("node empfang/test/a.mjs", calls.read_text())
-        self.assertIn("node empfang/test/b.mjs", calls.read_text())
+        self.assertIn("node --test empfang/test/a.mjs empfang/test/b.mjs", calls.read_text())
         self.assertIn("node test/sync.mjs", calls.read_text())
         (hub / "fail-i2").touch()
         (worktree / "copi/fail-test").touch()
@@ -370,7 +370,40 @@ exit 0
         for name in ("sync-rust-tests", "hub-empfang", "hub-sync"):
             self.assertIn(f"FAIL {name} |", result.stdout)
         self.assertIn("PASS hub-sync-2", result.stdout)  # Nicht beim ersten Fehler abbrechen.
-        self.assertIn("node empfang/test/b.mjs", calls.read_text())
+        self.assertIn("node --test empfang/test/a.mjs empfang/test/b.mjs", calls.read_text())
+
+    def test_node_only_runs_all_node_stages_but_no_rust_or_consent(self):
+        worktree, hub, calls = self.setup_gate()
+        (worktree / "test/i2").mkdir(parents=True)
+        for name in ("base.test.mjs", "consent.test.mjs", "contract.i2b.test.mjs", "clock.i2c.test.mjs"):
+            (worktree / "test/i2" / name).write_text("// stub\n")
+        (hub / "empfang/test").mkdir(parents=True)
+        (hub / "empfang/test/a.mjs").write_text("// stub\n")
+        for command in ("clippy", "test", "check"):
+            (worktree / f"copi/fail-{command}").touch()
+        (worktree / "fail-fmt").touch()
+        result = self.run_script("v3-gate.sh", worktree, hub, V3_GATE_NODE_ONLY="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("SKIP rust-desktop", result.stdout)
+        for name in ("js-syntax", "js-tests", "hub-empfang", "i2-szenarien", "i2b-szenarien", "i2c-node-szenarien"):
+            self.assertIn(f"PASS {name} |", result.stdout)
+        entries = calls.read_text()
+        self.assertNotIn("cargo ", entries)
+        self.assertNotIn("rustfmt ", entries)
+        self.assertNotIn("consent.test.mjs", entries)
+        self.assertIn("node --test empfang/test/a.mjs", entries)
+        self.assertIn("node --test test/i2/clock.i2c.test.mjs", entries)
+        (worktree / "skip-i2c-node").touch()
+        skipped = self.run_script("v3-gate.sh", worktree, hub, V3_GATE_NODE_ONLY="1")
+        self.assertIn("SKIP i2c-node-szenarien | Abnahme unvollständig", skipped.stdout)
+        self.assertNotIn("PASS i2c-node-szenarien", skipped.stdout)
+        (worktree / "skip-i2c-node").unlink()
+        (hub / "fail-i2").touch()
+        result = self.run_script("v3-gate.sh", worktree, hub, V3_GATE_NODE_ONLY="1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAIL hub-empfang |", result.stdout)
+        self.assertIn("PASS i2c-node-szenarien |", result.stdout)
+        self.assertEqual(self.run_script("v3-gate.sh", worktree, V3_GATE_NODE_ONLY="invalid").returncode, 2)
 
     def test_gate_optional_i2_skip_is_not_pass(self):
         worktree, hub, _ = self.setup_gate()

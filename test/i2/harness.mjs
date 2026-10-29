@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { once } from 'node:events';
 
-export const hubDir = path.resolve(process.env.I2_HUB_DIR || '/home/medienhaus/Work/pi-hub-wt/s7');
+export const hubDir = path.resolve(process.env.I2_HUB_DIR || '/home/medienhaus/Work/pi-hub');
 export const missing = (...files) => files.filter(file => !fs.existsSync(path.join(hubDir, file)));
 export const importHub = file => import(pathToFileURL(path.join(hubDir, file)).href);
 export const hash = data => crypto.createHash('sha256').update(data).digest('hex');

@@ -8,10 +8,16 @@ I2_HUB_DIR=/pfad/pi-hub-worktree node --test test/i2/*.test.mjs
 I2_SEMINAR_DIR=/pfad/pi-lite-s8 node --test test/i2/consent.test.mjs
 bash test/v3-gate.sh "$PWD" /pfad/hub-s3 /pfad/hub-s7
 V3_GATE_HUBS="/pfad/hub-s3 /pfad/hub-s7" bash test/v3-gate.sh "$PWD"
+V3_GATE_NODE_ONLY=1 bash test/v3-gate.sh "$PWD" /home/medienhaus/Work/pi-hub
 python3 test/self-test.py
 ```
 
-Standard-Hub für direkte Node-Aufrufe: `/home/medienhaus/Work/pi-hub-wt/s7`.
+Standard-Hub für direkte Node-Aufrufe: `/home/medienhaus/Work/pi-hub`.
+`V3_GATE_NODE_ONLY=1` lässt fmt/Clippy/Rust und den Rust-bauenden
+`consent.test.mjs` ausdrücklich aus und meldet das als SKIP; I2c-Node-Szenarien
+laufen separat als `i2c-node-szenarien`. Ohne diesen Schalter laufen sie zusammen
+mit den Rust-Kreuztests in `i2c-szenarien`. Hub-Empfangstests laufen immer mit
+`node --test` (für den begrenzten Hub-Testaltweg ist `NODE_TEST_CONTEXT` nötig).
 Fehlende Module ergeben **SKIP**, keine grüne Funktionsbehauptung. `i2-szenarien`
 prüft die I2-Basis einschließlich Seminar-Automat. Die neuen N2/N3/N6- und
 Recovery-Verträge stehen separat in `*.i2b.test.mjs` und im Gate als
@@ -31,7 +37,7 @@ für solche Pfade positionale, gequotete Argumente verwenden.
   Ein vorangestellter gültiger Tar-Eintrag darf bei Angriff nicht zurückbleiben.
 - `empfang.test.mjs`: echter Empfang, echte Sync-HTTP-Handler, Fake-OIDC/JWKS
   und temporäre Slots; Check-in → Upload → Vorschau → Archiv → lokale Sicherung
-  → Erhalten → Leeren/Prüfen → freier Poolplatz. Alter Token ist ungültig.
+  → Erhalten → N7-Leerbeleg → freier Poolplatz. Alter Token ist ungültig.
   Fake-pi aus dem Hub antwortet auf `get_state` und wird vor dem Leeren beendet.
   Dazu 20 parallele HTTP-Check-ins, FIFO-Promotion, fehlschlagendes Leeren und
   verschlüsseltes Abholfach (fremde Person, falscher Signaturschlüssel,
@@ -52,6 +58,15 @@ für solche Pfade positionale, gequotete Argumente verwenden.
 - `oidc.test.mjs`: RS256/ES256 und negative Claims-/Signaturtests gegen lokalen
   JWKS-Issuer. Kein vollständiger Systembrowser-/PKCE-/authentik-Livetest.
 - `abholfach.i2c.test.mjs`: erzwungener Check-out über HTTP, bestätigtes Slot-Fake-Leeren, erneuter Fake-OIDC-Check-in desselben `sub` mit zweitem Gerät; Abruf zulässig, Entschlüsselung mit neuem X25519-Schlüssel abgewiesen. Nach Empfang-Neustart bei 72 h − 1 ms noch vorhanden, bei exakt 72 h per Sweep physisch gelöscht. Node-Clientsimulation mit echter S7-Kryptofunktion; separat als `i2c-szenarien` ausgeführt.
+- `aktiv-seminar.i2c.test.mjs`: injizierte Uhr, signierte HTTP-Pulse alle 60 s
+  über neun Stunden ohne Zwang. Verstummtes `true` und sauberes `false` bleiben
+  bei exakt acht Stunden seit letztem Puls belegt, bei +1 ms folgt nach Neustart
+  verschlüsseltes Abholfach und N7-Leeren. Check-in 23:45 bleibt bis zum nächsten
+  Tag 23:30 erlaubt; am Tagesende greift Zwang trotz aktiver Verbindung.
+  Seminarverzeichnis: Empfangssignatur und Manipulationsabwehr, eigene/Leitungs-
+  Identität, keine wartenden/reservierten Personen, keine Slot-/Geräteschlüssel;
+  ohne Auth, mit falschem Schlüssel, im Check-out und nach Freigabe gesperrt.
+  N11-Adressen sind als additive Felder zulässig; kein Adressvalidierungsnachweis.
 - `abholfach.test.mjs`: Schlüsselbindung, Manipulation und 72-h-Ablauf.
 - `fixtures.test.mjs`: validiert die selbst erzeugten Miniarchive/Auswertung.
 
@@ -61,7 +76,12 @@ im echten DeviceStore, ersetzt aber die produktiven `/v1/belegung`-/
 `/v1/freigabe`-Routen. Auch `clearSlot` ist eine sichere Implementierung nur für
 `mkdtemp`-Ordner, **nicht** `cocopi-slotctl`. Der Archivadapter benutzt die echte
 Sync-Archivfunktion. Epochendateien liegen ebenfalls nur unter `mkdtemp` und
-werden beim Fake-Leeren erhöht. `detectEmpty` aktiviert ausschließlich in N6-
+werden beim Fake-Leeren erhöht. Der Fake bestätigt die geprüfte Leere mit
+`{slot,zustand:"leer",nachweis:"vor_hubstart",epoche}`; jedes anschließende
+Live-`pruefen` bricht als Vertragsverstoß ab. Der Check-in holt stets eine echte
+Server-Nonce per `/v1/empfang/nonce`; kein Client-Nonce-Bypass. OIDC-Zeiten und
+Tokenclaims nutzen dieselbe injizierte Uhr wie der Empfang.
+`detectEmpty` aktiviert ausschließlich in N6-
 Szenarien den Leer-Adapter; bestehende Archivtests bleiben bewusst unverändert.
 Empfang-Retry-Backoff wird aufgezeichnet, aber ohne Wartezeit ausgeführt.
 Der Fake-pi-Prozess ist ein modellfreier RPC-Prozess und

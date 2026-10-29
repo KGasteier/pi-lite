@@ -16,7 +16,7 @@ export async function empfangFixture(t, count = 10, { registerAfter, archiveBefo
   const { Oidc } = await importHub('empfang/oidc.mjs');
   const { verifySigned } = await importHub('empfang/ausweis.mjs');
   const fake = await createFakeOidc(); t.after(() => fake.close());
-  const oidc = new Oidc({ issuer: fake.issuer, clientId: fake.clientId, allowHttp: true });
+  const oidc = new Oidc({ issuer: fake.issuer, clientId: fake.clientId, allowHttp: true, now });
   const slots = {}, events = [], hubFixtures = {}, processes = new Map(), delays = [];
   const epochenDir = path.join(tmp, 'epochen'); fs.mkdirSync(epochenDir);
   let failClear = false, empfang;
@@ -68,29 +68,40 @@ export async function empfangFixture(t, count = 10, { registerAfter, archiveBefo
     sleep: async ms => { delays.push(ms); },
     clearSlot: async (slot, action) => {
       const f = hubFixtures[slot]; events.push(`${action}:${slot}`);
-      if (action === 'leeren') {
-        if (failClear) throw new Error('Absichtlich fehlender Leeren-Nachweis');
-        for (const root of Object.values(f.roots)) {
-          for (const entry of fs.readdirSync(root)) fs.rmSync(path.join(root, entry), { recursive: true, force: true });
-        }
-        const file = path.join(epochenDir, slot + '.epoche');
-        fs.writeFileSync(file, `${Number(fs.readFileSync(file, 'utf8')) + 1}\n`);
-      } else {
-        assert.ok(Object.values(f.roots).every(root => fs.readdirSync(root).length === 0), 'Slot-Fake ist nicht leer');
-        const state = path.join(f.tmp, 'state');
-        for (const entry of fs.readdirSync(state)) fs.rmSync(path.join(state, entry), { recursive: true, force: true });
-        events.push(`leer-bestaetigt:${slot}`);
+      assert.equal(action, 'leeren', 'N7: nach dem Hubstart darf kein Live-pruefen folgen');
+      if (failClear) throw new Error('Absichtlich fehlender Leeren-Nachweis');
+      for (const root of Object.values(f.roots)) {
+        for (const entry of fs.readdirSync(root)) fs.rmSync(path.join(root, entry), { recursive: true, force: true });
       }
+      assert.ok(Object.values(f.roots).every(root => fs.readdirSync(root).length === 0), 'Slot-Fake ist nicht leer');
+      const state = path.join(f.tmp, 'state');
+      for (const entry of fs.readdirSync(state)) fs.rmSync(path.join(state, entry), { recursive: true, force: true });
+      const file = path.join(epochenDir, slot + '.epoche');
+      const epoche = Number(fs.readFileSync(file, 'utf8')) + 1;
+      fs.writeFileSync(file, `${epoche}\n`);
+      const proof = { slot, zustand: 'leer', nachweis: 'vor_hubstart', epoche };
+      events.push(`leer-bestaetigt:${slot}`);
+      return proof;
     } };
   const restart = () => { empfang = createEmpfang(configuration); return empfang; };
   restart();
   let serial = 0;
-  async function checkin({ sub = `person-${++serial}`, leader = false, owner = identity() } = {}) {
-    const nonce = `nonce-test-${crypto.randomUUID()}`;
-    const claims = { sub, nonce, jti: crypto.randomUUID(), groups: [leader ? 'cocopi-seminarleitung' : 'cocopi-teilnehmende'] };
+  async function checkin({ sub = `person-${++serial}`, leader = false, owner = identity(), net_pubkey } = {}) {
+    const nonceRequestedAt = now();
+    const nonceResponse = await request(base, '/v1/empfang/nonce', { body: { geraet_pubkey: owner.pubkey } });
+    assert.equal(nonceResponse.status, 200, 'Check-in braucht eine echte Server-Nonce');
+    const noncePacket = await nonceResponse.json();
+    assert.equal(noncePacket.typ, 'checkin_nonce');
+    assert.equal(noncePacket.protokoll, 1);
+    assert.ok(noncePacket.gueltig_bis >= nonceRequestedAt + 60000 && noncePacket.gueltig_bis <= now() + 60000);
+    const { nonce } = noncePacket;
+    const sec = Math.floor(now() / 1000);
+    const claims = { sub, nonce, iat: sec, exp: sec + 3600, jti: crypto.randomUUID(),
+      groups: [leader ? 'cocopi-seminarleitung' : 'cocopi-teilnehmende'] };
     const response = await request(base, '/v1/empfang/checkin', { body: {
       nachweis: { art: 'oidc', id_token: fake.token(claims), nonce },
       geraet: { pubkey: owner.pubkey, name: 'I2-Testgerät', art: 'desktop' }, archiv_pubkey: owner.archiv_pubkey,
+      ...(net_pubkey === undefined ? {} : { net_pubkey }),
     } });
     const p = await response.json();
     return { response, p, owner, sub };
