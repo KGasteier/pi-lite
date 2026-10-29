@@ -45,7 +45,8 @@ test('Empfang E2E: Check-in → Projekt → Vorschau → Archiv → Check-out �
   assert.equal(f.empfang.pool.status().slots_frei, 1);
   assert.ok(process.exitCode !== null || process.signalCode !== null, 'Fake-pi muss vor Slotfreigabe beendet sein');
   assert.ok(f.events.indexOf('prozess-beendet:account01') < f.events.indexOf('leeren:account01'));
-  assert.deepEqual(f.events.slice(-4), ['freigabe:account01', 'leeren:account01', 'pruefen:account01', 'leer-bestaetigt:account01']);
+  assert.deepEqual(f.events.slice(-3), ['freigabe:account01', 'leeren:account01', 'leer-bestaetigt:account01']);
+  assert.ok(!f.events.includes('pruefen:account01'), 'N7: kein Live-pruefen nach Hubstart');
   for (const root of Object.values(slot.roots)) assert.deepEqual(fs.readdirSync(root), []);
   assert.deepEqual(fs.readdirSync(path.join(slot.tmp, 'state')), []);
   assert.equal((await request(slot.base, '/v1/sync/vorschau', { token })).status, 401, 'Alter Token widerrufen');

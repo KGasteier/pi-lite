@@ -21,7 +21,8 @@ test('N6 HTTP: Abbruch nach Vergabe ohne Upload gibt Platz ohne Archiv an erste 
   const queued = await f.checkin(); assert.equal(queued.response.status, 202); assert.equal(queued.p.platz, 1);
   await packet(await f.signed(person, '/v1/empfang/checkout', { checkin_id: person.p.checkin_id }), 200, 'ausgecheckt');
   assert.ok(!f.events.includes('archiv:account01'));
-  assert.deepEqual(f.events.slice(-4), ['freigabe:account01', 'leeren:account01', 'pruefen:account01', 'leer-bestaetigt:account01']);
+  assert.deepEqual(f.events.slice(-3), ['freigabe:account01', 'leeren:account01', 'leer-bestaetigt:account01']);
+  assert.ok(!f.events.includes('pruefen:account01'), 'N7: kein Live-pruefen nach Hubstart');
   for (const root of Object.values(slot.roots)) assert.deepEqual(fs.readdirSync(root), []);
   assert.equal((await request(slot.base, '/v1/sync/vorschau', { token: oldToken })).status, 401);
   const promoted = await packet(await request(f.base, '/v1/empfang/warten/' + queued.p.warte_id, { method: 'GET' }), 200, 'eingecheckt');
