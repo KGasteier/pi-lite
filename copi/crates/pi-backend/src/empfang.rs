@@ -149,6 +149,9 @@ pub struct VerzeichnisPerson {
     pub anzeige: String,
     pub rolle: String,
     pub net_pubkey: String,
+    /// Direkte Kontaktadressen aus dem signierten Verzeichnis (N11).
+    #[serde(default)]
+    pub adressen: Vec<String>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -400,8 +403,18 @@ impl Empfang {
     /// Alle ≤ 60 s aus dem Worker aufrufen, solange Desktop ODER Handy am Hub
     /// verbunden sind; beim sauberen Trennen false. Keine automatische Wiederholung.
     pub fn aktiv(&self, verbunden: bool) -> Result<(), String> {
+        self.aktiv_mit_adressen(verbunden, &[])
+    }
+    /// Optional direkte P2P-Adressen melden (N11). Eine leere Liste lässt das
+    /// Feld für ältere Empfänge weg. Der Empfang prüft die Adressen und verwirft
+    /// gespeicherte Adressen bei `verbunden: false`.
+    pub fn aktiv_mit_adressen(&self, verbunden: bool, adressen: &[String]) -> Result<(), String> {
         self.require_auth()?;
-        let v = self.request("POST", "aktiv", json!({"verbunden":verbunden}))?;
+        let mut body = json!({"verbunden":verbunden});
+        if !adressen.is_empty() {
+            body["net_adressen"] = json!(adressen);
+        }
+        let v = self.request("POST", "aktiv", body)?;
         if v["typ"] != "aktiv_bestaetigt" {
             return Err("Der Empfang hat die Verbindung nicht bestätigt.".into());
         }
@@ -1023,6 +1036,134 @@ mod tests {
         assert!(client.seminar_verzeichnis().is_err());
         assert!(client.seminar_verzeichnis().is_err());
         server.join().unwrap();
+    }
+    #[test]
+    fn activity_with_addresses_keeps_legacy_body_and_fresh_device_challenges() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let expected_origin = origin.clone();
+        let key = SigningKey::from_bytes(&[15; 32]);
+        let verifying = key.verifying_key();
+        let addresses = vec![
+            "192.0.2.10:7777".to_owned(),
+            "[2001:db8::10]:7778".to_owned(),
+        ];
+        let expected_addresses = addresses.clone();
+        let server = std::thread::spawn(move || {
+            for (i, (connected, with_addresses, response)) in [
+                (true, true, json!({"protokoll":1,"typ":"aktiv_bestaetigt"})),
+                (false, true, json!({"protokoll":1,"typ":"aktiv_bestaetigt"})),
+                (true, false, json!({"protokoll":1,"typ":"aktiv_bestaetigt"})),
+                (false, false, json!({"protokoll":1,"typ":"aktiv_bestaetigt"})),
+                (true, true, json!({"protokoll":1,"typ":"anderer_zustand"})),
+                (true, true, json!({"protokoll":1,"typ":"fehler","code":"adressen_ungueltig","was":"Die Adressen sind ungültig.","tun":"Prüfe die Adressen."})),
+            ].into_iter().enumerate() {
+                for challenge in [true, false] {
+                    let (stream, _) = listener.accept().unwrap();
+                    stream.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+                    let mut r = std::io::BufReader::new(stream);
+                    let req = read_mock_request(&mut r);
+                    let (head, body) = req.split_once("\r\n\r\n").unwrap();
+                    let body: Value = serde_json::from_str(body).unwrap();
+                    let cid = format!("address-cid-{i}");
+                    let packet = if challenge {
+                        assert!(head.starts_with("POST /v1/empfang/challenge "));
+                        assert_eq!(body, json!({"protokoll":1,"checkin_id":"active"}));
+                        json!({"protokoll":1,"typ":"challenge","challenge_id":cid,"nonce":"address-nonce"})
+                    } else {
+                        assert!(head.starts_with("POST /v1/empfang/aktiv "));
+                        let headers: std::collections::HashMap<_, _> = head.lines().skip(1).filter_map(|l| {
+                            l.split_once(':').map(|(k,v)| (k.to_ascii_lowercase(), v.trim().to_owned()))
+                        }).collect();
+                        assert_eq!(headers["x-cocopi-checkin"], "active");
+                        assert_eq!(headers["x-cocopi-challenge"], cid);
+                        let sig: [u8; 64] = B64.decode(&headers["x-cocopi-signatur"]).unwrap().try_into().unwrap();
+                        verifying.verify_strict(format!("cocopi-v1-empfang\n{expected_origin}\nactive\n{cid}\naddress-nonce").as_bytes(), &Signature::from_bytes(&sig)).unwrap();
+                        let mut expected = json!({"protokoll":1,"verbunden":connected});
+                        if with_addresses {
+                            expected["net_adressen"] = json!(expected_addresses);
+                        }
+                        assert_eq!(body, expected);
+                        response.clone()
+                    };
+                    let text = packet.to_string();
+                    let status = if packet["typ"] == "fehler" { 400 } else { 200 };
+                    write!(r.get_mut(), "HTTP/1.1 {status} Mock\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}", text.len()).unwrap();
+                }
+            }
+        });
+        let mut client = Empfang::new(&origin).unwrap();
+        assert!(client.aktiv_mit_adressen(true, &addresses).is_err());
+        client.auth = Some(("active".into(), key));
+        client.aktiv_mit_adressen(true, &addresses).unwrap();
+        client.aktiv_mit_adressen(false, &addresses).unwrap();
+        client.aktiv_mit_adressen(true, &[]).unwrap();
+        client.aktiv(false).unwrap();
+        assert!(
+            client
+                .aktiv_mit_adressen(true, &addresses)
+                .unwrap_err()
+                .contains("nicht bestätigt")
+        );
+        assert!(
+            client
+                .aktiv_mit_adressen(true, &addresses)
+                .unwrap_err()
+                .starts_with("[adressen_ungueltig]")
+        );
+        server.join().unwrap();
+    }
+    #[test]
+    fn signed_directory_addresses_are_optional_and_tamper_protected() {
+        let signer = SigningKey::from_bytes(&[16; 32]);
+        let pin = B64.encode(signer.verifying_key().as_bytes());
+        let sign = |mut packet: Value| {
+            packet["signatur"] = json!(
+                B64.encode(
+                    signer
+                        .sign(canonical_json(&packet).unwrap().as_bytes())
+                        .to_bytes()
+                )
+            );
+            packet
+        };
+        let legacy = json!({"protokoll":1,"verzeichnis":{"ausgestellt":1793232000,"personen":[{"person":"mira","anzeige":"Mira","rolle":"teilnehmende","net_pubkey":"a".repeat(64)}]}});
+        let old = Empfang::pruefen_verzeichnis(&sign(legacy.clone()), &pin).unwrap();
+        assert!(old.personen[0].adressen.is_empty());
+        let addresses = vec![
+            "192.0.2.10:7777".to_owned(),
+            "[2001:db8::10]:7778".to_owned(),
+        ];
+        let mut packet = legacy;
+        packet["verzeichnis"]["personen"][0]["adressen"] = json!(addresses);
+        let signed = sign(packet.clone());
+        let directory = Empfang::pruefen_verzeichnis(&signed, &pin).unwrap();
+        assert_eq!(directory.personen[0].adressen, addresses);
+        for replacement in [json!([]), json!(["192.0.2.99:9999"])] {
+            let mut bad = signed.clone();
+            bad["verzeichnis"]["personen"][0]["adressen"] = replacement;
+            assert!(Empfang::pruefen_verzeichnis(&bad, &pin).is_err());
+        }
+        let mut removed = signed;
+        removed["verzeichnis"]["personen"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("adressen");
+        assert!(Empfang::pruefen_verzeichnis(&removed, &pin).is_err());
+        packet["verzeichnis"]["personen"][0]["adressen"] = json!([]);
+        assert!(
+            Empfang::pruefen_verzeichnis(&sign(packet.clone()), &pin)
+                .unwrap()
+                .personen[0]
+                .adressen
+                .is_empty()
+        );
+        // Auch eine gültige Empfangssignatur macht falsche Feldtypen nicht gültig.
+        for invalid in [Value::Null, json!("192.0.2.10:7777"), json!([1])] {
+            packet["verzeichnis"]["personen"][0]["adressen"] = invalid;
+            assert!(Empfang::pruefen_verzeichnis(&sign(packet.clone()), &pin).is_err());
+        }
     }
     #[test]
     fn client_against_node_empfang_nonce_pin_activity_and_directory() {
