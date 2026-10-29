@@ -71,3 +71,10 @@ Neue feste Entscheidungen (ergänzen E1–E6, ersetzen die personenfeste Slot-Zu
   Geräteausweis** des Peers (Verzeichnis dient nur dem Finden). Abruf beim Check-in und alle 60 s.
 - **N10 Große Zwangsarchive:** bis zum Binärformat (I4) Grenze 384 MiB Klartext für Abholfach; darüber
   `erzwingen_blockiert` mit Backoff 5/15/60 min und Sichtbarkeit für die Seminarleitung, Daten bleiben auf R2 bis manuell.
+
+## Nachtrag I3-O3 (K) — N11 Adressen im Seminarverzeichnis
+- `POST /v1/empfang/aktiv {verbunden, net_adressen?}`: optional ≤ 8 direkte Adressen `"ip:port"` (IPv4/IPv6, keine Hostnamen,
+  keine Loopback-/Link-Local-Adressen außer im Testmodus), Empfang speichert sie je Belegung (überschreibt), verwirft bei
+  `verbunden:false`.
+- `/v1/empfang/seminar` gibt je Person zusätzlich `adressen: [..]` (signiert, Feld kann leer sein). Client: `#[serde(default)]`.
+- Keine öffentliche Discovery, kein Relay. Verbindung nur, wenn `net_pubkey` per TLS-Peer bestätigt (wie bisher).
