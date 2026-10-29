@@ -384,6 +384,115 @@ mod tests {
         server.join().unwrap();
     }
     #[test]
+    fn slow_archive_and_upload_survive_total_budget_but_not_idle() {
+        use std::time::{Duration, Instant};
+        // 60 s stetig im Maßstab 1:100; früheres 45-s-Budget = 450 ms.
+        for upload in [false, true] {
+            for steady in [true, false] {
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let mut hub =
+                    HubV1::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+                hub.token = Some("mock".into());
+                let server = std::thread::spawn(move || {
+                    let (stream, _) = listener.accept().unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(3)))
+                        .unwrap();
+                    let mut r = BufReader::new(stream);
+                    loop {
+                        let mut line = String::new();
+                        assert_ne!(r.read_line(&mut line).unwrap(), 0);
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    if upload {
+                        // Ein Byte je Chunk, komplett framen; kein read==HTTP-Nachricht.
+                        loop {
+                            let mut line = String::new();
+                            if r.read_line(&mut line).unwrap_or(0) == 0 {
+                                return;
+                            }
+                            let n = usize::from_str_radix(line.trim(), 16).unwrap();
+                            let mut bytes = vec![0; n + 2];
+                            if r.read_exact(&mut bytes).is_err() {
+                                return;
+                            }
+                            if n == 0 {
+                                break;
+                            }
+                        }
+                        if !steady {
+                            std::thread::sleep(Duration::from_millis(750));
+                            return;
+                        }
+                        let text = json!({"protokoll":1,"typ":"sync_hoch_ok","bereich":"Projekte","name":"Test"}).to_string();
+                        let _ = write!(
+                            r.get_mut(),
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                            text.len()
+                        );
+                    } else {
+                        let hash = Box::new(TestHash(vec![b'x'; 6])).finish();
+                        let hash: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+                        write!(r.get_mut(), "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nX-Cocopi-Sha256: {hash}\r\nConnection: close\r\n\r\n").unwrap();
+                        if steady {
+                            for _ in 0..6 {
+                                std::thread::sleep(Duration::from_millis(100));
+                                r.get_mut().write_all(b"x").unwrap();
+                                r.get_mut().flush().unwrap();
+                            }
+                        } else {
+                            std::thread::sleep(Duration::from_millis(750));
+                        }
+                    }
+                });
+                struct SlowBody {
+                    left: usize,
+                }
+                impl Read for SlowBody {
+                    fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+                        if self.left == 0 || b.is_empty() {
+                            return Ok(0);
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                        self.left -= 1;
+                        b[0] = b'x';
+                        Ok(1)
+                    }
+                }
+                let mut sync = hub.sync_http(|| Box::new(TestHash(Vec::new())));
+                sync.agent = super::super::idle_transport::agent(Duration::from_millis(450));
+                let started = Instant::now();
+                let result = if upload {
+                    // Ein lokaler Reader kann selbst blockieren; der Read-Leerlauf gilt
+                    // fürs Netz. Idle-Upload daher über stumme Serverantwort testen.
+                    sync.hoch("Projekte", "Test", SlowBody { left: 6 })
+                        .map(|_| ())
+                } else {
+                    let hash = Box::new(TestHash(vec![b'x'; 6])).finish();
+                    let hash: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+                    sync.merken_archiv(&json!({"archiv_id":"slow","sha256":hash,"bytes":6}))
+                        .unwrap();
+                    sync.archiv_holen("slow", Vec::new())
+                };
+                if steady {
+                    assert!(
+                        result.is_ok(),
+                        "upload={upload}, steady={steady}: {result:?}"
+                    );
+                    assert!(started.elapsed() >= Duration::from_millis(600));
+                } else {
+                    assert!(result.is_err());
+                    assert!(
+                        started.elapsed() < Duration::from_millis(if upload { 1300 } else { 700 })
+                    );
+                }
+                server.join().unwrap();
+            }
+        }
+    }
+    #[test]
     fn sync_metadata_and_unauthenticated_calls_fail_before_network() {
         let hub = HubV1::new("http://127.0.0.1:1").unwrap();
         let sync = hub.sync_http(|| Box::new(TestHash(Vec::new())));

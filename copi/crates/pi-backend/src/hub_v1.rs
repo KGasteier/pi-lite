@@ -14,6 +14,7 @@ use std::time::Duration;
 pub mod abholfach;
 #[path = "empfang.rs"]
 pub mod empfang;
+mod idle_transport;
 #[path = "oidc.rs"]
 pub mod oidc;
 #[path = "sync_http.rs"]
@@ -285,20 +286,17 @@ pub struct HubV1 {
     agent: ureq::Agent,
 }
 pub(crate) fn agent(stream: bool) -> ureq::Agent {
-    let b = ureq::Agent::config_builder()
+    if stream {
+        return idle_transport::agent(Duration::from_secs(45));
+    }
+    ureq::Agent::config_builder()
         .max_redirects(0)
         .http_status_as_error(false)
         .proxy(None)
-        .timeout_connect(Some(Duration::from_secs(10)));
-    if stream {
-        b.timeout_recv_body(Some(Duration::from_secs(45)))
-            .build()
-            .into()
-    } else {
-        b.timeout_global(Some(Duration::from_secs(15)))
-            .build()
-            .into()
-    }
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_global(Some(Duration::from_secs(15)))
+        .build()
+        .into()
 }
 impl HubV1 {
     pub fn new(url: &str) -> Result<Self, String> {
@@ -839,11 +837,65 @@ mod tests {
             let a = agent(stream);
             assert!(a.config().proxy().is_none());
             if stream {
-                assert_eq!(
-                    a.config().timeouts().recv_body,
-                    Some(Duration::from_secs(45))
-                );
+                assert_eq!(a.config().timeouts().recv_body, None);
+                assert_eq!(a.config().timeouts().global, None);
+                assert_eq!(a.config().timeouts().send_body, None);
             }
+        }
+    }
+    #[test]
+    fn sse_steady_beyond_old_budget_and_idle_disconnect() {
+        use std::net::TcpListener;
+        // Zeitskalierung: 1 alte Sekunde = 10 ms. 60 s > altes Budget 45 s.
+        for steady in [true, false] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut r = BufReader::new(stream);
+                loop {
+                    let mut line = String::new();
+                    assert_ne!(r.read_line(&mut line).unwrap(), 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                let s = r.get_mut();
+                write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").unwrap();
+                if steady {
+                    for _ in 0..6 {
+                        std::thread::sleep(Duration::from_millis(100));
+                        s.write_all(b": puls\n\n").unwrap();
+                        s.flush().unwrap();
+                    }
+                    s.write_all(b"data: {\"protokoll\":1,\"typ\":\"puls\"}\n\n")
+                        .unwrap();
+                } else {
+                    std::thread::sleep(Duration::from_millis(750));
+                }
+            });
+            let mut hub = HubV1::new(&url).unwrap();
+            hub.token = Some("mock".into());
+            let response = idle_transport::agent(Duration::from_millis(450))
+                .get(format!("{url}/v1/ereignisse"))
+                .call()
+                .unwrap();
+            let mut stream = EventStream {
+                reader: BufReader::new(response.into_body().into_reader()),
+            };
+            let started = std::time::Instant::now();
+            let result = stream.next_event();
+            if steady {
+                assert_eq!(result.unwrap().unwrap().packet["typ"], "puls");
+                assert!(started.elapsed() >= Duration::from_millis(600));
+            } else {
+                assert!(result.is_err());
+                assert!(started.elapsed() < Duration::from_millis(700));
+            }
+            server.join().unwrap();
         }
     }
     #[test]
@@ -1010,6 +1062,31 @@ mod tests {
                 .len(),
             1
         );
+        let sid = session["session_id"].as_str().unwrap();
+        // N1-Review: Mobil darf keinen fremden Anzeigenamen einschleusen.
+        assert!(
+            phone
+                .send_with_sender(sid, "Falsche Zuordnung", "Aylin", "seminarleitung")
+                .unwrap_err()
+                .starts_with("[fremder_slot]")
+        );
+        assert_eq!(
+            client.sessions().unwrap()["sessions"][0]["zustand"],
+            "bereit"
+        );
+        assert_eq!(
+            client
+                .send_with_sender(sid, "Mitsteuern", "Aylin", "seminarleitung")
+                .unwrap()["zustand"],
+            "arbeitet"
+        );
+        client.stop(sid).unwrap();
+        // Ohne von bleibt der ausdrücklich erlaubte Mobil-Prompt nutzbar.
+        assert_eq!(
+            phone.send(sid, "Eigener Handyauftrag").unwrap()["zustand"],
+            "arbeitet"
+        );
+        client.stop(sid).unwrap();
         client
             .revoke(phone_key.geraet_id.as_ref().unwrap())
             .unwrap();
