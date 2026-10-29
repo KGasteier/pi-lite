@@ -25,6 +25,8 @@ def validate(text, slots):
         if not value or any(c.isspace() or c in "\"'\\$`" for c in value):
             raise ValueError('Mehrdeutiger Wert')
         values[key] = value
+    # N7/N9 nutzen vorhandenen Helfer/Schlüssel, N8 den Client und TAGESENDE.
+    # N10 bleibt fest 384 MiB; keine erfundene überschreibbare Servervariable.
     allowed = set(expected) | {'EMPFANG_ORIGIN', 'EMPFANG_OIDC_ISSUER',
                               'EMPFANG_OIDC_CLIENT_ID', 'EMPFANG_TAGESENDE', 'DO_NOT_TRACK'}
     if set(values) - allowed or any(values.get(key) != value for key, value in expected.items()):

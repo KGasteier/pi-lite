@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import stat
 import pwd
+import subprocess
 import sys
 
 
@@ -38,6 +39,15 @@ def validate(data, now):
     return sorted(rows, key=lambda row: row['slot'])
 
 
+def read_receipt(slot):
+    # N7: dieselbe enge Belegprüfung wie beim manuellen Admin-Aufruf;
+    # kein Live-pruefen nach Hubstart und keine Home-/Prozessprüfung.
+    result = subprocess.run(['/usr/local/sbin/cocopi-slotctl', 'pruefen', '--beleg', slot],
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                            timeout=10, check=True,
+                            env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
+    return json.loads(result.stdout.splitlines()[-1])
+
 def main():
     if os.geteuid() != 0:
         return 1
@@ -50,17 +60,17 @@ def main():
             slot, state = row['slot'], row['zustand']
             proof = 'nicht nötig (belegt)' if state == 'belegt' else 'nicht bestätigt'
             if state == 'frei':
-                receipt = read_safe(Path(f'/var/lib/cocopi-slots/{slot}.leer.json'))
+                receipt = read_receipt(slot)
                 if (receipt.get('slot') != slot or receipt.get('zustand') != 'leer'
                         or receipt.get('nachweis') != 'vor_hubstart'
                         or not 0 <= receipt.get('quota_bytes', -1) <= 1048576):
                     raise ValueError('Löschbeleg fehlt')
-                proof = 'leer vor Hubstart; Beleg ' + receipt['zeit']
+                proof = 'leer vor Hubstart; Epoche ' + str(receipt['epoche']) + '; Beleg ' + receipt['zeit']
             if state in ('gesperrt', 'leeren'):
                 issues += 1
             print(f'{slot}: {state}; {proof}')
         return bool(issues)
-    except (OSError, ValueError, KeyError, TypeError, OverflowError):
+    except (OSError, ValueError, KeyError, TypeError, IndexError, OverflowError, subprocess.SubprocessError):
         print('Pool: unbekannt. Aktuelle inhaltsfreie Statusdatei / Löschbelege fehlen oder sind ungültig.', file=sys.stderr)
         return 1
 

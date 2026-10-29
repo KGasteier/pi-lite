@@ -6,7 +6,8 @@ durch die Einrichtung führen und fragt vor jedem sudo nach einem eigenen Ja.
 
 ## Voraussetzungen
 
-- Geprüfte zusammenpassende S3/S7/S4-Commits samt N3-Epochen- und N5-Proxytests;
+- Geprüfte zusammenpassende S3/S7/S4-Commits samt N3-Epochen-, N5-Proxy- und
+  N7–N10-Abnahme (siehe unten);
   D-R1 und Poolabnahme dokumentiert. Ungeprüftes bleibt gesperrt.
 - Gemeinsame Werkzeuge Node, pi, Rust, Python, Git, ffmpeg, C/Make; rootverwalteter
   Hub unter `/opt/cocopi/pi-hub`, Einstieg **`empfang/empfang.mjs`**. Keine
@@ -20,6 +21,8 @@ durch die Einrichtung führen und fragt vor jedem sudo nach einem eigenen Ja.
   `/etc/cocopi/empfang.env` root:root 0600 mit den exakten Beispielnamen.
   `EMPFANG_EPOCHEN_DIR=/var/lib/cocopi/slots`,
   `HUB_EPOCHE_DATEI=/var/lib/cocopi/slots/accountNN.epoche`.
+  N7–N10 brauchen keine neuen Variablen; 384 MiB ist eine feste Vertragsgrenze,
+  keine zusätzliche `EMPFANG_…`-Einstellung.
 - TLS-Proxy separat freigegeben und validiert: Caddy direkt oder Tailscale vor
   lokalem Caddy (8799), niemals direkt auf 8800/Slotports. Kein Funnel.
 
@@ -52,6 +55,26 @@ N5 verlangt 403 für Belegung, Freigabe und `sync/dienst/*`, direkt und mit alle
 zehn Slotpräfixen. Positiver Check-in, Sync/Archiv-Rückgabe, Leeren und Replay mit
 alter Epoche sind separat mit synthetischen Daten nachzuweisen. Zwei Plätze sind
 keine Zehnerpoolabnahme; die Poolanzeige kann deshalb bewusst noch Exit 1 melden.
+
+**O2-Abnahmekriterium K1:** Vollständiger Check-out gibt den Platz mit dem
+**echten `cocopi-slotctl --fake /temp-fixture`** wieder frei, nicht nur mit einem
+Mock von `clearSlot`. Empfang prüft Exit 0 und die letzte `leeren`-JSON-Zeile:
+passender Slot, neue Epoche, `zustand:"leer"`, `nachweis:"vor_hubstart"`.
+Danach kein Live-`pruefen`. S4-Regression prüft Helfer/Beleg; den vollständigen
+Empfangstest muss S7/K separat belegen. Für die Administration gibt es
+`cocopi-slotctl pruefen --beleg account01`: liest nur Beleg + aktuelle Epoche,
+keine Prozesse oder Home-Inhalte. Die Poolübersicht nutzt genau diesen Weg.
+
+Zusätzlich mit Mocks abnehmen:
+- **N8:** Verbundener Desktop **oder** Mobilclient meldet alle ≤60 s Aktivität;
+  kein Zwangs-Check-out nach 8 h trotz Verbindung. Ohne Verbindung >8 h oder
+  beim nächsten Tagesende ≥ Check-in greift die Regel (23:30 als Standard).
+- **N9:** Seminarverzeichnis nur für eingecheckte, signierende Geräte, Signatur
+  geprüft; Peerrollen weiterhin nur aus dem Geräteausweis.
+- **N10:** Zwangsarchiv bis 384 MiB Klartext; darüber `erzwingen_blockiert`,
+  Wiederholabstand 5/15/60 min und sichtbarer Hinweis für die Seminarleitung.
+  Daten bleiben auf R2 bis zur manuellen Klärung, kein Leeren/keine Freigabe.
+
 Bei „nicht geprüft“, fehlender Epoche, gesperrtem Platz oder Fehler **stoppen**.
 Keine Zähler zurücksetzen, keine Flags als Ersatz für Nachweise setzen, nichts
 ungefragt löschen oder neu starten. Grenzen und nächste Schritte dokumentieren.

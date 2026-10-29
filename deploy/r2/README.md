@@ -1,4 +1,4 @@
-# R2 · flüchtiger cocopi-Pool (I2b)
+# R2 · flüchtiger cocopi-Pool (I3-O2)
 
 Kurzer Einstieg: [`SCHNELLSTART.md`](SCHNELLSTART.md) (Voraussetzungen, sechs
 Befehle, Prüfung); begleiteter Weg: [`EINRICHTEN-MIT-PI.md`](EINRICHTEN-MIT-PI.md).
@@ -74,11 +74,14 @@ cocopi-slotctl leeren account01                 # nur Plan, keine Änderung
 cocopi-slotctl --ausfuehren leeren account01    # tatsächlich löschen
 cocopi-slotctl status [account01]               # aktueller, lesender Zustand
 cocopi-slotctl pruefen account01                # Live-Prüfung, ohne Schreiben
+cocopi-slotctl pruefen --beleg account01        # N7: Beleg lesen, keine Live-Prüfung
 cocopi-slotctl --ausfuehren pruefen account01   # Prüfung + Erstbeleg vor Hubstart
 ```
 
-Nur Root; Tests ausschließlich unprivilegiert mit temporärem `COCOPI_ROOT`.
-Unter sudo wird `COCOPI_ROOT` abgewiesen. Keine freien Pfade/UIDs, Regex exakt
+Nur Root; Tests ausschließlich unprivilegiert mit temporärem `COCOPI_ROOT`
+oder gleichwertig `--fake /absoluter/temp-root` (vorbereitete Fixture, keine
+Systembefehle). Als Root wird jeder Fake-Root abgewiesen; sudoers erlaubt kein
+`--fake`. Keine freien Pfade/UIDs, Regex exakt
 `^account(0[1-9]|10)$`, keine Shell. Verwaltungsverzeichnisse rootverwaltet;
 Wurzeln/Eltern keine Links, innere Links werden nur selbst entfernt. Keine
 Mounts im Löschbaum, auch keine gleich-Dateisystem-Bindmounts. Serielle Sperre.
@@ -96,8 +99,17 @@ JSON-Erfolg: `slot`, `epoche`, `zustand:"leer"`, `nachweis:"vor_hubstart"`, `zei
 `/var/lib/cocopi-slots/accountNN.leer.json` root:root 0600, nur Zeit/Zähler,
 keine Personen oder Dateinamen. `pruefen --ausfuehren` schreibt beim ersten
 Start denselben Beleg, löscht aber nichts. Nach Hubstart gilt der Livebaum
-wegen neuer Hubdateien/Prozesse nicht mehr als leer. Empfang muss den
-**vorherigen** erfolgreichen Nachweis benutzen, niemals einen Fehler wegfiltern.
+wegen neuer Hubdateien/Prozesse nicht mehr als leer. **N7:** Empfang wertet Exit 0
+und das JSON der **letzten stdout-Zeile** von `leeren` aus, prüft Slot, neue Epoche,
+`zustand:"leer"` und `nachweis:"vor_hubstart"`. Danach **kein** `pruefen`-Aufruf.
+Bei Fehlern erscheint kein Erfolgs-JSON; Fehler niemals wegfiltern.
+
+Für die Administration liest `pruefen --beleg accountNN` nur die gespeicherte
+Datei und die aktuelle Epoche: root:root 0600, regulär, keine Links/Hardlinks,
+passender Slot/aktuelle Epoche, vollständige Zähler und gültige Zeit. Keine
+Prozess-, Home- oder Live-Quotenprüfung, kein Schreiben. Der Beleg ist historisch,
+kein Nachweis des heutigen Livebaums und kein Beleg für aktuelle Poolfreiheit;
+`pool-read.py` kombiniert ihn deshalb mit der aktuellen inhaltsfreien Poolprojektion.
 
 ### N3 · Epochen sperren alte Belegungen
 
@@ -163,10 +175,33 @@ Vorlagen in dieser Runde nur statisch geprüft, Caddy-Syntax/Proxybetrieb damit
 **nicht validiert**. Python-Fixtures sind kein Ersatz. Erst echte HTTPS-403 plus positive
 Empfang-/Slot-/SSE-Abnahme nach Netzfreigabe erlauben Pilotbetrieb.
 
+## N8–N10 · Abnahme des Empfangsbetriebs
+
+- **N8 Aktiv-Signal:** Desktop oder Mobilverbindung zum Hub sendet alle ≤60 s
+  `aktiv{verbunden:true}`, beim sauberen Trennen `false`. Zwangs-Check-out nur
+  bei `!verbunden && now-zuletzt > 8 h` oder am nächsten Tagesende ≥ Check-in
+  (standardmäßig 23:30). Dienststart in der Adminanzeige ist kein Aktiv-Signal.
+- **N9 Seminarverzeichnis:** `GET /v1/empfang/seminar` nur geräte-signiert und
+  eingecheckt; Empfang signiert das Verzeichnis. Es dient dem Finden von Peers;
+  deren Rolle kommt weiterhin ausschließlich aus dem geprüften Geräteausweis.
+  Kein neuer Proxy-Pfad: vorhandenes `/v1/empfang/*` reicht.
+- **N10 Große Zwangsarchive:** Bis I4 höchstens **384 MiB Klartext**
+  (402653184 Bytes) fürs verschlüsselte Abholfach. Darüber `erzwingen_blockiert`,
+  Backoff 5/15/60 min und sichtbarer Status für die Seminarleitung. Nicht leeren
+  oder freigeben; Daten bleiben auf R2 bis zur manuellen Klärung. Dies ist kein
+  erfolgreicher Check-out und nicht die 2-GiB-Sync-Grenze.
+
+`empfang.env.example` und `empfang-env-check.py` benötigen dafür **keine neuen
+Variablen**: N7 nutzt `EMPFANG_SLOTCTL`/`EMPFANG_EPOCHEN_DIR`, N8 das bestehende
+`EMPFANG_TAGESENDE` und den Client, N9 den vorhandenen Schlüssel, N10 feste
+Vertragswerte. Keine erfundene Grenzvariable eintragen. Diese Texte sind keine
+Implementierungsbestätigung; K muss die passenden S2/S3/S5/S7/S8-Stände abnehmen.
+
 ## Admin-Abnahme und offene Integration
 
 `admin-check.sh --ausfuehren --slots account01,account02 --proxy-url https://NAME`
 liest nur Konto/UID, Systemdienst/PID, lokale Listener, Epoche, Quote und Poolprojektion;
+für freie Plätze liest `pool-read.py` den N7-Beleg über `pruefen --beleg`, nie live;
 ruft `POST /v1/empfang/hallo` inhaltsfrei auf und testet absichtlich ungültige
 POSTs gegen externe Sperrpfade. Kein Modell, keine Namen/Sessiondateien/Token.
 Kein URL-Credential, Pfad oder Query im Parameter erlaubt, TLS niemals abschalten.
@@ -174,10 +209,13 @@ Ein aktiver Dienst zeigt keine Anwesenheit; „Dienststart“ ist nicht letzte A
 
 **Derzeit noch Integrationsblocker (an S7/K gemeldet):**
 
-1. S7 muss `leeren`-JSON (Exit 0 und Beleg) prüfen und darf nach Hubstart kein
-   zweites `pruefen` verlangen. Rootzugriff über `slotctl-empfang`/enge sudoers,
-   nicht direkt vom Systemkonto auf Roothelfer. Vorläufig verweigert Live-Prüfen
-   nach Start korrekt; keine Freigabe.
+1. **K1/O2-Abnahmekriterium:** Ein vollständiger Check-out gibt den Platz mit dem
+   **echten `cocopi-slotctl --fake`** im Tempverzeichnis wieder frei (nicht nur ein
+   gefaktes `clearSlot`). Empfang liest ausschließlich das letzte `leeren`-JSON,
+   kein anschließendes `pruefen`; falscher Slot/alte Epoche/fehlender Nachweis oder
+   Exit != 0 verhindern Freigabe. S4-Helfertests sind grün, der Empfangs-
+   Integrationstest ist von S7/K zusätzlich nachzuweisen. Rootzugriff bleibt über
+   `slotctl-empfang`/enge sudoers, nicht direkt vom Systemkonto auf Roothelfer.
 2. Aktuelle inhaltsfreie Projektion `/var/lib/cocopi-empfang/pool-status.json`:
    `{protokoll:1,zeit:<ISO8601 UTC>,slots:[{slot:"account01",zustand:"frei"},…]}`,
    genau zehn Einträge, Zustände `frei|belegt|leeren|gesperrt`, Alter ≤120 s,
@@ -198,8 +236,11 @@ unwirksam wäre; dies verlangt besonders sorgfältiges Review des Empfangscodes.
 
 ## Nachweise lokal
 
-`python3 deploy/r2/test_scripts.py`: 50 grün in I2b (inkl. atomarer Epochenwechsel,
-fehlender/unsicherer Zähler, Fehler ohne Rollback und statischer N5-Matrix).
+`python3 deploy/r2/test_scripts.py`: 55 grün in I3-O2 (inkl. N7 letzte JSON-Zeile,
+Beleglesen trotz simulierter Hubaktivität ohne Liveaufrufe, fehlender/alter/unsicherer
+Beleg, Adminaufruf über Belegleser und abgewiesener erfundener N10-Variable).
+I2b: 50 Tests (atomarer Epochenwechsel,
+fehlender/unsicherer Zähler, Fehler ohne Rollback und statische N5-Matrix).
 Vorheriger I2-Nachweis: 42 Tests. Nur Tempverzeichnisse, keine System-/Netzänderungen.
 Bash-Syntax, Dry-Run-
 Mutationssentinel, Argumente, Quoten/Slices/Listenerfixtures, Poolstatus/Proxy-
