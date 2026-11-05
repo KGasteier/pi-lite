@@ -29,6 +29,7 @@ pub struct OutlineState {
     pub cursor: Option<RowKey>,
     pub scroll: bool,
     pub drag: Option<Drag>,
+    pub view: bool,
     last_check: Option<Instant>,
     mtime: Option<SystemTime>,
 }
@@ -149,8 +150,12 @@ impl App {
             return;
         }
         self.outline.mtime = so::mtime();
-        match so::read() {
-            Ok(o) => self.outline.o = o,
+        let inventory: Vec<_> = self.outline_sessions().into_iter().map(|s| Ref::Session{key:s.key()}).chain(self.outline_md().into_iter().map(|e|Ref::Md{path:e.path})).collect();
+        match so::prepare(&inventory) {
+            Ok(o) => {
+                self.outline.o = o;
+                if let Ok(b)=crate::shared_bookmarks::read() { self.store.accept_shared(&b); }
+            },
             Err(e) => self.toast(e, ToastKind::Error),
         }
     }
@@ -164,9 +169,7 @@ impl App {
             return;
         }
         self.outline.last_check = Some(Instant::now());
-        if so::mtime() != self.outline.mtime {
-            self.outline_load();
-        }
+        self.outline_load();
     }
 
     /// Operation anwenden und speichern; der Cursor folgt dem betroffenen Eintrag.
@@ -181,11 +184,14 @@ impl App {
             return;
         }
         let res = if self.demo {
-            let r = self.outline.o.apply(op);
+            let mut b=self.store.shared_value();
+            let r = so::apply_colored_model(&mut self.outline.o, &mut b, op);
+            self.store.apply_shared(&b);
             Ok(r.1)
         } else {
-            match so::apply(self.outline.o.rev, op) {
+            match so::apply_colored(self.outline.o.rev, op) {
                 Ok((o, at)) => {
+                    if let Ok(b)=crate::shared_bookmarks::read() { self.store.accept_shared(&b); }
                     self.outline.o = o;
                     self.outline.mtime = so::mtime();
                     Ok(at)
@@ -208,6 +214,59 @@ impl App {
         }
     }
 
+    fn outline_new_color(&mut self) {
+        self.ask(DialogKind::Input,"Neue Farboberkategorie","Name der neuen Bookmark-Farbe",vec![],"",|a,r| {
+            if let Some(name)=r.and_then(|v|v["value"].as_str().map(str::to_owned)).filter(|s|!s.trim().is_empty()) {
+                a.ask(DialogKind::Input,"Farbe wählen","Hex-Farbe, z. B. #74b9ff",vec![],"#74b9ff",move |a,r| {
+                    if let Some(hex)=r.and_then(|v|v["value"].as_str().map(str::to_owned)) {
+                        if !crate::shared_bookmarks::valid_hex(&hex) || a.store.palette_len()>=255 { a.toast("Gültige Farbe als #RRGGBB eingeben (max. 255 Farben).",ToastKind::Error); return; }
+                        let i=a.store.palette_len() as u8;
+                        a.store.extra_colors.push(hex);
+                        a.store.set_category_name(i,&name);
+                        a.save_store(); a.outline_load();
+                    }
+                });
+            }
+        });
+    }
+
+    fn outline_row_color(&self,row:&Row)->egui::Color32 {
+        let r=match &row.key { RowKey::Tree(r)|RowKey::Loose(r)=>r, _=>return DIM };
+        if let Some(c)=so::color_root(r) { return c.map(|i|self.store.palette_color(i)).unwrap_or(DIM); }
+        if let Some(k)=so::ref_key(r) {
+            if self.store.is_bookmark(k) { return self.store.palette_color(self.store.bookmark_color(k)); }
+        }
+        if let Some(i)=row.item {
+            if let Some(c)=(0..=i).rev().find_map(|j|so::color_root(&self.outline.o.items[j].r)) { return c.map(|i|self.store.palette_color(i)).unwrap_or(DIM); }
+        }
+        DIM
+    }
+
+    /// View verwendet die unveränderten, vollständigen Karten samt Vorschau und Aktionen.
+    fn outline_view_row(&mut self,ui:&mut Ui,row:&Row,selected:bool)->Response {
+        match &row.key {
+            RowKey::Tree(Ref::Session{key})|RowKey::Loose(Ref::Session{key}) => {
+                if let Some(s)=self.outline_sessions().into_iter().find(|s| &s.key()==key) {
+                    let active=self.session_shown(&s);
+                    if row.has_children {
+                        if ui.small_button(if row.collapsed { "▸ Teilbaum" } else { "▾ Teilbaum" }).clicked() {
+                            if let Some(i)=row.item { self.outline_op(Op::Toggle{i}); }
+                        }
+                    }
+                    return self.session_card(ui,&s,active,selected);
+                }
+            }
+            RowKey::Tree(Ref::Md{path})|RowKey::Loose(Ref::Md{path}) => {
+                if let Some(e)=self.outline_md().into_iter().find(|e|&e.path==path) {
+                    let c=self.outline_row_color(row);
+                    return self.inventory_card(ui,&e,selected,c);
+                }
+            }
+            _=>{}
+        }
+        self.outline_row(ui,row,selected)
+    }
+
     fn outline_new_category(&mut self, after: Option<usize>, child: bool) {
         let title = if child { "Neue Unterkategorie" } else { "Neue Kategorie" };
         let rev = self.outline.o.rev;
@@ -222,6 +281,14 @@ impl App {
         match (&row.key, row.item) {
             (RowKey::Tree(Ref::Cat { name, .. }), Some(i)) => {
                 let name = name.clone();
+                if so::color_root(&self.outline.o.items[i].r).is_some() {
+                    if let Some(Some(c))=so::color_root(&self.outline.o.items[i].r) {
+                        self.ask(DialogKind::Input,"Farbkategorie benennen","",vec![],&name,move |a,r| {
+                            if let Some(n)=r.and_then(|v|v["value"].as_str().map(str::to_owned)) { a.store.set_category_name(c,&n); a.save_store(); a.outline_load(); }
+                        });
+                    }
+                    return;
+                }
                 let rev = self.outline.o.rev;
                 self.ask(DialogKind::Input, "Kategorie umbenennen", "", vec![], &name, move |a, r| {
                     if let Some(n) = r.and_then(|r| r["value"].as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()) {
@@ -240,6 +307,7 @@ impl App {
 
     fn outline_remove(&mut self, row: &Row) {
         let Some(i) = row.item else { return };
+        if so::color_root(&self.outline.o.items[i].r).is_some() { return; }
         if matches!(row.key, RowKey::Tree(Ref::Cat { .. })) {
             let rev = self.outline.o.rev;
             let msg = if row.count > 0 { format!("„{}“\n\nDie {} Einträge darin rücken eine Ebene auf; nichts wird gelöscht.", row.label, row.count) } else { format!("„{}“", row.label) };
@@ -301,6 +369,7 @@ impl App {
         // Umschalt+Tab zuerst prüfen (wie AUGMOST).
         let shift_tab = take(ctx, |kk, m| kk == Key::Tab && m.shift && !m.alt && !m.command);
         let tab = !shift_tab && plain(ctx, Key::Tab);
+        if self.outline.view && (tab || shift_tab || ctx.input(|i| i.modifiers.alt && (i.key_pressed(Key::ArrowUp)||i.key_pressed(Key::ArrowDown)))) { return true; }
         if shift_tab || tab {
             // egui hat Tab bereits als Fokuswechsel vorgemerkt – zurücknehmen.
             ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
@@ -371,10 +440,11 @@ impl App {
     pub(crate) fn outline_sidebar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.set_height(28.0);
-            if btn(ui, "+ Kategorie", 12.0, vec2(9.0, 3.0), vec2(0.0, 28.0), false, true).on_hover_text("Neue Kategorie nach dem markierten Eintrag (N; Umschalt+N: Unterkategorie)").clicked() {
-                let after = self.outline.cursor.as_ref().and_then(|c| match c { RowKey::Tree(r) => self.outline.o.find(r), _ => None });
-                self.outline_new_category(after, false);
+            if btn(ui, "+ Farbe", 12.0, vec2(5.0, 3.0), vec2(0.0, 28.0), false, true).clicked() {
+                self.outline_new_color();
             }
+            ui.selectable_value(&mut self.outline.view, false, "Edit");
+            ui.selectable_value(&mut self.outline.view, true, "View");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                 icons::info(ui.painter(), r, DIM);
@@ -412,7 +482,7 @@ impl App {
                     ui.painter().hline(r.x_range(), r.top(), Stroke::new(1.0, alpha(BORDER, 0.7)));
                     ui.add_space(5.0);
                 }
-                let resp = self.outline_row(ui, row, cursor.as_ref() == Some(&row.key));
+                let resp = if self.outline.view { self.outline_view_row(ui, row, cursor.as_ref() == Some(&row.key)) } else { self.outline_row(ui, row, cursor.as_ref() == Some(&row.key)) };
                 if row.item.is_some() {
                     geo.push((resp.rect, ri));
                 }
@@ -424,7 +494,7 @@ impl App {
                 tree_bottom = Some(ui.cursor().top());
             }
         });
-        self.outline_drag(ui, &rows, &geo, tree_bottom.unwrap_or(sep.top()), sep.left());
+        if !self.outline.view { self.outline_drag(ui, &rows, &geo, tree_bottom.unwrap_or(sep.top()), sep.left()); }
     }
 
     fn outline_row(&mut self, ui: &mut Ui, row: &Row, selected: bool) -> Response {
@@ -434,10 +504,10 @@ impl App {
             RowKey::Tree(Ref::Cat { id, .. }) => format!("cat:{id}"),
             k => format!("{k:?}"),
         }));
-        let draggable = !matches!(row.key, RowKey::Group(_));
+        let draggable = !self.outline.view && !matches!(row.key, RowKey::Group(_)) && !matches!(&row.key,RowKey::Tree(r) if so::color_root(r).is_some());
         let resp = ui.interact(rect, id, if draggable { Sense::click_and_drag() } else { Sense::click() });
         let dragging_me = self.outline.drag.as_ref().is_some_and(|d| d.src == row.key);
-        let tone = if row.remote { REMOTE } else { CAT };
+        let tone = self.outline_row_color(row);
         let p = ui.painter();
         if selected || resp.hovered() || dragging_me {
             let t = if selected { 0.24 } else { 0.13 };
@@ -446,10 +516,14 @@ impl App {
         if selected {
             p.rect_stroke(rect, 5, Stroke::new(1.0, mix(tone, 0.6, PANEL)), StrokeKind::Inside);
         }
-        let x0 = rect.left() + 3.0 + row.level as f32 * INDENT;
+        let x0 = rect.left() + 3.0 + row.level as f32 * if self.outline.view { 3.0 } else { INDENT };
         let sym = Rect::from_center_size(pos2(x0 + SYM / 2.0, rect.center().y), vec2(SYM, SYM));
         let is_cat = matches!(row.key, RowKey::Tree(Ref::Cat { .. }) | RowKey::Group(_));
-        let sym_col = if row.missing { alpha(DIM, 0.6) } else if is_cat { if selected { FG } else { DIM } } else { mix(tone, 0.85, FG) };
+        if matches!(&row.key,RowKey::Tree(r) if so::color_root(r).is_some()) {
+            p.rect_filled(rect, 3, mix(tone,0.18,PANEL));
+            p.rect_filled(Rect::from_min_size(rect.min,vec2(3.0,rect.height())),1,tone);
+        }
+        let sym_col = if row.missing { alpha(DIM, 0.6) } else if is_cat { tone } else { tone };
         if row.has_children {
             icons::disclosure(p, sym, sym_col, !row.collapsed);
         } else if is_cat {
@@ -491,7 +565,7 @@ impl App {
             self.outline.cursor = Some(row.key.clone());
         } else if resp.clicked() {
             self.outline.cursor = Some(row.key.clone());
-            if on_sym || matches!(row.key, RowKey::Group(_)) || (is_cat && row.has_children && resp.double_clicked()) {
+            if on_sym || matches!(row.key, RowKey::Group(_)) || (is_cat && row.has_children) {
                 if row.has_children || matches!(row.key, RowKey::Group(_)) {
                     self.outline_open(row);
                 }
@@ -515,6 +589,18 @@ impl App {
             let mut act: Option<Box<dyn FnOnce(&mut App)>> = None;
             match (&row2.key, row2.item) {
                 (RowKey::Tree(r), Some(i)) => {
+                    if so::color_root(r).is_some() {
+                        if ui.button("Neue Unterkategorie").clicked() { act=Some(Box::new(move |a|a.outline_new_category(Some(i),true))); }
+                        if ui.button("Farbkategorie benennen …").clicked() { let rr=row2.clone(); act=Some(Box::new(move |a|a.outline_rename(&rr))); }
+                        if let Some(f)=act { f(self); ui.close(); }
+                        return;
+                    }
+                    let cats:Vec<_>=self.outline.o.items.iter().enumerate().filter_map(|(j,it)|if let Ref::Cat{name,..}=&it.r {Some((j,name.clone()))}else{None}).collect();
+                    ui.menu_button("In Kategorie",|ui| {
+                        for (cat,name) in cats {
+                            if ui.button(name).clicked() { let r=r.clone(); act=Some(Box::new(move |a|a.outline_op(Op::IntoCat{r,cat}))); }
+                        }
+                    });
                     if !matches!(r, Ref::Cat { .. }) && ui.button("Öffnen").clicked() {
                         let rr = row2.clone();
                         act = Some(Box::new(move |a| a.outline_open(&rr)));

@@ -1117,6 +1117,19 @@ fn outline_keys_indent_collapse_and_move() {
     assert!(a.dialogs.is_empty(), "Gliederungstasten öffnen keine Dialoge");
 }
 
+    #[test]
+    fn outline_color_view_renders_full_cards() {
+        let mut a=outline_demo();
+        let mut b=a.store.shared_value();
+        crate::shared_outline::set_marker(&mut b,"/demo/sessions/a.jsonl",Some(2));
+        a.store.apply_shared(&b);
+        let refs:Vec<_>=a.outline_sessions().iter().map(|s|crate::shared_outline::Ref::Session{key:s.key()}).collect();
+        crate::shared_outline::reconcile(&mut a.outline.o,&b,&refs);
+        a.outline.view=true;
+        outline_frame(&mut a,vec![]);
+        assert_eq!(a.outline_rows().iter().filter(|r|r.level==0).count(),13);
+    }
+
 #[test]
 fn outline_tab_adopts_loose_session_and_n_opens_dialog() {
     use crate::outline_ui::RowKey;
@@ -1128,7 +1141,7 @@ fn outline_tab_adopts_loose_session_and_n_opens_dialog() {
     outline_frame(&mut a, vec![key(Key::Tab, Modifiers::NONE)]);
     assert_eq!(a.outline.o.items.len(), n + 1);
     assert!(matches!(&a.outline.o.items[n].r, Ref::Session { key } if key == "/demo/sessions/4.jsonl"));
-    assert_eq!(a.outline.o.items[n].level, 0);
+    assert_eq!(a.outline.o.items[n].level, 1);
     // Neue Kategorie per N öffnet den Eingabedialog (Demo: nichts auf Platte).
     outline_frame(&mut a, vec![key(Key::N, Modifiers::NONE)]);
     assert!(a.dialogs.iter().any(|d| d.title == "Neue Kategorie"));

@@ -27,20 +27,23 @@ const BOOKMARK_PALETTE_COLORS = Object.freeze([
 
 // Normalisiert einen (ggf. aus localStorage stammenden, potenziell ungültigen) Farbindex
 // auf einen gültigen Palette-Index: alles außer einer ganzen Zahl 0..9 fällt auf 0 zurück.
+let EXTRA_BOOKMARK_COLORS = [];
+const paletteColors = () => BOOKMARK_PALETTE_COLORS.concat(EXTRA_BOOKMARK_COLORS);
 function normalizeBookmarkColor(index) {
-  return Number.isInteger(index) && index >= 0 && index < BOOKMARK_PALETTE_COLORS.length ? index : 0;
+  return Number.isInteger(index) && index >= 0 && index < paletteColors().length ? index : 0;
 }
 
 function bookmarkColorHex(index) {
-  return BOOKMARK_PALETTE_COLORS[normalizeBookmarkColor(index)].hex;
+  return paletteColors()[normalizeBookmarkColor(index)].hex;
 }
 
 function bookmarkColorName(index) {
-  return BOOKMARK_PALETTE_COLORS[normalizeBookmarkColor(index)].name;
+  return paletteColors()[normalizeBookmarkColor(index)].name;
 }
 
 const BookmarkPalette = Object.freeze({
-  COLORS: BOOKMARK_PALETTE_COLORS,
+  get COLORS() { return paletteColors(); },
+  setExtra(colors) { EXTRA_BOOKMARK_COLORS = (colors || []).filter(h => /^#[0-9a-f]{6}$/i.test(h)).slice(0,245).map((hex,i)=>({hex,name:`Farbe ${11+i}`})); },
   normalize: normalizeBookmarkColor,
   hex: bookmarkColorHex,
   name: bookmarkColorName,

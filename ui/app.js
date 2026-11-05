@@ -672,7 +672,11 @@ function renderSessions() {
     const e = document.createElement("div"); e.className = "sessempty";
     e.textContent = "Keine Bookmarks. Lesezeichen-Knopf oben zeigt wieder alle Sessions."; box.appendChild(e);
   }
-  for (const s of sessionBookmarks.sort(filtered)) {
+  for (const s of sessionBookmarks.sort(filtered)) box.appendChild(createSessionCard(s));
+  markActive();
+  window.piLiteSessionsChanged?.();
+}
+function createSessionCard(s) {
     const d = document.createElement("div");
     const key = RemoteSessions.sessionKey(s), remote = isRemote(s);
     d.className = remote ? "sess remote" : "sess"; d.dataset.path = s.path; d.dataset.key = key;
@@ -695,6 +699,8 @@ function renderSessions() {
     bookmark.className = "bookmark";
     const marked = sessionBookmarks.has(key);
     bookmark.style.color = marked ? BookmarkPalette.hex(sessionBookmarks.colorOf(key)) : "";
+    if (marked) d.style.borderLeft = `3px solid ${BookmarkPalette.hex(sessionBookmarks.colorOf(key))}`;
+    d.classList.toggle('active',sessActive(s));
     if (marked) {
       const colorButton = mk("", "Bookmark-Farbe · zehn Standardfarben", () => openBookmarkColorPicker(s, colorButton));
       colorButton.setAttribute("aria-label", "Bookmark-Farbe wählen");
@@ -714,10 +720,7 @@ function renderSessions() {
     d.oncontextmenu = (e) => { e.preventDefault(); sessMenu(s, e.clientX, e.clientY, d); };
     d.onkeydown = (e) => sessKey(e, s, d);
     if (!remote) bindPreview(d, { path: s.path, name: s.name || s.title || "Session" });
-    box.appendChild(d);
-  }
-  markActive();
-  window.piLiteSessionsChanged?.();
+    return d;
 }
 // ---------- Kontextmenü & Tastatur der Sessionliste ----------
 let ctxFrom = null;
@@ -1121,6 +1124,28 @@ async function changeSideView() {
 // Gliederung (ui/outline.js): Sessions lokal + remote und alle md-Dateien des Inventars.
 const outlineView = Outline.createView($("outline"), {
   invoke, ask, toast,
+  sessionCard: s => createSessionCard(s),
+  renameColor: async c => {
+    const n=await ask({method:'input',title:'Farbkategorie benennen',prefill:categoryNames.nameOf(c)});
+    if(n?.value?.trim()) { categoryNames.rename(c,n.value); await bookmarkSync.refresh(); }
+  },
+  colorOf: r => r.t === 'cat' && r.id.startsWith('bookmark-color:') ? (r.id.endsWith(':none') ? null : Number(r.id.split(':')[1])) : (sessionBookmarks.has(r.key || r.path) ? sessionBookmarks.colorOf(r.key || r.path) : null),
+  newColor: async () => {
+    const n=await ask({method:'input',title:'Neue Farboberkategorie',message:'Name der neuen Bookmark-Farbe'});
+    if(!n?.value?.trim()) return;
+    const h=await ask({method:'input',title:'Farbe wählen',message:'Hex-Farbe, z. B. #74b9ff',prefill:'#74b9ff'});
+    if(!/^#[0-9a-f]{6}$/i.test(h?.value||'')) { if(h) toast('Gültige Farbe als #RRGGBB eingeben.','error'); return; }
+    try {
+      const base=await invoke('shared_bookmarks_read'), local=JSON.parse(JSON.stringify(base));
+      const i=10+(local.extra_colors||[]).length;
+      if(i>=255) throw Error('Maximal 255 Farben');
+      local.extra_colors=[...(local.extra_colors||[]),h.value];
+      while(local.category_names.length<=i) local.category_names.push('');
+      local.category_names[i]=n.value.trim();
+      await invoke('shared_bookmarks_update',{base,local}); await bookmarkSync.refresh(); await outlineView.refresh();
+    } catch(e) { toast(String(e),'error'); }
+  },
+  bookmarksChanged: async () => { await bookmarkSync.refresh(); renderSessions(); },
   openSession: s => openSession(s),
   openMd: e => openConfig(e),
   renameSession: s => renameSession(s),

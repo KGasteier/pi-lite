@@ -71,18 +71,22 @@
   /// Ansicht in `box`. `env`: {invoke, ask, toast, openSession(s), openMd(entry), previewMd(row, entry)}.
   function createView(box, env) {
     let outline = { version: 1, rev: 0, items: [], open_unsorted: [] }, list = [], cursor = null, sessions = [], md = [], drag = null;
+    let view = false;
+    const inventory = () => sessions.map(s=>({t:'session',key:s.key || (s.backend?`remote:${s.backend}:${s.path}`:s.path)})).concat(md.map(e=>({t:'md',path:e.path})));
+    const read = () => env.invoke('outline_read',{inventory:inventory()});
     async function load() {
-      try { outline = await env.invoke("outline_read"); } catch (e) { env.toast(String(e), "error"); }
+      try { outline = await read(); } catch (e) { env.toast(String(e), "error"); }
       render();
     }
     async function op(o, rev = outline.rev) {
       try {
         const r = await env.invoke("outline_apply", { rev, op: o });
         outline = r.outline;
+        await env.bookmarksChanged?.();
         if (r.at != null && outline.items[r.at]) cursor = rowId({ kind: "tree", ref: refOf(outline.items[r.at]) });
       } catch (e) {
         env.toast(String(e), "error");
-        try { outline = await env.invoke("outline_read"); } catch {}
+        try { outline = await read(); } catch {}
       }
       render(true);
     }
@@ -97,6 +101,10 @@
     }
     async function rename(r) {
       if (r.kind === "tree" && r.ref.t === "cat") {
+        if(r.ref.id.startsWith('bookmark-color:')) {
+          const c=r.ref.id.split(':')[1]; if(c!=='none') await env.renameColor?.(Number(c));
+          await load(); return;
+        }
         const rev = outline.rev;
         const n = await name("Kategorie umbenennen", r.ref.name);
         if (n) op({ op: "rename", i: r.item, name: n }, rev);
@@ -104,7 +112,7 @@
       else env.toast("md-Dateien werden in der Gliederung nicht umbenannt (nur Kategorien und Sessions).", "info");
     }
     async function remove(r) {
-      if (r.kind !== "tree") return;
+      if (r.kind !== "tree" || r.ref?.id?.startsWith('bookmark-color:')) return;
       const rev = outline.rev;
       if (r.ref.t === "cat") {
         const msg = `„${r.label}“` + (r.count ? `\n\nDie ${r.count} Einträge darin rücken eine Ebene auf; nichts wird gelöscht.` : "");
@@ -129,6 +137,7 @@
       const i = list.indexOf(r), k = e.key;
       const parentOf = idx => { const l = outline.items[idx].level; for (let j = idx - 1; j >= 0; j--) if (outline.items[j].level < l) return j; return null; };
       let used = true;
+      if(view && (k==='Tab' || e.altKey && ['ArrowUp','ArrowDown'].includes(k))) { e.preventDefault(); return; }
       if (k === "Tab") { if (r.kind === "tree") op({ op: e.shiftKey ? "outdent" : "indent", i: r.item }); else if (r.kind === "loose" && !e.shiftKey) adopt(r); }
       else if (e.altKey && k === "ArrowUp") { if (r.kind === "tree") op({ op: "up", i: r.item }); }
       else if (e.altKey && k === "ArrowDown") { if (r.kind === "tree") op({ op: "down", i: r.item }); }
@@ -157,6 +166,7 @@
       e.preventDefault();
       const items = [];
       if (r.kind === "tree") {
+        outline.items.forEach((it,i)=>{if(it.t==='cat' && i!==r.item) items.push(['→ '+it.name,()=>op({op:'into_cat',r:r.ref,cat:i})]);});
         if (r.ref.t !== "cat") items.push(["Öffnen", () => open(r)]);
         items.push(["Neue Kategorie danach", () => newCat(r.item, false)]);
         if (r.ref.t === "cat") items.push(["Neue Unterkategorie", () => newCat(r.item, true)], ["Umbenennen …", () => rename(r)]);
@@ -234,24 +244,35 @@
       list = rows(outline, sessions, md);
       box.replaceChildren();
       const head = document.createElement("div"); head.className = "ol-head";
-      const add = document.createElement("button"); add.textContent = "+ Kategorie"; add.title = "Neue Kategorie nach dem markierten Eintrag (N; Umschalt+N: Unterkategorie)";
-      add.onclick = () => { const r = list[cur()]; newCat(r && r.kind === "tree" ? r.item : null, false); };
+      const add = document.createElement("button"); add.textContent = "+ Farbe"; add.onclick = () => env.newColor?.();
+      const edit=document.createElement('button'), show=document.createElement('button');
+      edit.textContent='Edit'; show.textContent='View';
+      edit.setAttribute('aria-pressed',String(!view)); show.setAttribute('aria-pressed',String(view));
+      edit.onclick=()=>{view=false;render();}; show.onclick=()=>{view=true;render();};
       const help = document.createElement("span"); help.className = "ol-help"; help.textContent = "?";
       help.title = "Gliederung: nur eine Sicht – Dateien und Sessions werden nie verschoben.\nZiehen: einsortieren (waagrecht = Ebene) · Esc bricht ab\n↑/↓ wählen · ←/→ zu-/aufklappen · Tab/Umschalt+Tab ein-/ausrücken\nAlt+↑/↓ verschieben · Enter öffnen · F2/R umbenennen\nN neue Kategorie · Umschalt+N Unterkategorie · Entf aus Gliederung nehmen";
-      head.append(add, help); box.appendChild(head);
+      head.append(add, edit, show, help); box.appendChild(head);
       if (!outline.items.length) { const p = document.createElement("p"); p.className = "ol-empty"; p.textContent = "Noch keine Gliederung. „+ Kategorie“ anlegen und Einträge aus den Gruppen unten hineinziehen (oder Tab)."; box.appendChild(p); }
       let sep = false;
       if (!list.some(r => rowId(r) === cursor)) cursor = list[0] ? rowId(list[0]) : null;
       for (const r of list) {
         if (!sep && r.kind !== "tree") { sep = true; box.appendChild(document.createElement("hr")); }
+        if(view && r.ref?.t==='session' && r.data && env.sessionCard) {
+          if(r.hasChildren) { const b=document.createElement('button'); b.textContent=r.collapsed?'▸ Teilbaum':'▾ Teilbaum'; b.onclick=()=>op({op:'toggle',i:r.item}); box.appendChild(b); }
+          box.appendChild(env.sessionCard(r.data)); continue;
+        }
         const el = document.createElement("div"), id = rowId(r);
         el.className = "ol-row " + r.kind + (r.ref?.t === "cat" ? " cat" : "") + (r.missing ? " missing" : "") + (r.remote ? " remote" : "");
         el.dataset.id = id; if (r.kind === "tree") el.dataset.item = r.item;
         el.tabIndex = id === cursor ? 0 : -1; el.title = r.tip || "";
         el.setAttribute("role", "treeitem"); el.setAttribute("aria-level", String(r.level + 1));
         if (r.hasChildren) el.setAttribute("aria-expanded", String(!r.collapsed));
-        el.style.paddingLeft = (3 + r.level * INDENT) + "px";
-        const sym = document.createElement("span"); sym.className = "ol-sym";
+        el.style.paddingLeft = (3 + r.level * (view?3:INDENT)) + "px";
+        const color=env.colorOf?.(r.ref || {}), tone=color == null ? 'var(--dim,#89939d)' : BookmarkPalette.hex(color);
+        const colorRoot=r.ref?.t==='cat' && r.ref.id.startsWith('bookmark-color:');
+        if(colorRoot) { el.style.borderLeft=`3px solid ${tone}`; el.style.background=`color-mix(in srgb, ${tone} 18%, transparent)`; }
+        el.style.setProperty('--ol-color',tone);
+        const sym = document.createElement("span"); sym.className = "ol-sym"; sym.style.color=tone;
         const isCat = r.kind === "group" || r.ref.t === "cat";
         sym.innerHTML = r.hasChildren ? tri(!r.collapsed) : isCat ? SYMS.empty : r.ref.t === "md" ? SYMS.md : SYMS.session;
         const t = document.createElement("span"); t.className = "ol-t"; t.textContent = r.label;
@@ -260,19 +281,20 @@
         el.onfocus = () => { cursor = id; for (const o of box.querySelectorAll(".ol-row")) o.tabIndex = o === el ? 0 : -1; };
         el.onkeydown = e => key(e, r);
         el.oncontextmenu = e => { cursor = id; menu(e, r); };
-        el.onpointerdown = e => startDrag(e, r, el);
+        el.onpointerdown = e => { if(!view && !colorRoot) startDrag(e, r, el); };
         el.onclick = e => {
           if (suppressClick) return;
           cursor = id; el.focus();
           const onSym = e.clientX < sym.getBoundingClientRect().right + 3;
-          if (isCat) { if (onSym || r.kind === "group") open(r); }
+          if (isCat) { open(r); }
           else if (r.ref.t === "md" && !r.missing && env.previewMd) env.previewMd(el, r.data);
           else open(r);
         };
         el.ondblclick = e => {
           // Symbolklicks klappen bereits einzeln um; nur Doppelklick auf den Titel behandeln.
           if (isCat && (r.kind === "group" || e.clientX < sym.getBoundingClientRect().right + 3)) return;
-          if (isCat ? r.hasChildren : r.ref.t === "md") open(r);
+          if(isCat) return;
+          if (r.ref.t === "md") open(r);
         };
         box.appendChild(el);
       }
@@ -281,7 +303,7 @@
     return {
       load,
       setData(s, m) { sessions = s; md = m.filter(e => isMd(e.path)); render(); },
-      refresh: async () => { if (drag) return; try { const o = await env.invoke("outline_read"); if (o.rev !== outline.rev) { outline = o; render(); } } catch {} },
+      refresh: async () => { if (drag) return; try { const o = await read(); if (o.rev !== outline.rev) { outline = o; render(); } } catch {} },
       focus: () => focusRow(cur()),
     };
   }

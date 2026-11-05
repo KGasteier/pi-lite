@@ -7,6 +7,132 @@
 //! Ablage: `<config>/pi-frontends/outline.json` neben `bookmarks.json`.
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use serde_json::Value;
+
+pub const COLOR_PREFIX: &str = "bookmark-color:";
+pub fn color_root(r: &Ref) -> Option<Option<u8>> {
+    if let Ref::Cat { id, .. } = r {
+        let s = id.strip_prefix(COLOR_PREFIX)?;
+        return if s == "none" { Some(None) } else { s.parse::<u8>().ok().map(Some) };
+    }
+    None
+}
+pub fn ref_key(r: &Ref) -> Option<&str> { match r { Ref::Session { key } => Some(key), Ref::Md { path } => Some(path), _ => None } }
+pub fn bookmark_group(v: &Value, r: &Ref) -> Option<u8> {
+    let k = ref_key(r)?;
+    if !v["bookmarks"].as_array().is_some_and(|a| a.iter().any(|p| p.as_str()==Some(k))) { return None; }
+    Some(v["bookmark_colors"][k].as_u64().filter(|i| (*i as usize)<crate::shared_bookmarks::color_count(v)).unwrap_or(0) as u8)
+}
+
+/// Farboberkategorien sind aus Bookmarks abgeleitet. Reihenfolge und Unterbäume bleiben
+/// erhalten; bei externem Umfärben wandert der Eintrag in die passende Oberkategorie.
+pub fn reconcile(o: &mut Outline, bookmarks: &Value, inventory: &[Ref]) {
+    let count = crate::shared_bookmarks::color_count(bookmarks);
+    let old = o.items.clone();
+    let mut groups: Vec<Vec<Item>> = vec![Vec::new(); count+1];
+    let mut collapsed = vec![false; count+1];
+    let mut current = count;
+    let mut i = 0;
+    while i < old.len() {
+        if let Some(c) = color_root(&old[i].r) {
+            current = c.map(|c| (c as usize).min(count)).unwrap_or(count);
+            collapsed[current] = old[i].collapsed;
+            i += 1; continue;
+        }
+        let start = i;
+        let base = old[i].level;
+        i += 1;
+        while i<old.len() && color_root(&old[i].r).is_none() && old[i].level>base { i+=1; }
+        let target = if ref_key(&old[start].r).is_some() { bookmark_group(bookmarks,&old[start].r).map(usize::from).unwrap_or(count) } else { current };
+        let mut block = old[start..i].to_vec();
+        for it in &mut block { it.level = (it.level-base+1).min(MAX_LEVEL); }
+        groups[target].extend(block);
+    }
+    // Bereits einsortierte Kinder einzeln extern geändert: aus dem alten Teilbaum lösen.
+    for g in 0..=count {
+        let mut j=0;
+        while j<groups[g].len() {
+            let r=&groups[g][j].r;
+            if ref_key(r).is_some() {
+                let target=bookmark_group(bookmarks,r).map(usize::from).unwrap_or(count);
+                if target!=g {
+                    let mut it=groups[g].remove(j); it.level=1;
+                    groups[target].push(it); continue;
+                }
+            }
+            j+=1;
+        }
+    }
+    for r in inventory {
+        if ref_key(r).is_some() && !groups.iter().flatten().any(|it| it.r.same(r)) {
+            let g=bookmark_group(bookmarks,r).map(usize::from).unwrap_or(count);
+            groups[g].push(Item::new(r.clone(),1));
+        }
+    }
+    o.items.clear();
+    for (g, block) in groups.into_iter().enumerate() {
+        let (id,name) = if g==count { (format!("{COLOR_PREFIX}none"),"Unmarkiert".into()) } else {
+            let name=bookmarks["category_names"][g].as_str().filter(|n| !n.trim().is_empty()).map(str::to_owned).unwrap_or_else(|| ["Blau","Grün","Gelb","Violett","Orange","Rot","Türkis","Pink","Limette","Braun"].get(g).map(|s|s.to_string()).unwrap_or_else(||format!("Farbe {}",g+1)));
+            (format!("{COLOR_PREFIX}{g}"),name)
+        };
+        let mut root=Item::new(Ref::Cat{id,name},0); root.collapsed=collapsed[g];
+        o.items.push(root); o.items.extend(block);
+    }
+    o.normalize();
+}
+
+/// Bewegungen dürfen die automatisch erzeugten Farboberkategorien nicht verändern.
+pub fn apply_colored_model(o: &mut Outline, b: &mut Value, op: Op) -> (bool,Option<usize>) {
+    let root = |i:usize| o.items.get(i).is_some_and(|it|color_root(&it.r).is_some());
+    match &op {
+        Op::Remove{i}|Op::Rename{i,..}|Op::Indent{i}|Op::Outdent{i}|Op::Up{i}|Op::Down{i} if root(*i) => return (false,Some(*i)),
+        Op::MoveTo{src,..} if root(*src) => return (false,Some(*src)),
+        Op::Outdent{i} if o.items.get(*i).is_some_and(|it|it.level<=1) => return (false,Some(*i)),
+        _=>{}
+    }
+    let moved=match &op { Op::MoveTo{src,..}|Op::Indent{i:src}|Op::Outdent{i:src}|Op::Up{i:src}|Op::Down{i:src} => o.items.get(*src).map(|it|it.r.clone()), Op::Insert{r,..}|Op::IntoCat{r,..}=>Some(r.clone()), _=>None };
+    let op=match op {
+        Op::MoveTo{src,dest,level}=>Op::MoveTo{src,dest:dest.max(1),level:level.max(1)},
+        Op::Insert{r,dest,level}=>Op::Insert{r,dest:dest.max(1),level:level.max(1)},
+        Op::AddCat{after,child,name}=>Op::AddCat{after:after.or_else(||o.items.iter().rposition(|it|color_root(&it.r).is_some())),child:child || after.is_none_or(root),name},
+        other=>other
+    };
+    let result=o.apply(op);
+    if let Some(r)=moved {
+        if let Some(i)=o.find(&r) {
+            let g=(0..=i).rev().find_map(|j|color_root(&o.items[j].r));
+            if let Some(c)=g {
+                for it in &o.items[i..o.subtree_end(i)] {
+                    if let Some(k)=ref_key(&it.r) { set_marker(b,k,c); }
+                }
+            }
+        }
+    }
+    result
+}
+pub fn set_marker(b:&mut Value,k:&str,c:Option<u8>) {
+    let mut paths=b["bookmarks"].as_array().cloned().unwrap_or_default();
+    paths.retain(|p|p.as_str()!=Some(k));
+    if c.is_some() { paths.push(Value::String(k.into())); }
+    b["bookmarks"]=Value::Array(paths);
+    if !b["bookmark_colors"].is_object() { b["bookmark_colors"]=serde_json::json!({}); }
+    if let Some(c)=c { b["bookmark_colors"][k]=serde_json::json!(c); } else { b["bookmark_colors"].as_object_mut().unwrap().remove(k); }
+}
+pub fn prepare(inventory:&[Ref]) -> Result<Outline,String> {
+    locked(&path()?,|disk| { let mut o=disk.clone(); reconcile(&mut o,&crate::shared_bookmarks::read()?,inventory); Ok((o,())) }).map(|r|r.0)
+}
+pub fn apply_colored(rev:u64,op:Op) -> Result<(Outline,Option<usize>),String> {
+    locked(&path()?,|disk| {
+        if disk.rev!=rev { return Err(CONFLICT.into()); }
+        let base=crate::shared_bookmarks::read()?;
+        let mut b=base.clone(); let mut o=disk.clone();
+        let (_,at)=apply_colored_model(&mut o,&mut b,op);
+        // Die Bookmark-Datei hat eine eigene Deltasperre; nie einen alten Vollstand schreiben.
+        if b!=base { crate::shared_bookmarks::update(&base,&b)?; }
+        Ok((o,at))
+    })
+}
+
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "lowercase")]
@@ -373,6 +499,24 @@ mod tests {
         o.items.iter().map(|i| match &i.r { Ref::Cat { id, .. } => id.clone(), Ref::Session { key } => key.clone(), Ref::Md { path } => path.clone() }).collect()
     }
     fn sample() -> Outline { Outline { items: vec![cat("A", 0), ses("s1", 1), md("m1", 2), cat("B", 0), ses("s2", 1)], ..Default::default() } }
+
+    #[test]
+    fn colors_migrate_preserve_and_recolor_subtrees() {
+        let mut o=sample();
+        let mut b=crate::shared_bookmarks::empty();
+        set_marker(&mut b,"s1",Some(3));
+        reconcile(&mut o,&b,&[Ref::Session{key:"new".into()}]);
+        assert_eq!(o.items.iter().filter(|it|color_root(&it.r).is_some()).count(),11);
+        let saved=o.clone(); reconcile(&mut o,&b,&[]); assert_eq!(o,saved,"Refresh ist idempotent");
+        let r=Ref::Session{key:"s1".into()};
+        let cat=o.items.iter().position(|it|color_root(&it.r)==Some(Some(2))).unwrap();
+        apply_colored_model(&mut o,&mut b,Op::IntoCat{r:r.clone(),cat});
+        assert_eq!(bookmark_group(&b,&r),Some(2));
+        let root=o.items.iter().position(|it|color_root(&it.r)==Some(None)).unwrap();
+        apply_colored_model(&mut o,&mut b,Op::IntoCat{r:r.clone(),cat:root});
+        assert_eq!(bookmark_group(&b,&r),None);
+        let first=o.items[0].clone(); apply_colored_model(&mut o,&mut b,Op::Remove{i:0}); assert_eq!(o.items[0],first);
+    }
 
     #[test]
     fn normalize_repairs_levels_and_duplicates() {

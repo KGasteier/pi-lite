@@ -12,11 +12,11 @@ fn shared_bookmarks_seed(local:serde_json::Value) -> Result<serde_json::Value,St
 #[path = "../../shared/outline.rs"]
 mod shared_outline;
 #[tauri::command]
-fn outline_read() -> Result<shared_outline::Outline,String> { shared_outline::read() }
+fn outline_read(inventory:Option<Vec<shared_outline::Ref>>) -> Result<shared_outline::Outline,String> { shared_outline::prepare(&inventory.unwrap_or_default()) }
 /// Operation auf Stand `rev` anwenden; bei fremder Änderung `Err(CONFLICT)`.
 #[tauri::command]
 fn outline_apply(rev:u64, op:shared_outline::Op) -> Result<serde_json::Value,String> {
-    let (o, at) = shared_outline::apply(rev, op)?;
+    let (o, at) = shared_outline::apply_colored(rev, op)?;
     Ok(serde_json::json!({ "outline": o, "at": at }))
 }
 

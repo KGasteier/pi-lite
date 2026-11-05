@@ -2508,6 +2508,17 @@ impl App {
             "toast" => self.toast("Arbeitsordner für die nächste neue Session ausgewählt.", ToastKind::Info),
             "inventory" => self.demo_scene_inventory(),
             "outline" => self.demo_scene_outline(),
+            "outline-edit" | "outline-view" => {
+                self.demo_scene_outline();
+                let mut b=self.store.shared_value();
+                crate::shared_outline::set_marker(&mut b,"/demo/sessions/a.jsonl",Some(0));
+                crate::shared_outline::set_marker(&mut b,"/demo/sessions/1.jsonl",Some(1));
+                crate::shared_outline::set_marker(&mut b,"/demo/md/AGENTS.md",Some(0));
+                self.store.apply_shared(&b);
+                let refs:Vec<_>=self.outline_sessions().iter().map(|s|crate::shared_outline::Ref::Session{key:s.key()}).chain(self.outline_md().into_iter().map(|e|crate::shared_outline::Ref::Md{path:e.path})).collect();
+                crate::shared_outline::reconcile(&mut self.outline.o,&b,&refs);
+                self.outline.view=scene=="outline-view";
+            },
             "longlog" => self.demo_scene_longlog(10_000),
             "statusline" => {
                 // Synthetischer laufender Agent mit Werkzeug und Warteschlange; Netz-Leiste offen.

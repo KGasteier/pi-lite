@@ -2,11 +2,21 @@
 
 ## Bedienung
 
-Links in der Ansichtsauswahl **Gliederung** wählen. Mit **+ Kategorie** lassen sich
-benennbare Oberkategorien anlegen; das Kontextmenü bietet Unterkategorien an.
-Sessions und Markdown-Dateien aus dem vorhandenen Ressourceninventar stehen zunächst
-in den Gruppen **Sessions ohne Einordnung** / **md-Dateien ohne Einordnung**.
-Diese Gruppen sind anfangs zugeklappt.
+Links **Gliederung** wählen. **Edit** ist die kompakte Umordnungsansicht,
+**View** zeigt die vollständigen Sessionkarten mit bisherigen Aktionen und Vorschau.
+Alle Bookmark-Farben sind automatisch Oberkategorien, zusätzlich **Unmarkiert**.
+Farbige Trennstreifen klappen die jeweilige Gruppe auf/zu; Unterkategorien bleiben
+möglich. **+ Farbe** fragt Name und Hex-Farbe (#RRGGBB) ab und hängt einen neuen
+Palette-Eintrag an, ohne bestehende Indizes zu verändern (max. 255 Farben).
+
+Vorhandene Sessions und Inventar-Markdown-Dateien werden automatisch einsortiert.
+Bestehende manuelle Kategorien bleiben unter Unmarkiert erhalten; extern geänderte
+Bookmark-Zuordnungen werden beim Refresh übernommen. Einträge oder Teilbäume in eine
+Farbkategorie verschieben setzt deren Bookmark-Farbe; Unmarkiert entfernt die
+Markierung. Farboberkategorien sind geschützt gegen Entfernen oder Verschieben.
+Bearbeitung der Namen per F2/Kontextmenü. Unterbäume behalten manuelle Reihenfolge.
+Neue, noch nicht übernommene Inventare können kurz in den bisherigen losen Gruppen
+erscheinen, bis der periodische Abgleich erfolgt.
 
 - Kleine Dreiecke klappen Teilbäume auf/zu; Punkte markieren Sessions, kleine
   Rechtecke Markdown-Dateien. Die gesamte Zeile kann gezogen werden.
@@ -38,7 +48,9 @@ bei gemeinsamen Bookmarks (`remote:<backend>:<pfad>` für Remote-Sessions).
 
 Datei: `<config>/pi-frontends/outline.json`, neben `bookmarks.json`.
 Kein Verschieben echter Dateien; keine neue Server-API. Die bisherige Sessions-
-Ansicht bleibt unverändert verfügbar. Keine Migration bestehender Bookmarks nötig.
+Ansicht bleibt verfügbar. Zusätzliche Palette: `extra_colors` in `bookmarks.json`;
+zehn Standardfarben bleiben unverändert. Ältere Binaries kennen Zusatzindizes nicht:
+für gemeinsame Bearbeitung die aktualisierten Frontends verwenden.
 
 Speichern: Dateisperre, Revision vergleichen, temporär schreiben, fsync und atomar
 umbenennen. Fremde Änderungen lösen einen Konflikthinweis samt Neuladen aus, statt
@@ -60,7 +72,7 @@ Der pi-lite-Rasterschalter zeigte bereits ein Raster statt „×“ und bleibt e
 
 ## Prüfstand
 
-- Native Tests: copi 118 bestanden / 2 ignoriert; cocopi 122 bestanden / 2 ignoriert.
+- Native Tests: copi 121 bestanden / 2 ignoriert; cocopi 125 bestanden / 2 ignoriert.
   Enthalten sind Modell-/Dateikonflikttests sowie Zeilen-, Tastatur-, Dropziel- und
   Dialogregressionen. Keine echten privaten Sessiondateien werden verändert.
 - `node scripts/test-outline.cjs` und JS-Syntaxchecks bestanden. Bestehende JS-Suite:
@@ -68,8 +80,10 @@ Der pi-lite-Rasterschalter zeigte bereits ein Raster statt „×“ und bleibt e
   `NET_PLACEHOLDER`; kein neuer Gliederungsfehler. Dieser Alt-Test ist offen.
 - pi-lite `cargo check --offline --locked` bestanden. Dafür alten API-Bruch in
   `src-tauri/src/net.rs` korrigiert: `Spec.args` wird als leere Liste initialisiert.
-- Native Headless-Demo `COPI_SCENE=outline` angesehen; isolierte Chromium-Seitenleiste
-  mit Testdaten angesehen. Beides **ohne pi**, keine echte WebKit-/Backend-Abnahme.
+- Native Headless-Demos `COPI_SCENE=outline-edit` und `outline-view` angesehen.
+  Web-Code syntax-/compile-geprüft; neue Edit/View-Webdarstellung noch nicht live angesehen.
+  Frühere isolierte Chromium-Seitenleiste bezieht sich auf die Vorgängerversion.
+  Kein echter WebKit-/Backend-Test.
 - Release/Installation: siehe aktuellen Nachtrag in `HANDOFF.md`.
 - Offen: reale Maus-/Tastaturbedienung, langes Ziehen mit Scrollen, gleichzeitige
   Mehrfensterbedienung, WebKit-Livetest und echte Remote-Sessions. Automatisierte

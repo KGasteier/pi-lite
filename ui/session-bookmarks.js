@@ -24,7 +24,7 @@ const keyOf = s => s.key || s.path;
 const PALETTE_SIZE = 10;
 const FILTER_MODES = ["off", "on", "colors"];
 function normalizeColorIndex(index) {
-  return Number.isInteger(index) && index >= 0 && index < PALETTE_SIZE ? index : 0;
+  return Number.isInteger(index) && index >= 0 && index < (typeof BookmarkPalette !== 'undefined' ? BookmarkPalette.COLORS.length : PALETTE_SIZE) ? index : 0;
 }
 function normalizeFilterMode(value) {
   return FILTER_MODES.includes(value) ? value : "off";

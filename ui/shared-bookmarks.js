@@ -1,13 +1,16 @@
 // Gemeinsame Datei über Tauri; localStorage ist nur Cache und einmalige Migrationsquelle.
 function createSharedBookmarkSync(invoke, storage, changed, error) {
   const keys = ['pi-lite.session-bookmarks.v1','pi-lite.session-bookmark-colors.v1','pi-lite.category-color-names.v1'];
-  const empty = () => ({bookmarks:[],bookmark_colors:{},category_names:[]});
+  let extra = [];
+  const empty = () => ({bookmarks:[],bookmark_colors:{},category_names:[],extra_colors:[]});
   const snapshot = () => {
     const names=JSON.parse(storage.getItem(keys[2])||'{}');
-    return {bookmarks:JSON.parse(storage.getItem(keys[0])||'[]'),bookmark_colors:JSON.parse(storage.getItem(keys[1])||'{}'),category_names:Array.from({length:10},(_,i)=>names[i]||'')};
+    return {bookmarks:JSON.parse(storage.getItem(keys[0])||'[]'),bookmark_colors:JSON.parse(storage.getItem(keys[1])||'{}'),category_names:Array.from({length:10+extra.length},(_,i)=>names[i]||''),extra_colors:extra};
   };
   const apply = v => {
     if (!v || !Array.isArray(v.bookmarks)) throw Error('Ungültige gemeinsame Bookmark-Antwort');
+    extra=v.extra_colors||[];
+    if(typeof BookmarkPalette!=='undefined') BookmarkPalette.setExtra(extra);
     storage.setItem(keys[0],JSON.stringify(v.bookmarks));
     storage.setItem(keys[1],JSON.stringify(v.bookmark_colors));
     storage.setItem(keys[2],JSON.stringify(Object.fromEntries(v.category_names.map((n,i)=>[i,n]).filter(([,n])=>n))));

@@ -4,7 +4,14 @@ use std::path::{Path, PathBuf};
 
 /// Anzahl der Kategorienamen = Länge der Bookmark-Palette (10; 8 und 9 wurden angehängt).
 pub const CATEGORY_COUNT: usize = 10;
-pub fn empty() -> Value { json!({"bookmarks":[],"bookmark_colors":{},"category_names":[]}) }
+pub fn empty() -> Value { json!({"bookmarks":[],"bookmark_colors":{},"category_names":[],"extra_colors":[]}) }
+/// Feste Indizes bleiben stabil; zusätzliche Farben werden nur angehängt (max. 255).
+pub const STANDARD_COLORS: [&str; 10] = ["#6aa5e8","#5ec2a0","#e0b25a","#b08cf0","#e68f6e","#ef476f","#18a999","#e454c4","#a3c94f","#b8865b"];
+pub fn color_count(v: &Value) -> usize { (CATEGORY_COUNT + v["extra_colors"].as_array().map_or(0, Vec::len)).min(255) }
+pub fn color_hex(v: &Value, i: usize) -> String {
+    STANDARD_COLORS.get(i).map(|s| s.to_string()).or_else(|| v["extra_colors"].get(i.saturating_sub(CATEGORY_COUNT)).and_then(Value::as_str).map(str::to_owned)).unwrap_or_else(|| STANDARD_COLORS[0].into())
+}
+pub fn valid_hex(s: &str) -> bool { s.len()==7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit()) }
 pub fn path() -> Result<PathBuf,String> {
     #[cfg(target_os="macos")]
     let root = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"));
@@ -42,7 +49,16 @@ pub fn merge(base:&Value, local:&Value, disk:&Value) -> Value {
     let mut names=disk["category_names"].as_array().cloned().unwrap_or_default();
     // Nur verlängern, nie kürzen: Namen künftiger Paletteneinträge bleiben erhalten.
     if names.len()<CATEGORY_COUNT { names.resize(CATEGORY_COUNT,Value::String(String::new())); }
-    for (i,n) in local["category_names"].as_array().into_iter().flatten().enumerate().take(CATEGORY_COUNT) {
+    // Zusätzliche Farben nur anhängen. Parallel konkurrierende Erweiterungen nicht umdeuten.
+    if local.get("extra_colors") != base.get("extra_colors") {
+        let a = base["extra_colors"].as_array().cloned().unwrap_or_default();
+        let b = local["extra_colors"].as_array().cloned().unwrap_or_default();
+        let d = disk["extra_colors"].as_array().cloned().unwrap_or_default();
+        if d == a && b.starts_with(&a) && b.len() <= 245 && b.iter().all(|v| v.as_str().is_some_and(valid_hex)) { out["extra_colors"] = json!(b); }
+    }
+    let count = color_count(&out);
+    if names.len()<count { names.resize(count,Value::String(String::new())); }
+    for (i,n) in local["category_names"].as_array().into_iter().flatten().enumerate().take(count) {
         if n.as_str().unwrap_or("") != base["category_names"].get(i).and_then(Value::as_str).unwrap_or("") { names[i]=n.clone(); }
     }
     out["category_names"]=Value::Array(names); out
@@ -55,6 +71,12 @@ pub fn update_at(p:&Path,base:&Value,local:&Value,seed:bool) -> Result<Value,Str
     let lock=std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(p.with_extension("lock")).map_err(|e|e.to_string())?;
     lock.lock().map_err(|e|e.to_string())?;
     let disk=read_at(p)?;
+    if !seed && local["extra_colors"].as_array().cloned().unwrap_or_default() != base["extra_colors"].as_array().cloned().unwrap_or_default() {
+        let old=base["extra_colors"].as_array().cloned().unwrap_or_default();
+        let current=disk["extra_colors"].as_array().cloned().unwrap_or_default();
+        if current!=old { return Err("Farbpalette inzwischen geändert – neu laden und Farbe erneut hinzufügen.".into()); }
+        if !local["extra_colors"].as_array().is_some_and(|a| a.starts_with(&old) && a.len()<=245 && a.iter().all(|v|v.as_str().is_some_and(valid_hex))) { return Err("Ungültige Farberweiterung".into()); }
+    }
     let mut out=if seed { merge(&empty(),&disk,&merge(&empty(),local,&empty())) } else { merge(base,local,&disk) };
     if seed {
         for p in disk["bookmarks"].as_array().unwrap() {
@@ -70,6 +92,15 @@ pub fn update_at(p:&Path,base:&Value,local:&Value,seed:bool) -> Result<Value,Str
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn custom_color_survives_shared_merge() {
+        let mut local=empty(); local["extra_colors"]=json!(["#123abc"]);
+        local["category_names"]=json!(["","","","","","","","","","","Seminar"]);
+        local["bookmarks"]=json!(["/synthetic/custom"]); local["bookmark_colors"]=json!({"/synthetic/custom":10});
+        let out=merge(&empty(),&local,&empty());
+        assert_eq!(color_count(&out),11); assert_eq!(color_hex(&out,10),"#123abc");
+        assert_eq!(out["category_names"][10],"Seminar");
+        assert!(valid_hex("#Aa11ff")); assert!(!valid_hex("#123"));
+    }
     #[test] fn cross_frontend_delta_and_restart() {
         let dir=std::env::temp_dir().join(format!("shared-bookmarks-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         let p=dir.join("bookmarks.json");

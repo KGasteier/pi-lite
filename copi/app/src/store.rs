@@ -27,6 +27,7 @@ pub struct Store {
     /// Herkunftsfilter der Sessionliste: "all", "local" oder "remote".
     pub session_origin: String,
     pub category_names: Vec<String>,
+    pub extra_colors: Vec<String>,
     pub duration_history: Vec<f64>,
     pub side_visible: bool,
     /// Rechte Seitenleiste „Netz“ (menschlicher Chat, vorerst Platzhalter); standardmäßig aus.
@@ -53,6 +54,7 @@ impl Default for Store {
             colored_bookmarks: false,
             session_origin: "all".into(),
             category_names: Vec::new(),
+            extra_colors: Vec::new(),
             duration_history: Vec::new(),
             side_visible: true,
             net_visible: false,
@@ -79,8 +81,9 @@ impl Store {
         // Fremd editierte/veraltete state.json kann Farbindizes >= Palettenlänge enthalten
         // (z. B. nach einer künftig verkleinerten Palette); auf Index 0 normalisieren statt
         // mit einem ungültigen Index weiterzuarbeiten.
+        let count = s.palette_len();
         for v in s.bookmark_colors.values_mut() {
-            *v = crate::bookmark_palette::normalize(*v);
+            if *v as usize >= count { *v = 0; }
         }
         s.baseline = serde_json::to_value(&s).unwrap_or_default();
         // Migration je App einmalig, sonst könnten gelöschte Bookmarks wieder auftauchen.
@@ -107,13 +110,17 @@ impl Store {
         Ok(())
     }
 
-    fn shared_value(&self) -> Value {
-        serde_json::json!({"bookmarks":self.bookmarks,"bookmark_colors":self.bookmark_colors,"category_names":self.category_names})
+    pub(crate) fn shared_value(&self) -> Value {
+        serde_json::json!({"bookmarks":self.bookmarks,"bookmark_colors":self.bookmark_colors,"category_names":self.category_names,"extra_colors":self.extra_colors})
     }
-    fn apply_shared(&mut self, v:&Value) {
+    pub(crate) fn accept_shared(&mut self, v:&Value) {
+        self.apply_shared(v); self.shared_baseline=v.clone();
+    }
+    pub(crate) fn apply_shared(&mut self, v:&Value) {
         self.bookmarks = serde_json::from_value(v["bookmarks"].clone()).unwrap_or_default();
         self.bookmark_colors = serde_json::from_value(v["bookmark_colors"].clone()).unwrap_or_default();
         self.category_names = serde_json::from_value(v["category_names"].clone()).unwrap_or_default();
+        self.extra_colors = serde_json::from_value(v["extra_colors"].clone()).unwrap_or_default();
     }
 
     fn baseline_value(&self) -> Value {
@@ -164,15 +171,21 @@ impl Store {
             *self = s;
         }
     }
+    pub fn palette_len(&self) -> usize { (10 + self.extra_colors.len()).min(255) }
+    pub fn palette_color(&self, i: u8) -> egui::Color32 {
+        let hex = crate::shared_bookmarks::color_hex(&self.shared_value(), i as usize);
+        let b = |n| u8::from_str_radix(&hex[n..n+2],16).unwrap_or(0);
+        egui::Color32::from_rgb(b(1),b(3),b(5))
+    }
     pub fn category_name(&self, i: u8) -> String {
         self.category_names.get(i as usize).filter(|n| !n.trim().is_empty()).cloned().unwrap_or_else(|| crate::bookmark_palette::name(i).into())
     }
     pub fn set_category_name(&mut self, i: u8, name: &str) {
-        let n = crate::bookmark_palette::LEN as usize;
+        let n = self.palette_len();
         if self.category_names.len() < n {
             self.category_names.resize(n, String::new());
         }
-        self.category_names[crate::bookmark_palette::normalize(i) as usize] = name.trim().chars().take(48).collect();
+        self.category_names[(i as usize).min(n-1)] = name.trim().chars().take(48).collect();
     }
     pub fn record_duration(&mut self, seconds: f64) {
         if seconds.is_finite() && seconds > 0.0 {
@@ -223,7 +236,7 @@ impl Store {
     /// Verwendet von Session-Karten und Farbwähler.
     #[allow(dead_code)]
     pub fn bookmark_color(&self, path: &str) -> u8 {
-        self.bookmark_colors.get(path).copied().map(crate::bookmark_palette::normalize).unwrap_or(0)
+        self.bookmark_colors.get(path).copied().filter(|i| (*i as usize) < self.palette_len()).unwrap_or(0)
     }
     /// Setzt die Bookmark-Farbe eines **markierten** Pfads; ohne Wirkung, falls `path` kein
     /// Bookmark ist (keine verwaisten Farbeinträge für nicht markierte Sessions).
@@ -233,7 +246,7 @@ impl Store {
         if !self.is_bookmark(path) {
             return;
         }
-        let index = crate::bookmark_palette::normalize(index);
+        let index = if (index as usize) < self.palette_len() { index } else { 0 };
         if index == 0 {
             self.bookmark_colors.remove(path);
         } else {

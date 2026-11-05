@@ -753,7 +753,7 @@ impl App {
         }
     }
 
-    fn inventory_card(&mut self, ui: &mut Ui, e: &pi_backend::inventory::Entry, selected: bool, cat_color: Color32) -> Response {
+    pub(crate) fn inventory_card(&mut self, ui: &mut Ui, e: &pi_backend::inventory::Entry, selected: bool, cat_color: Color32) -> Response {
         let w = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(vec2(w, 44.0), Sense::hover());
         let resp = ui.interact(rect, Id::new(("invcard", &e.path)), Sense::click());
@@ -919,14 +919,14 @@ impl App {
         }
     }
 
-    fn session_card(&mut self, ui: &mut Ui, s: &pi_backend::sessions::SessionInfo, active: bool, selected: bool) -> Response {
+    pub(crate) fn session_card(&mut self, ui: &mut Ui, s: &pi_backend::sessions::SessionInfo, active: bool, selected: bool) -> Response {
         let key = s.key();
         let remote = s.is_remote();
         // `active` = gerade gezeigt (Hervorhebung, Klick ohne Wirkung); `running` = in einer
         // Instanz bzw. als eigene Session offen (Löschen gesperrt, Punkt als Hinweis).
         let running = self.session_active(s);
         // Remote-Karten: eigene Farbe (Rand, Streifen links) und Badge mit dem Servernamen.
-        let tone = if remote { REMOTE } else { CAT };
+        let tone = if self.store.is_bookmark(&key) { self.store.palette_color(self.store.bookmark_color(&key)) } else if remote { REMOTE } else { CAT };
         let w = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(vec2(w, 52.0), Sense::hover());
         let mut resp = ui.interact(rect, Id::new(("card", &key)), Sense::click());
@@ -936,7 +936,7 @@ impl App {
         p.rect_filled(rect, 8, mix(tone, t, CARD));
         let border = if active || selected { tone } else { mix(tone, 0.32, CARD) };
         p.rect_stroke(rect, 8, Stroke::new(1.0, border), StrokeKind::Inside);
-        if remote {
+        if remote || bm {
             p.rect_filled(Rect::from_min_size(rect.min + vec2(1.0, 8.0), vec2(3.0, rect.height() - 16.0)), 2, tone);
         }
         let title = [&s.name, &s.title].into_iter().find(|t| !t.is_empty()).cloned().unwrap_or("(leer)".into());
@@ -981,7 +981,7 @@ impl App {
         icons::paint_icon_button(ui, delete_rect, &delete_resp, !running, IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 13.0, radius: 5 }, icons::trash);
         if !running && delete_resp.clicked() { self.remove_session(s); }
         let bm_resp = ui.interact(bm_rect, Id::new(("cardbm", &key)), Sense::click()).on_hover_text(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" });
-        let st = IconStyle { bg: None, fg: if bm { crate::bookmark_palette::color(self.store.bookmark_color(&key)) } else { DIM }, hover_fg: FG, icon: 13.0, radius: 5 };
+        let st = IconStyle { bg: None, fg: if bm { self.store.palette_color(self.store.bookmark_color(&key)) } else { DIM }, hover_fg: FG, icon: 13.0, radius: 5 };
         icons::paint_icon_button(ui, bm_rect, &bm_resp, true, st, |p, r, c| icons::bookmark_card(p, r, c, bm));
         let act_resp = ui
             .interact(act_rect, Id::new(("cardact", &key)), Sense::click())
@@ -993,12 +993,12 @@ impl App {
         // Farbmenü muss Klicks und Textbearbeitung innen erlauben.
         let color_resp = ui.interact(color_rect, Id::new(("bookmark-color", &key)), Sense::click()).on_hover_text("Bookmark-Farbe · zehn Standardfarben");
         if bm {
-            ui.painter().circle_filled(color_rect.center(), 5.0, crate::bookmark_palette::color(self.store.bookmark_color(&key)));
+            ui.painter().circle_filled(color_rect.center(), 5.0, self.store.palette_color(self.store.bookmark_color(&key)));
             egui::Popup::menu(&color_resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-                for i in 0..crate::bookmark_palette::LEN {
+                for i in 0..self.store.palette_len() as u8 {
                     ui.horizontal(|ui| {
                         let (r, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-                        ui.painter().circle_filled(r.center(), 8.0, crate::bookmark_palette::color(i));
+                        ui.painter().circle_filled(r.center(), 8.0, self.store.palette_color(i));
                         if response.on_hover_text(self.store.category_name(i)).clicked() {
                             self.store.set_bookmark_color(&key, i);
                             self.save_store();

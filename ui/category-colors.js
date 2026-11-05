@@ -10,7 +10,7 @@ const CATEGORY_COLOR_NAMES_KEY = "pi-lite.category-color-names.v1";
 function createCategoryColorNames(storage, defaults) {
   const names = [...defaults];
   const reload = () => {
-  names.splice(0, names.length, ...defaults);
+  names.splice(0, names.length, ...(typeof BookmarkPalette !== 'undefined' ? BookmarkPalette.COLORS.map(c=>c.name) : defaults));
   let saved = {};
   try {
     const parsed = JSON.parse(storage.getItem(CATEGORY_COLOR_NAMES_KEY) || "{}");
