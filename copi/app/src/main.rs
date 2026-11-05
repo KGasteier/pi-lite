@@ -14,6 +14,9 @@ mod net;
 mod net_view;
 #[path = "../../../shared/bookmarks.rs"]
 mod shared_bookmarks;
+#[path = "../../../shared/outline.rs"]
+mod shared_outline;
+mod outline_ui;
 mod run_activity;
 mod speech;
 mod store;

@@ -2,6 +2,33 @@
 
 ## Aktueller Stand
 
+### Gliederung · 05.11.2026 · cocopi-v2
+
+Neue Seitenansicht **Gliederung** in derselben Codebasis für copi/cocopi und pi-lite:
+virtuelle Kategorien, Sessions und Markdown-Verweise; Teilbäume zu-/aufklappen,
+ziehen, ein-/ausrücken und umsortieren, Kontextmenü und Tastatur. Gemeinsames
+Rust-Modell und Ablage `pi-frontends/outline.json`, Revisionen gegen fremdes
+Überschreiben (auch bei offenen Dialogen). Bestehende Sessions-Ansicht bleibt.
+Der aktive cocopi-Backends-Schalter verwendet eine gemalte Chat-/Rückpfeilikone
+statt „×“. Details, Bedienung und offene Grenzen: [OUTLINE.md](OUTLINE.md).
+
+Geprüft: copi 118 / cocopi 122 App-Tests bestanden, je 2 ignoriert; pi-lite
+`cargo check --offline --locked` bestanden (alten `Spec.args`-API-Bruch behoben).
+22 JS-Testskripte bestanden; `test-statusline-net.cjs` scheitert weiterhin am bereits
+in HEAD fehlenden `NET_PLACEHOLDER`. Native Headless-Demo und isolierte Chromium-
+Gliederung mit Testdaten angesehen. Keine echten Fenster/Sessiondateien bedient,
+kein echter WebKit-/Mehrfenster-/Remote-Bedientest. Diese Tests bleiben offen.
+Branchstände main/copi und das separate v3-Repo wurden nicht verändert.
+cocopi-Release mit `--offline --locked --release --features cocopi --bin cocopi`
+erfolgreich gebaut, atomar nach `~/.local/bin/cocopi` installiert. Vollständiger
+Quell-/Ziel-SHA256: `58f4fe3f2520794ef541c74a0b862461663c38304337ba6e884ffaf49f31ce01`.
+Backup: `~/.local/bin/cocopi.bak-outline-20261105T065508`. Installierte ARM-Binary
+mit `COPI_SCENE=outline --shot` geprüft und Bild angesehen (Demo ohne pi).
+Rund 9 GB frei; kein Cache entfernt. Laufende Fenster nicht geschlossen:
+**regulärer Neustart nötig**, dann links „Gliederung“ wählen. pi-lite nur Quellcode
+integriert/compile-geprüft, noch kein neuer Release installiert.
+
+
 copi-Fix 2026-10-20 (ANR-Dialog beim App-Wechsel): Hyprland zeigte „Application
 Not Responding“, sobald copi auf einem anderen Workspace lag. Ursache eframe
 0.36/glow unter Wayland: swap_buffers mit vsync wartet auf einen Frame-Callback,

@@ -246,7 +246,8 @@ fn empty_prompt_with_material_does_not_submit() {
 
 #[test]
 fn sidebar_temporarily_excludes_other_harnesses() {
-    assert_eq!(SIDE_VIEWS.len(), 4);
+    assert_eq!(SIDE_VIEWS.len(), 5);
+    assert_eq!(SIDE_VIEWS[crate::outline_ui::OUTLINE_VIEW], "Gliederung");
     assert!(!SIDE_VIEWS.iter().any(|s| s.contains("Harness")));
     assert_eq!(crate::app::side_view_category(4), None);
 }
@@ -1055,4 +1056,134 @@ fn remote_sessions_switch_and_only_shown_one_is_highlighted() {
     prompt_frame(&mut a, vec![egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() }]);
     prompt_frame(&mut a, vec![egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }]);
     assert!(a.session_shown(&r0) && !a.session_shown(&r1), "Klick wechselt die Remote-Session");
+}
+
+// ---------- Gliederung (outline_ui + shared/outline.rs) ----------
+
+fn key(key: Key, modifiers: Modifiers) -> Event {
+    Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }
+}
+
+fn outline_demo() -> App {
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    a.demo_scene_outline();
+    a
+}
+
+/// Wie nach einem Klick in die Seitenleiste: Eingabezeile nicht fokussiert.
+fn outline_frame(a: &mut App, events: Vec<Event>) {
+    a.focus_prompt = false;
+    a.ctx.memory_mut(|m| if let Some(id) = m.focused() { m.surrender_focus(id) });
+    prompt_frame(a, events);
+}
+
+#[test]
+fn outline_rows_tree_collapsed_and_loose_groups() {
+    let a = outline_demo();
+    let rows = a.outline_rows();
+    let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+    // Archiv ist zugeklappt (Sitzung 3 + alt.md unsichtbar), Session 4 steht ohne Einordnung.
+    assert_eq!(labels, ["Projekt Demo", "Beispiel-Session", "AGENTS.md", "Recherche", "Markdown-Test", "Kurze Frage", "Archiv", "Sessions ohne Einordnung", "Notizen", "md-Dateien ohne Einordnung"]);
+    let archiv = &rows[6];
+    assert!(archiv.collapsed && archiv.has_children && archiv.count == 2);
+    assert_eq!(rows[9].count, 3, "README, skill-notizen, kurs-plan noch lose");
+    assert!(rows[9].collapsed, "md-Gruppe standardmäßig zu");
+}
+
+#[test]
+fn outline_keys_indent_collapse_and_move() {
+    use crate::outline_ui::RowKey;
+    use crate::shared_outline::Ref;
+    let mut a = outline_demo();
+    // Cursor auf „Recherche“ (Ebene 1, Kinder). ← klappt zu.
+    outline_frame(&mut a, vec![key(Key::ArrowLeft, Modifiers::NONE)]);
+    assert!(a.outline.o.items[3].collapsed);
+    outline_frame(&mut a, vec![key(Key::ArrowRight, Modifiers::NONE)]);
+    assert!(!a.outline.o.items[3].collapsed);
+    // ↓ auf „Markdown-Test“; Tab geht nicht (erstes Kind), Umschalt+Tab rückt aus.
+    outline_frame(&mut a, vec![key(Key::ArrowDown, Modifiers::NONE)]);
+    assert_eq!(a.outline.cursor, Some(RowKey::Tree(Ref::Session { key: "/demo/sessions/1.jsonl".into() })));
+    outline_frame(&mut a, vec![key(Key::Tab, Modifiers::SHIFT)]);
+    assert_eq!(a.outline.o.items[4].level, 1, "ausgerückt");
+    assert_eq!(a.outline.o.items[5].level, 2, "folgendes Geschwister wird Kind");
+    outline_frame(&mut a, vec![key(Key::Tab, Modifiers::NONE)]);
+    assert_eq!(a.outline.o.items[4].level, 2, "wieder eingerückt");
+    // Alt+↑ auf „AGENTS.md“ tauscht mit dem vorherigen Geschwister; Cursor folgt.
+    a.outline.cursor = Some(RowKey::Tree(Ref::Md { path: "/demo/md/AGENTS.md".into() }));
+    outline_frame(&mut a, vec![key(Key::ArrowUp, Modifiers::ALT)]);
+    assert!(matches!(&a.outline.o.items[1].r, Ref::Md { path } if path == "/demo/md/AGENTS.md"));
+    assert_eq!(a.outline.cursor, Some(RowKey::Tree(Ref::Md { path: "/demo/md/AGENTS.md".into() })), "Cursor folgt");
+    assert!(a.dialogs.is_empty(), "Gliederungstasten öffnen keine Dialoge");
+}
+
+#[test]
+fn outline_tab_adopts_loose_session_and_n_opens_dialog() {
+    use crate::outline_ui::RowKey;
+    use crate::shared_outline::Ref;
+    let mut a = outline_demo();
+    let loose = RowKey::Loose(Ref::Session { key: "/demo/sessions/4.jsonl".into() });
+    a.outline.cursor = Some(loose);
+    let n = a.outline.o.items.len();
+    outline_frame(&mut a, vec![key(Key::Tab, Modifiers::NONE)]);
+    assert_eq!(a.outline.o.items.len(), n + 1);
+    assert!(matches!(&a.outline.o.items[n].r, Ref::Session { key } if key == "/demo/sessions/4.jsonl"));
+    assert_eq!(a.outline.o.items[n].level, 0);
+    // Neue Kategorie per N öffnet den Eingabedialog (Demo: nichts auf Platte).
+    outline_frame(&mut a, vec![key(Key::N, Modifiers::NONE)]);
+    assert!(a.dialogs.iter().any(|d| d.title == "Neue Kategorie"));
+}
+
+#[test]
+fn outline_drop_target_levels_follow_pointer_x() {
+    use crate::outline_ui::{outline_drop_target, INDENT, ROW_H};
+    let a = outline_demo();
+    let rows = a.outline_rows();
+    let left = 0.0;
+    let geo: Vec<(egui::Rect, usize)> = rows.iter().enumerate().filter(|(_, r)| r.item.is_some())
+        .enumerate().map(|(k, (ri, _))| (egui::Rect::from_min_size(egui::pos2(0.0, k as f32 * ROW_H), egui::vec2(220.0, ROW_H)), ri)).collect();
+    // Zwischen „Beispiel-Session“ (Ebene 1) und „AGENTS.md“ (Ebene 1), weit rechts → Ebene 2.
+    let y = ROW_H * 2.0 - 3.0;
+    let t = outline_drop_target(&a.outline.o, &rows, &geo, egui::pos2(3.0 + 6.0 * INDENT, y), 999.0, left).unwrap();
+    assert_eq!((t.dest, t.level), (2, 2));
+    // Ganz links → Ebene 1 (nicht flacher als der Eintrag darunter).
+    let t = outline_drop_target(&a.outline.o, &rows, &geo, egui::pos2(0.0, y), 999.0, left).unwrap();
+    assert_eq!(t.level, 1);
+    // Unter dem letzten Baumeintrag (Archiv, zugeklappt): Ende der Liste.
+    let t = outline_drop_target(&a.outline.o, &rows, &geo, egui::pos2(0.0, ROW_H * 20.0), 999.0, left).unwrap();
+    assert_eq!(t.dest, a.outline.o.items.len());
+}
+
+#[test]
+fn outline_remove_category_confirm_promotes_children() {
+    use crate::outline_ui::RowKey;
+    use crate::shared_outline::Ref;
+    let mut a = outline_demo();
+    a.outline.cursor = Some(RowKey::Tree(Ref::Cat { id: "c1".into(), name: String::new() }));
+    outline_frame(&mut a, vec![key(Key::Delete, Modifiers::NONE)]);
+    assert_eq!(a.dialogs.front().unwrap().title, "Kategorie entfernen?");
+    a.close_dialog(Some(json!({"confirmed": true})));
+    assert_eq!(a.outline.o.items.len(), 8);
+    assert!(matches!(&a.outline.o.items[0].r, Ref::Session { .. }));
+    assert_eq!(a.outline.o.items[0].level, 0);
+}
+
+#[test]
+fn outline_dialog_rejects_changed_revision() {
+    let mut a = outline_demo();
+    outline_frame(&mut a, vec![key(Key::F2, Modifiers::NONE)]);
+    assert_eq!(a.dialogs.front().unwrap().title, "Kategorie umbenennen");
+    a.outline.o.rev += 1; // anderes Fenster wurde inzwischen eingelesen
+    a.close_dialog(Some(json!({"value": "Falscher Eintrag"})));
+    assert!(matches!(&a.outline.o.items[3].r, crate::shared_outline::Ref::Cat { name, .. } if name == "Recherche"));
+    assert!(!a.toasts.is_empty());
+}
+
+#[test]
+fn outline_scene_renders_headless() {
+    let mut a = outline_demo();
+    for _ in 0..2 {
+        prompt_frame(&mut a, vec![]);
+    }
+    assert!(a.toasts.is_empty(), "keine Fehlermeldung beim Zeichnen");
 }

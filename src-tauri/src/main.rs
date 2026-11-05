@@ -8,6 +8,18 @@ fn shared_bookmarks_update(base:serde_json::Value, local:serde_json::Value) -> R
 #[tauri::command]
 fn shared_bookmarks_seed(local:serde_json::Value) -> Result<serde_json::Value,String> { shared_bookmarks::seed(&local) }
 
+// Gliederung (gemeinsam mit copi/cocopi): `pi-frontends/outline.json`.
+#[path = "../../shared/outline.rs"]
+mod shared_outline;
+#[tauri::command]
+fn outline_read() -> Result<shared_outline::Outline,String> { shared_outline::read() }
+/// Operation auf Stand `rev` anwenden; bei fremder Änderung `Err(CONFLICT)`.
+#[tauri::command]
+fn outline_apply(rev:u64, op:shared_outline::Op) -> Result<serde_json::Value,String> {
+    let (o, at) = shared_outline::apply(rev, op)?;
+    Ok(serde_json::json!({ "outline": o, "at": at }))
+}
+
 mod inventory;
 mod preview;
 mod folders;
@@ -281,7 +293,7 @@ fn main() {
         .manage(preview::CacheLock::default())
         .manage(InfoCache::default())
         .manage(cli::Cli::default())
-        .invoke_handler(tauri::generate_handler![shared_bookmarks_read, shared_bookmarks_update, shared_bookmarks_seed, start_pi, send, list_sessions, delete_session, inventory::inventory, inventory::read_config, inventory::save_config, preview::preview, preview::cached_purpose, preview::clear_previews, preview::explain_usage, folders::resume_session, folders::work_locations, folders::list_folders, editor::open_in_editor, editor::existing_paths, material::material_browser, material::material_preview, material::pick_material, material::prepare_material, media::media_routes, media::analyze_media, cli::pi_cli, cli::pi_cli_cancel, cli::startup_info, cli::latest_version, cli::open_changelog, cli::quit_app, net_backends, net_save_backend, net_delete_backend, net_list, net_create, net_remove, net_restart, net_send, net_dirs, net_sessions, net_delete_session, net_rename_session, net_fetch, net_subscribe, net_unsubscribe])
+        .invoke_handler(tauri::generate_handler![shared_bookmarks_read, shared_bookmarks_update, shared_bookmarks_seed, outline_read, outline_apply, start_pi, send, list_sessions, delete_session, inventory::inventory, inventory::read_config, inventory::save_config, preview::preview, preview::cached_purpose, preview::clear_previews, preview::explain_usage, folders::resume_session, folders::work_locations, folders::list_folders, editor::open_in_editor, editor::existing_paths, material::material_browser, material::material_preview, material::pick_material, material::prepare_material, media::media_routes, media::analyze_media, cli::pi_cli, cli::pi_cli_cancel, cli::startup_info, cli::latest_version, cli::open_changelog, cli::quit_app, net_backends, net_save_backend, net_delete_backend, net_list, net_create, net_remove, net_restart, net_send, net_dirs, net_sessions, net_delete_session, net_rename_session, net_fetch, net_subscribe, net_unsubscribe])
         .build(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen")
         .run(|app, ev| {

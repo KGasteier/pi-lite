@@ -42,7 +42,7 @@ pub fn err_or(r: &Value, d: &str) -> String {
 }
 
 pub const THINKING: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-pub const SIDE_VIEWS: [&str; 4] = ["Sessions", "Extensions / Plugins", "Skills", "pi · Agent- und Kontextdateien"];
+pub const SIDE_VIEWS: [&str; 5] = ["Sessions", "Extensions / Plugins", "Skills", "pi · Agent- und Kontextdateien", "Gliederung"];
 
 /// Inventar-Kategorie für `SIDE_VIEWS[idx]`; `None` für „Sessions“ (idx 0, eigene Liste statt Inventar).
 pub fn side_view_category(idx: usize) -> Option<&'static str> {
@@ -248,6 +248,8 @@ pub struct App {
     /// Kontextmenü für den per Tastatur markierten Eintrag (M / Umschalt+F10), vereinfachtes
     /// fest positioniertes Overlay statt per-Zeilen-Menü.
     pub(crate) list_menu: bool,
+    /// Seitenansicht „Gliederung“ (virtuelle Sicht, `shared/outline.rs`).
+    pub(crate) outline: crate::outline_ui::OutlineState,
 
     // Status
     pub(crate) busy: bool,
@@ -377,6 +379,7 @@ impl App {
             list_cursor: None,
             list_scroll: false,
             list_menu: false,
+            outline: Default::default(),
             busy: false,
             busy_since: None,
             activity: Default::default(),
@@ -528,6 +531,7 @@ impl App {
         }
         self.drain();
         self.net.pump(self.store.net_visible);
+        self.outline_refresh();
         #[cfg(feature = "cocopi")]
         self.coco_pump();
         self.remote_speech();
@@ -1513,8 +1517,11 @@ impl App {
     pub fn set_side_view(&mut self, idx: usize) {
         self.side_view = idx;
         self.preview = None;
-        if side_view_category(idx).is_some() {
+        if side_view_category(idx).is_some() || idx == crate::outline_ui::OUTLINE_VIEW {
             self.load_inventory();
+        }
+        if idx == crate::outline_ui::OUTLINE_VIEW {
+            crate::outline_ui::on_enter(self);
         }
     }
 
@@ -2500,6 +2507,7 @@ impl App {
             }
             "toast" => self.toast("Arbeitsordner für die nächste neue Session ausgewählt.", ToastKind::Info),
             "inventory" => self.demo_scene_inventory(),
+            "outline" => self.demo_scene_outline(),
             "longlog" => self.demo_scene_longlog(10_000),
             "statusline" => {
                 // Synthetischer laufender Agent mit Werkzeug und Warteschlange; Netz-Leiste offen.
@@ -2526,6 +2534,39 @@ impl App {
     /// private Pfade – ausschließlich erfundene `/demo/...`-Pfade. Nützlich zum manuellen
     /// Durchklicken der Inventaransicht (`COPI_SCENE=inventory`) und als Grundlage für
     /// Regressionstests, die eine realistische Menge an Einträgen brauchen.
+    /// Gliederung mit Kategorien, Unterkategorie, Sessions und md-Dateien (nur `/demo/...`).
+    pub fn demo_scene_outline(&mut self) {
+        use crate::shared_outline::{Item, Outline, Ref};
+        self.side_view = crate::outline_ui::OUTLINE_VIEW;
+        self.store.side_visible = true;
+        self.inventory = ["AGENTS.md", "README.md", "skill-notizen.md", "kurs-plan.md"]
+            .iter()
+            .enumerate()
+            .map(|(i, n)| pi_backend::inventory::Entry { category: if i < 2 { "agents".into() } else { "skills".into() }, harness: "pi".into(), name: (*n).into(), path: format!("/demo/md/{n}") })
+            .collect();
+        let cat = |id: &str, name: &str, level| Item::new(Ref::Cat { id: id.into(), name: name.into() }, level);
+        let ses = |k: &str, level| Item::new(Ref::Session { key: k.into() }, level);
+        let md = |p: &str, level| Item::new(Ref::Md { path: p.into() }, level);
+        let mut archiv = cat("c3", "Archiv", 0);
+        archiv.collapsed = true;
+        self.outline.o = Outline {
+            items: vec![
+                cat("c1", "Projekt Demo", 0),
+                ses("/demo/sessions/a.jsonl", 1),
+                md("/demo/md/AGENTS.md", 1),
+                cat("c2", "Recherche", 1),
+                ses("/demo/sessions/1.jsonl", 2),
+                ses("/demo/sessions/2.jsonl", 2),
+                archiv,
+                ses("/demo/sessions/3.jsonl", 1),
+                md("/demo/md/alt.md", 1),
+            ],
+            open_unsorted: vec!["sessions".into()],
+            ..Default::default()
+        };
+        self.outline.cursor = Some(crate::outline_ui::RowKey::Tree(Ref::Cat { id: "c2".into(), name: String::new() }));
+    }
+
     fn demo_scene_inventory(&mut self) {
         self.side_view = 1; // „Extensions / Plugins“ – direkt setzen, nicht über `set_side_view`,
         // da dieses im Demo-Modus `load_inventory` aufruft, welches das Inventar sofort wieder leert.

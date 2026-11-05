@@ -33,6 +33,33 @@
   .sess .srv { display:inline-block; max-width:90px; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; margin-right:6px; padding:0 5px; border-radius:6px; background:var(--remote); color:#1e2227; font-size:10px; line-height:14px; }
   #sidehint { font-size:11px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #sessions { flex:1; overflow:auto; padding:4px 8px; }
+  /* Gliederung: kompakte Zeilen, kleine gemalte Dreiecke/Punkte statt großer Symbole */
+  #outline { flex:1; overflow:auto; padding:4px 8px; position:relative; --cat:#6aa5e8; }
+  #outline .ol-head { display:flex; align-items:center; gap:6px; margin:2px 0 6px; }
+  #outline .ol-head button { padding:3px 9px; font-size:12px; }
+  #outline .ol-help { margin-left:auto; width:16px; height:16px; border-radius:50%; border:1px solid var(--dim); color:var(--dim); font-size:10px; display:flex; align-items:center; justify-content:center; cursor:help; }
+  #outline .ol-empty { color:var(--dim); font-size:11.5px; margin:4px 2px 8px; }
+  #outline hr { border:0; border-top:1px solid #3a424a; margin:6px 0; }
+  .ol-row { display:flex; align-items:center; height:22px; margin:1px 0; border-radius:5px; cursor:pointer; font-size:12px; user-select:none; outline:none; }
+  .ol-row:hover { background:color-mix(in srgb, var(--cat) 13%, transparent); }
+  .ol-row:focus, .ol-row:focus-visible { background:color-mix(in srgb, var(--cat) 24%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--cat) 60%, transparent); }
+  .ol-row.remote { --cat:var(--remote); }
+  .ol-row.dragging { opacity:.5; }
+  .ol-sym { flex:0 0 12px; width:12px; height:12px; color:color-mix(in srgb, var(--cat) 85%, var(--fg)); cursor:grab; }
+  .ol-row.cat .ol-sym, .ol-row.group .ol-sym { color:var(--dim); }
+  .ol-sym svg { width:12px; height:12px; display:block; }
+  .ol-t { flex:1; min-width:0; margin-left:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ol-row.cat .ol-t { font-weight:700; font-size:12.5px; }
+  .ol-row.group .ol-t { color:var(--dim); font-size:11px; }
+  .ol-row.missing .ol-t { color:var(--dim); font-style:italic; }
+  .ol-n { color:var(--dim); font-size:10px; margin:0 6px 0 4px; }
+  .ol-drop { position:absolute; right:12px; height:2px; background:var(--acc, #e0a050); pointer-events:none; border-radius:1px; }
+  .ol-drop::before { content:""; position:absolute; left:-8px; top:-3px; width:5px; height:5px; border:1.6px solid var(--acc, #e0a050); border-radius:50%; }
+  body.ol-grabbing, body.ol-grabbing * { cursor:grabbing !important; }
+  .ol-menu { position:fixed; z-index:60; min-width:190px; background:#2b3137; border:1px solid #444c55; border-radius:8px; padding:4px; box-shadow:0 6px 20px #0008; }
+  .ol-menu button { display:block; width:100%; text-align:left; background:transparent; padding:5px 10px; font-size:12.5px; border-radius:5px; }
+  .ol-menu button:hover, .ol-menu button:focus { background:#38424d; }
+  .ol-menu hr { border:0; border-top:1px solid #444c55; margin:3px 0; }
   #inventory { flex:1; overflow:auto; padding:8px; }
   #sideview { margin:0; max-width:none; width:100%; height:30px; font-size:13px; }
   .inventoryhint { display:block; font-size:11px; line-height:1.4; color:var(--dim); padding:2px 4px 5px; }
@@ -360,6 +387,7 @@
   <select id="sideview" aria-label="Seitenleistenansicht">
     <option value="sessions">Sessions</option><option value="extensions">Extensions / Plugins</option>
     <option value="skills">Skills</option><option value="agents">pi · Agent- und Kontextdateien</option>
+    <option value="outline">Gliederung</option>
   </select>
   <div id="sidetools" role="group" aria-label="Seitenleistenaktionen">
     <button id="newsess" title="Neue Session (Alt+N)">+ Neu</button>
@@ -370,6 +398,7 @@
   </div>
   <div id="sessions"></div>
   <div id="inventory" hidden></div>
+  <div id="outline" role="tree" aria-label="Gliederung" hidden></div>
 </aside>
 <div id="main">
 <header>
@@ -467,6 +496,7 @@ Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhal
 <script src="shared-bookmarks.js"></script>
 <script src="session-bookmarks.js"></script>
 <script src="remote-sessions.js"></script>
+<script src="outline.js"></script>
 <script src="commands.js"></script>
 <script src="slash.js"></script>
 <script src="dialog-selection.js"></script>

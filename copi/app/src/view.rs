@@ -20,7 +20,7 @@ type Act = Box<dyn FnOnce(&mut App)>;
 const KEYHELP: [&str; 5] = [
     "Tab / Shift+Tab: nächstes / vorheriges Bedienelement · Enter/Leertaste: aktivieren · Esc: schließen/zurück",
     "Alt+1: Eingabe · Alt+2: Seitenliste · Alt+3: Chat · Alt+4: Kopfzeile · Alt+5: Vorschau\nAlt+N: neue Session · Alt+A: abbrechen · Alt+F: Fork · Alt+M: Modell · Alt+T: Thinking\nAlt+− / Alt++: Ausgabeschrift · F1: diese Hilfe · Strg/Cmd+B: Sessions · Strg/Cmd+Shift+B: rechte Seitenleiste",
-    "Listen: ↑/↓, Home/End · ←: Ansichtsauswahl · →: Vorschau\nSessions: Enter öffnen · R/F2 umbenennen · Backspace löschen · M/Shift+F10 Menü\nChat: ↑/↓ scrollen · Home/End Anfang/Ende · Tab erreicht Links und Tool-Blöcke",
+    "Listen: ↑/↓, Home/End · ←: Ansichtsauswahl · →: Vorschau\nSessions: Enter öffnen · R/F2 umbenennen · Backspace löschen · M/Shift+F10 Menü\nGliederung: ←/→ zu-/aufklappen · Tab/Shift+Tab ein-/ausrücken · Alt+↑/↓ verschieben · N Kategorie · Ziehen sortiert\nChat: ↑/↓ scrollen · Home/End Anfang/Ende · Tab erreicht Links und Tool-Blöcke",
     "Eingabe: ↑/↓ an erster/letzter Zeile: History; sonst Cursor · Alt+↑/↓ oder Pfeilknöpfe: History\nEnter sendet · Option/Alt+Enter: neue Zeile · Editor: Strg/Cmd+S speichert\nEsc unterbricht den Agenten · !cmd Shell (!!cmd ohne Kontext) · pi update u. a. pi-CLI-Befehle direkt\n/ öffnet Befehle · Tippen filtert Namen · Hover/↑↓ markieren · Klick/Enter ausführen · Tab vervollständigen · Esc schließen",
     "Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhalb von Textfeldern.",
 ];
@@ -32,7 +32,7 @@ fn prompt_id() -> Id {
 }
 
 /// Nimmt ein Tastenereignis aus der Warteschlange (plus das Text-Echo bei Alt/Leertaste).
-fn take(ctx: &Context, f: impl Fn(Key, &Modifiers) -> bool) -> bool {
+pub(crate) fn take(ctx: &Context, f: impl Fn(Key, &Modifiers) -> bool) -> bool {
     ctx.input_mut(|i| {
         let Some(p) = i.events.iter().position(|e| matches!(e, Event::Key { key, pressed: true, modifiers, .. } if f(*key, modifiers))) else {
             return false;
@@ -50,11 +50,11 @@ fn take(ctx: &Context, f: impl Fn(Key, &Modifiers) -> bool) -> bool {
 /// „Strg bzw. Cmd gedrückt“ und vergleicht gegen `Modifiers::command`, das egui unter Windows/
 /// Linux auf `ctrl` und unter macOS auf `mac_cmd` (⌘) setzt – dadurch funktionieren dieselben
 /// Tastenkürzel (z. B. Strg/Cmd+S) auf allen drei Plattformen ohne separate Mac-Zweige.
-fn k(ctx: &Context, key: Key, alt: bool, ctrl: bool, shift: bool) -> bool {
+pub(crate) fn k(ctx: &Context, key: Key, alt: bool, ctrl: bool, shift: bool) -> bool {
     take(ctx, |kk, m| kk == key && m.alt == alt && m.command == ctrl && m.shift == shift)
 }
 
-fn plain(ctx: &Context, key: Key) -> bool {
+pub(crate) fn plain(ctx: &Context, key: Key) -> bool {
     k(ctx, key, false, false, false)
 }
 
@@ -231,7 +231,7 @@ impl App {
                 .constrain(true)
                 .show(&ctx, |ui| {
                     Frame::new().fill(PANEL).corner_radius(12)
-                        .stroke(Stroke::new(1.0, match self.side_view { 1 => CAT_EXT, 2 => CAT_SKILLS, 3 => CAT_AGENTS, 4 => CAT_HARNESS, _ => CAT })).inner_margin(Margin::same(12))
+                        .stroke(Stroke::new(1.0, match self.side_view { 1 => CAT_EXT, 2 => CAT_SKILLS, 3 => CAT_AGENTS, _ => CAT })).inner_margin(Margin::same(12))
                         .show(ui, |ui| {
                             ui.set_width(350.0f32.min(ctx.content_rect().width() - 40.0));
                             ui.set_max_height((ctx.content_rect().height() - 150.0).max(150.0));
@@ -487,7 +487,21 @@ impl App {
                 }
                 return;
             }
-            let n = if self.side_view == 0 { self.visible_sessions().len() } else { self.visible_inventory().len() };
+            if self.side_view == crate::outline_ui::OUTLINE_VIEW {
+                if self.outline.drag.is_some() {
+                    if plain(ctx, Key::Escape) {
+                        self.outline.drag = None;
+                    }
+                    return;
+                }
+                if self.outline_keys(ctx) {
+                    // Auch vorgemerkte egui-Pfeilnavigation aufheben, sonst wandert der Fokus
+                    // nach dieser Aktion in einen Knopf und blockiert die nächste Baumtaste.
+                    ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+                    return;
+                }
+            }
+            let n = if self.side_view == crate::outline_ui::OUTLINE_VIEW { 0 } else if self.side_view == 0 { self.visible_sessions().len() } else { self.visible_inventory().len() };
             if n > 0 {
                 let mut moved = true;
                 let cur = self.list_cursor.unwrap_or(0).min(n - 1);
@@ -684,6 +698,9 @@ impl App {
                     }
                 });
             });
+        } else if self.side_view == crate::outline_ui::OUTLINE_VIEW {
+            self.outline_sidebar(ui);
+            return;
         } else if self.inventory_loading {
             ui.add(Label::new(txt("Lädt…", 12.0, DIM)));
         }

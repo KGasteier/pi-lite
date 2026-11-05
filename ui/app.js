@@ -717,6 +717,7 @@ function renderSessions() {
     box.appendChild(d);
   }
   markActive();
+  window.piLiteSessionsChanged?.();
 }
 // ---------- Kontextmenü & Tastatur der Sessionliste ----------
 let ctxFrom = null;
@@ -1085,13 +1086,15 @@ async function changeSideView() {
   const view = $("sideview").value, gen = ++inventoryGeneration;
   document.body.dataset.cat = view;
   $("sessions").hidden = view !== "sessions";
-  $("inventory").hidden = view === "sessions";
+  $("inventory").hidden = view === "sessions" || view === "outline";
+  $("outline").hidden = view !== "outline";
   $("newsess").hidden = view !== "sessions";
   $("bookmarkfilter").hidden = view !== "sessions";
   $("originfilter").hidden = view !== "sessions";
   $("sidehint").hidden = view === "sessions";
   $("sidetitle").textContent = $("sideview").selectedOptions[0].textContent;
   if (view === "sessions") return;
+  if (view === "outline") { await showOutline(gen); return; }
   const container = $("inventory"); container.replaceChildren();
   const info = document.createElement("small");
   info.className = "inventoryhint";
@@ -1115,6 +1118,23 @@ async function changeSideView() {
     }
   } catch (e) { toast(String(e), "error"); }
 }
+// Gliederung (ui/outline.js): Sessions lokal + remote und alle md-Dateien des Inventars.
+const outlineView = Outline.createView($("outline"), {
+  invoke, ask, toast,
+  openSession: s => openSession(s),
+  openMd: e => openConfig(e),
+  renameSession: s => renameSession(s),
+});
+let outlineEntries = [];
+async function showOutline(gen) {
+  await outlineView.load();
+  try { outlineEntries = await invoke("inventory", { cwd: $("cwd").value }); } catch (e) { toast(String(e), "error"); }
+  if (gen !== inventoryGeneration) return;
+  outlineView.setData(sessionList.concat(remoteSessions), outlineEntries);
+}
+window.piLiteSessionsChanged = () => { if ($("sideview").value === "outline") outlineView.setData(sessionList.concat(remoteSessions), outlineEntries); };
+// Änderungen aus copi/cocopi oder anderen pi-lite-Fenstern übernehmen.
+setInterval(() => { if ($("sideview").value === "outline" && !document.hidden) outlineView.refresh(); }, 1500);
 $("sideview").onchange = changeSideView;
 $("cwd").addEventListener("change", () => { if ($("sideview").value !== "sessions") changeSideView(); });
 let editSaving = false;

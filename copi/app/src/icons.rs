@@ -131,6 +131,24 @@ pub fn stop(p: &Painter, r: Rect, c: Color32) {
     let m = Map::new(r, 16.0, 16.0);
     p.rect_filled(Rect::from_min_max(m.p(4.5, 4.5), m.p(11.5, 11.5)), m.s(1.0), c);
 }
+/// Gliederung: gefülltes Dreieck ▸ (zu) bzw. ▾ (offen), klein und gemalt (keine Glyphe).
+pub fn disclosure(p: &Painter, r: Rect, c: Color32, open: bool) {
+    let m = Map::new(r, 12.0, 12.0);
+    let pts: &[(f32, f32)] = if open { &[(2.5, 4.0), (9.5, 4.0), (6.0, 8.5)] } else { &[(4.0, 2.5), (8.5, 6.0), (4.0, 9.5)] };
+    p.add(Shape::convex_polygon(pts.iter().map(|&(x, y)| m.p(x, y)).collect(), c, Stroke::NONE));
+}
+/// Leere Kategorie: hohles Dreieck ▹.
+pub fn disclosure_empty(p: &Painter, r: Rect, c: Color32) {
+    closed(p, &Map::new(r, 12.0, 12.0), &[(4.0, 2.5), (8.5, 6.0), (4.0, 9.5)], c, 1.1);
+}
+/// Zurück zum Chat: Sprechblase mit Pfeil nach links (ersetzt „×“ am Backends-Umschalter).
+pub fn back_to_chat(p: &Painter, r: Rect, c: Color32) {
+    let m = Map::new(r, 16.0, 16.0);
+    closed(p, &m, &[(4.0, 2.5), (14.0, 2.5), (14.0, 10.5), (8.0, 10.5), (5.0, 13.5), (5.0, 10.5), (4.0, 10.5)], c, 1.3);
+    line(p, &m, &[(11.5, 6.5), (6.0, 6.5)], c, 1.4);
+    line(p, &m, &[(8.0, 4.5), (6.0, 6.5), (8.0, 8.5)], c, 1.4);
+}
+
 /// Aufklapp-Pfeil der Auswahlknöpfe (10×6, rechts 9 px).
 pub fn chevron(p: &Painter, button: Rect, c: Color32) {
     let r = Rect::from_min_size(pos2(button.right() - 9.0 - 10.0, button.center().y - 3.0), Vec2::new(10.0, 6.0));

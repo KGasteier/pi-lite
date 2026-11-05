@@ -54,6 +54,8 @@ Workspace und referenzierte Dateien per Klick im externen Editor öffnen, ohne
 zweiten Agenten (siehe [Editor-Anbindung](docs/EDITOR_INTEGRATION.md)).
 [Session-Bookmarks](docs/SESSION_BOOKMARKS.md): kleine persistente Markierungen,
 Sortierung nach Zeit oder Bookmarks und Filter „nur Bookmarks“ in der Seitenleiste.
+[Gliederung](docs/OUTLINE.md): virtuelle Kategorien für Sessions und Markdown-Dateien,
+mit Teilbäumen, Einrückung und gemeinsamer Ablage für copi/cocopi und pi-lite.
 Arbeitsanzeige oben rechts mit animierter Pixel-Schlange vor „arbeitet …“.
 [Material hinzufügen](docs/MATERIAL.md): Dateien/URLs für die nächste Anfrage,
 Bildübergabe, lokaler PDF-Auszug und manuelle Verarbeitung-/Modellauswahl.

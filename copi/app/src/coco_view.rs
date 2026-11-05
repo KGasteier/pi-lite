@@ -335,8 +335,14 @@ impl App {
             )).truncate());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let n = self.net.backends.iter().map(|b| b.insts.len()).sum::<usize>();
-                let label = if state.backends { "× Backends".to_string() } else { format!("Backends {n}") };
-                if btn(ui, &label, 12.0, vec2(8.0, 3.0), vec2(0.0, 25.0), state.backends, true)
+                // Aktiv: gemaltes „Zurück zum Chat“-Symbol statt „×“ (Platz links im Knopf freigehalten).
+                let label = if state.backends { "      Backends".to_string() } else { format!("Backends {n}") };
+                let resp = btn(ui, &label, 12.0, vec2(8.0, 3.0), vec2(0.0, 25.0), state.backends, true);
+                if state.backends {
+                    let r = egui::Rect::from_center_size(egui::pos2(resp.rect.left() + 15.0, resp.rect.center().y), vec2(15.0, 15.0));
+                    crate::icons::back_to_chat(ui.painter(), r, egui::Color32::WHITE);
+                }
+                if resp
                     .on_hover_text(if state.backends { "Zurück zu Chats, Kontakten, Räumen und Agenten" } else { "Backends und Instanzen: Einzelchat wählen, Raster, neue Instanzen" })
                     .clicked()
                 {
