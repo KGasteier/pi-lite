@@ -4,6 +4,10 @@
 
 Links **Gliederung** wählen. **Edit** ist die kompakte Umordnungsansicht,
 **View** zeigt die vollständigen Sessionkarten mit bisherigen Aktionen und Vorschau.
+Im View-Modus sind ganze Karten und Teilbaum-Schalter um 9 px je Ebene eingerückt;
+Farboberkategorien bleiben links bündig. Die Karten werden entsprechend schmaler,
+nicht inhaltlich reduziert. Ab Ebene 5 bleibt die Einrückung auf 45 px begrenzt,
+damit auch tiefe Gliederungen bedienbare Karten behalten (native und Web-Ansicht).
 Alle Bookmark-Farben sind automatisch Oberkategorien, zusätzlich **Unmarkiert**.
 Farbige Trennstreifen klappen die jeweilige Gruppe auf/zu; Unterkategorien bleiben
 möglich. **+ Farbe** fragt Name und Hex-Farbe (#RRGGBB) ab und hängt einen neuen
@@ -72,7 +76,7 @@ Der pi-lite-Rasterschalter zeigte bereits ein Raster statt „×“ und bleibt e
 
 ## Prüfstand
 
-- Native Tests: copi 121 bestanden / 2 ignoriert; cocopi 125 bestanden / 2 ignoriert.
+- Native Tests: copi 122 bestanden / 2 ignoriert; cocopi 126 bestanden / 2 ignoriert.
   Enthalten sind Modell-/Dateikonflikttests sowie Zeilen-, Tastatur-, Dropziel- und
   Dialogregressionen. Keine echten privaten Sessiondateien werden verändert.
 - `node scripts/test-outline.cjs` und JS-Syntaxchecks bestanden. Bestehende JS-Suite:

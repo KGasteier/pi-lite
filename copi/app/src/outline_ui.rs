@@ -18,6 +18,8 @@ pub const OUTLINE_VIEW: usize = 4;
 /// Einrückung je Ebene (AUGMOST: 26 px; hier schmaler für die 240-px-Seitenleiste).
 pub const INDENT: f32 = 14.0;
 pub const ROW_H: f32 = 22.0;
+/// Kleine Keynote-artige Staffelung im Inhaltsmodus; tiefe Bäume behalten Kartenbreite.
+pub fn view_indent(level: usize) -> f32 { level.min(5) as f32 * 9.0 }
 /// Breite der Symbolspalte (Dreieck bzw. Punkt; zugleich Ziehgriff).
 const SYM: f32 = 12.0;
 const LOOSE_SESSIONS: &str = "sessions";
@@ -242,8 +244,22 @@ impl App {
         DIM
     }
 
-    /// View verwendet die unveränderten, vollständigen Karten samt Vorschau und Aktionen.
+    /// View staffelt ganze Karten und Teilbaum-Schalter, nicht nur deren Text.
     fn outline_view_row(&mut self,ui:&mut Ui,row:&Row,selected:bool)->Response {
+        let inset=view_indent(row.level);
+        let width=(ui.available_width()-inset).max(80.0);
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x=0.0;
+            ui.add_space(inset);
+            ui.allocate_ui_with_layout(vec2(width,0.0),egui::Layout::top_down(egui::Align::Min),|ui| {
+                ui.set_width(width);
+                self.outline_view_content(ui,row,selected)
+            }).inner
+        }).inner
+    }
+
+    /// Vollständige Karten samt Vorschau und Aktionen innerhalb der eingerückten Fläche.
+    fn outline_view_content(&mut self,ui:&mut Ui,row:&Row,selected:bool)->Response {
         match &row.key {
             RowKey::Tree(Ref::Session{key})|RowKey::Loose(Ref::Session{key}) => {
                 if let Some(s)=self.outline_sessions().into_iter().find(|s| &s.key()==key) {
@@ -516,7 +532,7 @@ impl App {
         if selected {
             p.rect_stroke(rect, 5, Stroke::new(1.0, mix(tone, 0.6, PANEL)), StrokeKind::Inside);
         }
-        let x0 = rect.left() + 3.0 + row.level as f32 * if self.outline.view { 3.0 } else { INDENT };
+        let x0 = rect.left() + 3.0 + if self.outline.view { 0.0 } else { row.level as f32 * INDENT };
         let sym = Rect::from_center_size(pos2(x0 + SYM / 2.0, rect.center().y), vec2(SYM, SYM));
         let is_cat = matches!(row.key, RowKey::Tree(Ref::Cat { .. }) | RowKey::Group(_));
         if matches!(&row.key,RowKey::Tree(r) if so::color_root(r).is_some()) {

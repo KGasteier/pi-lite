@@ -239,6 +239,7 @@
     const SYMS = { empty: `<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5L8.5 6 4 9.5z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>`,
       md: `<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3.5" y="3" width="5" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`,
       session: `<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="2.4" fill="currentColor"/></svg>` };
+    const viewIndent = level => Math.min(5, level) * 9;
     function render(keepFocus) {
       const hadFocus = keepFocus || box.contains(document.activeElement);
       list = rows(outline, sessions, md);
@@ -258,8 +259,10 @@
       for (const r of list) {
         if (!sep && r.kind !== "tree") { sep = true; box.appendChild(document.createElement("hr")); }
         if(view && r.ref?.t==='session' && r.data && env.sessionCard) {
-          if(r.hasChildren) { const b=document.createElement('button'); b.textContent=r.collapsed?'▸ Teilbaum':'▾ Teilbaum'; b.onclick=()=>op({op:'toggle',i:r.item}); box.appendChild(b); }
-          box.appendChild(env.sessionCard(r.data)); continue;
+          const wrap=document.createElement('div');
+          wrap.style.marginLeft=viewIndent(r.level)+'px';
+          if(r.hasChildren) { const b=document.createElement('button'); b.textContent=r.collapsed?'▸ Teilbaum':'▾ Teilbaum'; b.onclick=()=>op({op:'toggle',i:r.item}); wrap.appendChild(b); }
+          wrap.appendChild(env.sessionCard(r.data)); box.appendChild(wrap); continue;
         }
         const el = document.createElement("div"), id = rowId(r);
         el.className = "ol-row " + r.kind + (r.ref?.t === "cat" ? " cat" : "") + (r.missing ? " missing" : "") + (r.remote ? " remote" : "");
@@ -267,7 +270,8 @@
         el.tabIndex = id === cursor ? 0 : -1; el.title = r.tip || "";
         el.setAttribute("role", "treeitem"); el.setAttribute("aria-level", String(r.level + 1));
         if (r.hasChildren) el.setAttribute("aria-expanded", String(!r.collapsed));
-        el.style.paddingLeft = (3 + r.level * (view?3:INDENT)) + "px";
+        el.style.paddingLeft = (view ? 3 : 3 + r.level * INDENT) + "px";
+        if(view) el.style.marginLeft=viewIndent(r.level)+'px';
         const color=env.colorOf?.(r.ref || {}), tone=color == null ? 'var(--dim,#89939d)' : BookmarkPalette.hex(color);
         const colorRoot=r.ref?.t==='cat' && r.ref.id.startsWith('bookmark-color:');
         if(colorRoot) { el.style.borderLeft=`3px solid ${tone}`; el.style.background=`color-mix(in srgb, ${tone} 18%, transparent)`; }

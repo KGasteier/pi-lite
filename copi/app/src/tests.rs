@@ -1118,6 +1118,15 @@ fn outline_keys_indent_collapse_and_move() {
 }
 
     #[test]
+    fn outline_view_indentation_keeps_roots_left_and_cards_usable() {
+        use crate::outline_ui::view_indent;
+        assert_eq!(view_indent(0),0.0);
+        assert_eq!(view_indent(1),9.0);
+        assert_eq!(view_indent(2),18.0);
+        assert_eq!(view_indent(12),45.0);
+    }
+
+    #[test]
     fn outline_color_view_renders_full_cards() {
         let mut a=outline_demo();
         let mut b=a.store.shared_value();
