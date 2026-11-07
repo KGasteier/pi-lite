@@ -1139,6 +1139,18 @@ fn outline_keys_indent_collapse_and_move() {
         assert_eq!(a.outline_rows().iter().filter(|r|r.level==0).count(),13);
     }
 
+    #[test]
+    fn outline_session_branch_card_keeps_normal_height() {
+        let mut a=outline_demo();
+        let s=a.outline_sessions()[0].clone();
+        let ctx=egui::Context::default();
+        let mut out=ctx.run_ui(egui::RawInput::default(),|ui| {
+            let r=a.session_card_outline(ui,&s,false,false,Some((0,false)));
+            assert_eq!(r.rect.height(),52.0,"Kein separater Teilbaum-Schalter oberhalb der Karte");
+        });
+        out.textures_delta.clear();
+    }
+
 #[test]
 fn outline_tab_adopts_loose_session_and_n_opens_dialog() {
     use crate::outline_ui::RowKey;

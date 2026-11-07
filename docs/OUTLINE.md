@@ -4,7 +4,10 @@
 
 Links **Gliederung** wählen. **Edit** ist die kompakte Umordnungsansicht,
 **View** zeigt die vollständigen Sessionkarten mit bisherigen Aktionen und Vorschau.
-Im View-Modus sind ganze Karten und Teilbaum-Schalter um 9 px je Ebene eingerückt;
+Im View-Modus sind ganze Karten um 9 px je Ebene eingerückt;
+Sessionkarten mit Kindern tragen den Auf-/Zuklapppfeil direkt links im Titelbereich
+(keine separate „Teilbaum“-Zeile). Pfeilklick klappt nur die Untereinträge, die
+restliche Karte öffnet weiterhin die Session.
 Farboberkategorien bleiben links bündig. Die Karten werden entsprechend schmaler,
 nicht inhaltlich reduziert. Ab Ebene 5 bleibt die Einrückung auf 45 px begrenzt,
 damit auch tiefe Gliederungen bedienbare Karten behalten (native und Web-Ansicht).
@@ -76,7 +79,7 @@ Der pi-lite-Rasterschalter zeigte bereits ein Raster statt „×“ und bleibt e
 
 ## Prüfstand
 
-- Native Tests: copi 122 bestanden / 2 ignoriert; cocopi 126 bestanden / 2 ignoriert.
+- Native Tests: copi 123 bestanden / 2 ignoriert; cocopi 127 bestanden / 2 ignoriert.
   Enthalten sind Modell-/Dateikonflikttests sowie Zeilen-, Tastatur-, Dropziel- und
   Dialogregressionen. Keine echten privaten Sessiondateien werden verändert.
 - `node scripts/test-outline.cjs` und JS-Syntaxchecks bestanden. Bestehende JS-Suite:

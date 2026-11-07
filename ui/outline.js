@@ -261,8 +261,18 @@
         if(view && r.ref?.t==='session' && r.data && env.sessionCard) {
           const wrap=document.createElement('div');
           wrap.style.marginLeft=viewIndent(r.level)+'px';
-          if(r.hasChildren) { const b=document.createElement('button'); b.textContent=r.collapsed?'▸ Teilbaum':'▾ Teilbaum'; b.onclick=()=>op({op:'toggle',i:r.item}); wrap.appendChild(b); }
-          wrap.appendChild(env.sessionCard(r.data)); box.appendChild(wrap); continue;
+          const card=env.sessionCard(r.data);
+          if(r.hasChildren) {
+            const b=document.createElement('button'); b.innerHTML=tri(!r.collapsed);
+            b.title=r.collapsed?'Untereinträge aufklappen':'Untereinträge zuklappen';
+            b.setAttribute('aria-label',b.title); b.setAttribute('aria-expanded',String(!r.collapsed));
+            b.style.cssText='position:absolute;left:4px;top:4px;width:22px;height:22px;padding:4px;background:transparent';
+            b.onpointerdown=e=>e.stopPropagation(); b.onkeydown=e=>e.stopPropagation();
+            b.onclick=e=>{e.stopPropagation();op({op:'toggle',i:r.item});};
+            const title=card.querySelector('.t'); if(title) title.style.paddingLeft='16px';
+            card.appendChild(b);
+          }
+          wrap.appendChild(card); box.appendChild(wrap); continue;
         }
         const el = document.createElement("div"), id = rowId(r);
         el.className = "ol-row " + r.kind + (r.ref?.t === "cat" ? " cat" : "") + (r.missing ? " missing" : "") + (r.remote ? " remote" : "");

@@ -244,7 +244,7 @@ impl App {
         DIM
     }
 
-    /// View staffelt ganze Karten und Teilbaum-Schalter, nicht nur deren Text.
+    /// View staffelt ganze Karten samt integrierten Gliederungspfeilen.
     fn outline_view_row(&mut self,ui:&mut Ui,row:&Row,selected:bool)->Response {
         let inset=view_indent(row.level);
         let width=(ui.available_width()-inset).max(80.0);
@@ -264,12 +264,8 @@ impl App {
             RowKey::Tree(Ref::Session{key})|RowKey::Loose(Ref::Session{key}) => {
                 if let Some(s)=self.outline_sessions().into_iter().find(|s| &s.key()==key) {
                     let active=self.session_shown(&s);
-                    if row.has_children {
-                        if ui.small_button(if row.collapsed { "▸ Teilbaum" } else { "▾ Teilbaum" }).clicked() {
-                            if let Some(i)=row.item { self.outline_op(Op::Toggle{i}); }
-                        }
-                    }
-                    return self.session_card(ui,&s,active,selected);
+                    let branch=if row.has_children { row.item.map(|i|(i,row.collapsed)) } else { None };
+                    return self.session_card_outline(ui,&s,active,selected,branch);
                 }
             }
             RowKey::Tree(Ref::Md{path})|RowKey::Loose(Ref::Md{path}) => {

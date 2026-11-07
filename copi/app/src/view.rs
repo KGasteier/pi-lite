@@ -920,6 +920,11 @@ impl App {
     }
 
     pub(crate) fn session_card(&mut self, ui: &mut Ui, s: &pi_backend::sessions::SessionInfo, active: bool, selected: bool) -> Response {
+        self.session_card_outline(ui,s,active,selected,None)
+    }
+
+    /// Optionaler Gliederungspfeil ist eine eigene Klickfläche innerhalb der Karte.
+    pub(crate) fn session_card_outline(&mut self, ui: &mut Ui, s: &pi_backend::sessions::SessionInfo, active: bool, selected: bool, branch: Option<(usize,bool)>) -> Response {
         let key = s.key();
         let remote = s.is_remote();
         // `active` = gerade gezeigt (Hervorhebung, Klick ohne Wirkung); `running` = in einer
@@ -940,10 +945,20 @@ impl App {
             p.rect_filled(Rect::from_min_size(rect.min + vec2(1.0, 8.0), vec2(3.0, rect.height() - 16.0)), 2, tone);
         }
         let title = [&s.name, &s.title].into_iter().find(|t| !t.is_empty()).cloned().unwrap_or("(leer)".into());
-        let tw = rect.width() - 24.0;
+        let title_x = if branch.is_some() { 28.0 } else { 12.0 };
+        let tw = rect.width() - title_x - 12.0;
+        let mut branch_clicked=false;
+        if let Some((i,collapsed))=branch {
+            let arrow=Rect::from_min_size(rect.min+vec2(5.0,4.0),vec2(20.0,22.0));
+            let ar=ui.interact(arrow,Id::new(("card-outline-toggle",&key)),Sense::click()).on_hover_text(if collapsed { "Untereinträge aufklappen" } else { "Untereinträge zuklappen" });
+            icons::disclosure(ui.painter(),Rect::from_center_size(arrow.center(),vec2(12.0,12.0)),FG,!collapsed);
+            branch_clicked=ar.clicked();
+            if branch_clicked { self.outline_op(crate::shared_outline::Op::Toggle{i}); }
+        }
+        let p=ui.painter();
         let mut job = LayoutJob::simple_singleline(title.clone(), FontId::proportional(13.0), FG);
         job.wrap = TextWrapping::truncate_at_width(tw);
-        p.galley(rect.min + vec2(12.0, 8.0), p.layout_job(job), FG);
+        p.galley(rect.min + vec2(title_x, 8.0), p.layout_job(job), FG);
         let mut meta_x = 12.0;
         if remote {
             let label = self.net.backend_label(&s.backend);
@@ -1022,7 +1037,7 @@ impl App {
             self.toggle_bookmark(&key);
         } else if act_resp.clicked() {
             self.rename_session(s);
-        } else if resp.clicked() && !active {
+        } else if resp.clicked() && !active && !branch_clicked {
             self.open_session(s, None);
         }
         resp.context_menu(|ui| {
