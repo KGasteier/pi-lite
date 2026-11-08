@@ -14,7 +14,7 @@ use crate::theme::*;
 use crate::view::{btn, k, plain, take, txt};
 
 /// Index der Gliederung in `SIDE_VIEWS`.
-pub const OUTLINE_VIEW: usize = 4;
+pub const OUTLINE_VIEW: usize = 1;
 /// Einrückung je Ebene (AUGMOST: 26 px; hier schmaler für die 240-px-Seitenleiste).
 pub const INDENT: f32 = 14.0;
 pub const ROW_H: f32 = 22.0;
@@ -616,6 +616,12 @@ impl App {
                     if !matches!(r, Ref::Cat { .. }) && ui.button("Öffnen").clicked() {
                         let rr = row2.clone();
                         act = Some(Box::new(move |a| a.outline_open(&rr)));
+                    }
+                    if let Ref::Session { key } = r {
+                        if !key.starts_with("remote:") && ui.button("Kontext-Repair …").clicked() {
+                            let key = key.clone();
+                            act = Some(Box::new(move |a| if let Some(s) = a.outline_sessions().into_iter().find(|s| s.key() == key) { a.open_repair(&s) }));
+                        }
                     }
                     if ui.button("Neue Kategorie danach").clicked() {
                         act = Some(Box::new(move |a| a.outline_new_category(Some(i), false)));

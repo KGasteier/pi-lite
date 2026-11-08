@@ -42,16 +42,22 @@ pub fn err_or(r: &Value, d: &str) -> String {
 }
 
 pub const THINKING: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-pub const SIDE_VIEWS: [&str; 5] = ["Sessions", "Extensions / Plugins", "Skills", "pi · Agent- und Kontextdateien", "Gliederung"];
+/// Seitenleiste = Kontextmanager für Sessions: Liste oder Gliederung. Extensions, Skills und
+/// Agent-/Kontextdateien stehen in der eigenen „Bibliothek“ (`library_ui.rs`).
+pub const SIDE_VIEWS: [&str; 2] = ["Sessions", "Gliederung"];
+/// Kategorien der Bibliothek (Anzeigename, Inventarkategorie).
+pub const LIBRARY_CATS: [(&str, &str); 3] = [("Extensions / Plugins", "extensions"), ("Skills", "skills"), ("Agent- und Kontextdateien", "agents")];
+/// Sortierungen der Sessionliste (Store-Wert, Knopftext, Hinweis).
+pub const SESSION_SORTS: [(&str, &str, &str); 4] = [
+    ("time", "Zeit", "Neueste zuerst"),
+    ("color", "Farbe", "Nach Bookmark-Farbkategorie, dann Zeit (Unmarkierte zuletzt)"),
+    ("origin", "Ort", "Lokal zuerst, dann Remote je Server, dann Zeit"),
+    ("name", "Name", "Alphabetisch nach Titel"),
+];
 
-/// Inventar-Kategorie für `SIDE_VIEWS[idx]`; `None` für „Sessions“ (idx 0, eigene Liste statt Inventar).
-pub fn side_view_category(idx: usize) -> Option<&'static str> {
-    match idx {
-        1 => Some("extensions"),
-        2 => Some("skills"),
-        3 => Some("agents"),
-        _ => None,
-    }
+/// Inventar-Kategorie der Bibliothek für `LIBRARY_CATS[idx]`.
+pub fn library_category(idx: usize) -> Option<&'static str> {
+    LIBRARY_CATS.get(idx).map(|c| c.1)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -60,7 +66,6 @@ pub enum PickerKind {
     Model,
     Thinking,
     SideView,
-    Sort,
 }
 
 /// Ziel des großen Editors (`editor_open`): Eingabefeld-Text oder eine Inventar-Markdown-Datei.
@@ -250,6 +255,10 @@ pub struct App {
     pub(crate) list_menu: bool,
     /// Seitenansicht „Gliederung“ (virtuelle Sicht, `shared/outline.rs`).
     pub(crate) outline: crate::outline_ui::OutlineState,
+    /// Bibliothek (Extensions/Skills/Agent-Dateien mit eigener Vorschau), `None` = geschlossen.
+    pub(crate) library: Option<crate::library_ui::LibraryState>,
+    /// Kontext-Repair-Dialog einer Session.
+    pub(crate) repair: Option<crate::repair_ui::RepairState>,
 
     // Status
     pub(crate) busy: bool,
@@ -380,6 +389,8 @@ impl App {
             list_scroll: false,
             list_menu: false,
             outline: Default::default(),
+            library: None,
+            repair: None,
             busy: false,
             busy_since: None,
             activity: Default::default(),
@@ -1272,13 +1283,54 @@ impl App {
         let local = self.sessions.iter().filter(|_| origin != "remote");
         let remote = self.net.remote_sessions.iter().filter(|_| origin != "local");
         let mut v: Vec<SessionInfo> = local.chain(remote).filter(|s| !self.store.only_bookmarks || self.store.is_bookmark(&s.key())).cloned().collect();
+        let sort = self.session_sort();
+        let label = |s: &SessionInfo| [&s.name, &s.title].into_iter().find(|t| !t.is_empty()).map(|t| t.to_lowercase()).unwrap_or_default();
         v.sort_by(|a, b| {
-            let category = if self.store.only_bookmarks && self.store.colored_bookmarks {
-                self.store.bookmark_color(&a.key()).cmp(&self.store.bookmark_color(&b.key()))
-            } else { std::cmp::Ordering::Equal };
-            category.then(b.modified.cmp(&a.modified)).then(a.backend.cmp(&b.backend)).then(a.path.cmp(&b.path))
+            let first = match sort {
+                "color" => self.session_color_rank(a).cmp(&self.session_color_rank(b)),
+                "origin" => (a.is_remote(), self.net.backend_label(&a.backend)).cmp(&(b.is_remote(), self.net.backend_label(&b.backend))),
+                "name" => label(a).cmp(&label(b)),
+                _ => std::cmp::Ordering::Equal,
+            };
+            first.then(b.modified.cmp(&a.modified)).then(a.backend.cmp(&b.backend)).then(a.path.cmp(&b.path))
         });
         v
+    }
+
+    /// Aktive Sortierung; alte Werte („bookmarks“, „Farben“-Filter) werden als „Farbe“ gelesen.
+    pub fn session_sort(&self) -> &'static str {
+        match self.store.sort.as_str() {
+            "color" | "bookmarks" => "color",
+            "origin" => "origin",
+            "name" => "name",
+            _ if self.store.only_bookmarks && self.store.colored_bookmarks => "color",
+            _ => "time",
+        }
+    }
+
+    /// Rang für die Farbsortierung: Bookmarks nach Farbindex, Unmarkierte zuletzt.
+    pub fn session_color_rank(&self, s: &SessionInfo) -> u16 {
+        let k = s.key();
+        if self.store.is_bookmark(&k) { u16::from(self.store.bookmark_color(&k)) } else { u16::MAX }
+    }
+
+    /// Gruppenüberschrift einer Session für die aktuelle Sortierung (`None` bei Zeit/Name).
+    pub fn session_group(&self, s: &SessionInfo) -> Option<String> {
+        match self.session_sort() {
+            "color" => Some(if self.store.is_bookmark(&s.key()) { self.store.category_name(self.store.bookmark_color(&s.key())) } else { "Unmarkiert".into() }),
+            "origin" => Some(if s.is_remote() { format!("Remote · {}", self.net.backend_label(&s.backend)) } else { "Lokal".into() }),
+            _ => None,
+        }
+    }
+
+    /// Sortierung weiterschalten: Zeit → Farbe → Ort → Name → Zeit.
+    pub fn cycle_session_sort(&mut self) {
+        let cur = self.session_sort();
+        let i = SESSION_SORTS.iter().position(|s| s.0 == cur).unwrap_or(0);
+        self.store.sort = SESSION_SORTS[(i + 1) % SESSION_SORTS.len()].0.into();
+        self.store.colored_bookmarks = false;
+        self.list_cursor = None;
+        self.save_store();
     }
 
     /// Herkunftsfilter weiterschalten: Alle Orte → Lokal → Remote → Alle Orte. „Remote“
@@ -1511,13 +1563,15 @@ impl App {
         );
     }
 
-    // ---------- Inventar/Seitenansicht (Extensions/Skills/Agents/Harnesses) ----------
+    // ---------- Seitenansicht / Inventar (Bibliothek, md-Dateien der Gliederung) ----------
 
-    /// Wechselt die Seitenansicht (0 = Sessions, sonst Inventar-Kategorie) und lädt bei Bedarf.
+    /// Wechselt die Seitenansicht (0 = Sessionliste, 1 = Gliederung) und lädt bei Bedarf.
     pub fn set_side_view(&mut self, idx: usize) {
-        self.side_view = idx;
+        self.side_view = idx.min(SIDE_VIEWS.len() - 1);
         self.preview = None;
-        if side_view_category(idx).is_some() || idx == crate::outline_ui::OUTLINE_VIEW {
+        self.list_cursor = None;
+        let idx = self.side_view;
+        if idx == crate::outline_ui::OUTLINE_VIEW {
             self.load_inventory();
         }
         if idx == crate::outline_ui::OUTLINE_VIEW {
@@ -1547,9 +1601,9 @@ impl App {
         });
     }
 
-    /// Einträge der aktuell gewählten Seitenansicht (leer bei Sessions oder unbekannt).
+    /// Einträge der in der Bibliothek gewählten Kategorie (leer, wenn geschlossen).
     pub fn visible_inventory(&self) -> Vec<&pi_backend::inventory::Entry> {
-        let Some(cat) = side_view_category(self.side_view) else { return Vec::new() };
+        let Some(cat) = self.library.as_ref().and_then(|l| library_category(l.cat)) else { return Vec::new() };
         self.inventory.iter().filter(|e| e.category == cat || (cat == "extensions" && e.category == "packages")).collect()
     }
 
@@ -1858,7 +1912,6 @@ impl App {
                 (THINKING.iter().map(|l| format!("Denken: {l}")).collect(), THINKING.iter().position(|l| *l == t).unwrap_or(0))
             }
             PickerKind::SideView => (SIDE_VIEWS.iter().map(|s| s.to_string()).collect(), self.side_view),
-            PickerKind::Sort => (vec!["Zeit ↓".into(), "Bookmarks".into()], usize::from(self.store.sort == "bookmarks")),
         }
     }
 
@@ -1933,10 +1986,6 @@ impl App {
                 }
             }
             PickerKind::SideView => self.set_side_view(idx.min(SIDE_VIEWS.len() - 1)),
-            PickerKind::Sort => {
-                self.store.sort = if idx == 1 { "bookmarks".into() } else { "time".into() };
-                self.save_store();
-            }
         }
     }
 
@@ -2176,7 +2225,7 @@ impl App {
         });
     }
 
-    fn run_local(&mut self, name: &str, arg: &str) {
+    pub(crate) fn run_local(&mut self, name: &str, arg: &str) {
         if ["new", "compact", "clone", "fork", "name"].contains(&name) && self.busy {
             self.note("pi arbeitet noch – erst abbrechen.", true);
             return;
@@ -2507,6 +2556,19 @@ impl App {
             }
             "toast" => self.toast("Arbeitsordner für die nächste neue Session ausgewählt.", ToastKind::Info),
             "inventory" => self.demo_scene_inventory(),
+            "repair" => {
+                if let Some(s) = self.sessions.iter().find(|s| !s.is_remote()).cloned() {
+                    self.open_repair(&s);
+                }
+            }
+            "library" => {
+                self.demo_scene_inventory();
+                self.toasts.clear();
+                if let Some(e) = self.visible_inventory().first().map(|e| (e.path.clone(), e.name.clone())) {
+                    if let Some(l) = &mut self.library { l.cursor = Some(0); }
+                    self.show_preview(&e.0, &e.1, false);
+                }
+            }
             "outline" => self.demo_scene_outline(),
             "outline-edit" | "outline-view" => {
                 self.demo_scene_outline();
@@ -2579,8 +2641,9 @@ impl App {
     }
 
     fn demo_scene_inventory(&mut self) {
-        self.side_view = 1; // „Extensions / Plugins“ – direkt setzen, nicht über `set_side_view`,
-        // da dieses im Demo-Modus `load_inventory` aufruft, welches das Inventar sofort wieder leert.
+        // Bibliothek direkt öffnen, nicht über `open_library`, da dieses im Demo-Modus
+        // `load_inventory` aufruft, welches das Inventar sofort wieder leert.
+        self.library = Some(crate::library_ui::LibraryState::default());
         self.preview = None;
         self.inventory = (0..40)
             .map(|i| pi_backend::inventory::Entry {

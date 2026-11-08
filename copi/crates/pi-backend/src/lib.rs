@@ -13,6 +13,7 @@ pub mod inventory;
 pub mod material;
 pub mod media;
 pub mod preview;
+pub mod repair;
 pub mod rpc;
 pub mod sessions;
 pub mod ssh;

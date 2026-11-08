@@ -93,21 +93,37 @@ fn confirm_arrow_then_enter_selects_no() {
 }
 
 #[test]
-fn set_side_view_switches_label_and_clears_preview() {
+fn library_opens_with_category_and_clears_inventory_in_demo() {
     let mut a = demo();
     a.preview = None;
-    a.set_side_view(1);
-    assert_eq!(a.side_view, 1);
-    assert_eq!(SIDE_VIEWS[a.side_view], "Extensions / Plugins");
+    a.open_library(Some(1));
+    assert_eq!(a.library.as_ref().map(|l| l.cat), Some(1));
+    assert_eq!(crate::app::LIBRARY_CATS[1].0, "Skills");
     // Im Demo-Modus liefert `load_inventory` keine echten Dateien, löscht aber die Liste.
     assert!(a.inventory.is_empty());
+    a.close_library();
+    assert!(a.library.is_none() && a.visible_inventory().is_empty());
+}
+
+#[test]
+fn library_filters_entries_and_extensions_include_packages() {
+    let mut a = demo();
+    a.demo_scene("inventory");
+    assert_eq!(a.library_entries().len(), 40, "extensions + packages");
+    a.library.as_mut().unwrap().filter = "extension-0".into();
+    assert_eq!(a.library_entries().len(), 10);
+    a.library_set_cat(1);
+    a.library.as_mut().unwrap().filter.clear();
+    assert!(a.library_entries().is_empty(), "keine Skills in der Demo");
 }
 
 #[test]
 fn choose_pick_side_view_updates_state() {
     let mut a = demo();
-    a.choose_pick(crate::app::PickerKind::SideView, 2);
-    assert_eq!(a.side_view, 2);
+    a.choose_pick(crate::app::PickerKind::SideView, 1);
+    assert_eq!(a.side_view, crate::outline_ui::OUTLINE_VIEW);
+    a.choose_pick(crate::app::PickerKind::SideView, 0);
+    assert_eq!(a.side_view, 0);
 }
 
 #[test]
@@ -246,10 +262,11 @@ fn empty_prompt_with_material_does_not_submit() {
 
 #[test]
 fn sidebar_temporarily_excludes_other_harnesses() {
-    assert_eq!(SIDE_VIEWS.len(), 5);
+    // Seitenleiste = nur Sessions (Liste/Gliederung); Inventar steht in der Bibliothek.
+    assert_eq!(SIDE_VIEWS, ["Sessions", "Gliederung"]);
     assert_eq!(SIDE_VIEWS[crate::outline_ui::OUTLINE_VIEW], "Gliederung");
-    assert!(!SIDE_VIEWS.iter().any(|s| s.contains("Harness")));
-    assert_eq!(crate::app::side_view_category(4), None);
+    assert!(!crate::app::LIBRARY_CATS.iter().any(|s| s.0.contains("Harness")));
+    assert_eq!(crate::app::library_category(3), None);
 }
 
 #[test]
@@ -1220,4 +1237,92 @@ fn outline_scene_renders_headless() {
         prompt_frame(&mut a, vec![]);
     }
     assert!(a.toasts.is_empty(), "keine Fehlermeldung beim Zeichnen");
+}
+
+// ---------- Kontextmanager: Sortierung, Kontext-Repair ----------
+
+#[test]
+fn session_sort_cycles_and_orders_by_color_origin_name() {
+    let mut a = demo();
+    a.net.demo_scene();
+    assert_eq!(a.session_sort(), "time");
+    let all = a.visible_sessions();
+    assert!(all.windows(2).all(|w| w[0].modified >= w[1].modified), "Zeit: neueste zuerst");
+    // Farbe: Bookmark mit kleinerem Index zuerst, Unmarkierte zuletzt.
+    for s in &all {
+        if a.store.is_bookmark(&s.key()) { a.store.toggle_bookmark(&s.key()); }
+    }
+    let (x, y) = (all[all.len() - 1].key(), all[0].key());
+    a.store.toggle_bookmark(&x);
+    a.store.set_bookmark_color(&x, 0);
+    a.store.toggle_bookmark(&y);
+    a.store.set_bookmark_color(&y, 3);
+    a.cycle_session_sort();
+    assert_eq!(a.session_sort(), "color");
+    let v = a.visible_sessions();
+    assert_eq!(v[0].key(), x);
+    assert_eq!(v[1].key(), y);
+    assert_eq!(a.session_group(&v[2]).as_deref(), Some("Unmarkiert"));
+    let ranks: Vec<u16> = v.iter().map(|s| a.session_color_rank(s)).collect();
+    assert!(ranks.windows(2).all(|w| w[0] <= w[1]));
+    // Ort: lokal vor remote.
+    a.cycle_session_sort();
+    assert_eq!(a.session_sort(), "origin");
+    let v = a.visible_sessions();
+    let first_remote = v.iter().position(|s| s.is_remote()).unwrap();
+    assert!(v[..first_remote].iter().all(|s| !s.is_remote()) && v[first_remote..].iter().all(|s| s.is_remote()));
+    assert_eq!(a.session_group(&v[0]).as_deref(), Some("Lokal"));
+    // Name: alphabetisch.
+    a.cycle_session_sort();
+    assert_eq!(a.session_sort(), "name");
+    let names: Vec<String> = a.visible_sessions().iter().map(|s| [&s.name, &s.title].into_iter().find(|t| !t.is_empty()).cloned().unwrap_or_default().to_lowercase()).collect();
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(names, sorted);
+    a.cycle_session_sort();
+    assert_eq!(a.session_sort(), "time");
+    // Alte gespeicherte Werte bleiben lesbar.
+    a.store.sort = "bookmarks".into();
+    assert_eq!(a.session_sort(), "color");
+}
+
+#[test]
+fn repair_dialog_demo_report_selects_defaults_and_title_suggestion() {
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    let s = a.visible_sessions().into_iter().find(|s| !s.is_remote()).unwrap();
+    a.open_repair(&s);
+    let r = a.repair.as_ref().unwrap();
+    assert!(!r.loading && r.error.is_empty());
+    let rep = r.report.as_ref().unwrap();
+    assert_eq!(r.on, vec![true; rep.findings.len()]);
+    assert!(r.set_title && r.title == "Sidebar als Kontextmanager", "Titelvorschlag, da kein Name gesetzt");
+    assert_eq!(rep.saved_tokens(&r.on), 22_000);
+    // Rendert ohne Panik (Modal) und Esc schließt.
+    a.focus_prompt = false;
+    prompt_frame(&mut a, vec![]);
+    assert!(a.repair.is_some());
+    prompt_frame(&mut a, vec![key(Key::Escape, Modifiers::NONE)]);
+    assert!(a.repair.is_none());
+}
+
+#[test]
+fn repair_refuses_remote_sessions() {
+    let mut a = demo();
+    a.net.demo_scene();
+    let r = a.net.remote_sessions[0].clone();
+    a.open_repair(&r);
+    assert!(a.repair.is_none());
+    assert!(a.toasts.iter().any(|t| t.text.contains("GEPLANT, NICHT IMPLEMENTIERT")));
+}
+
+#[test]
+fn sidebar_key_k_opens_repair_for_cursor_session() {
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    a.store.side_visible = true;
+    a.side_view = 0;
+    a.list_cursor = Some(0);
+    outline_frame(&mut a, vec![key(Key::K, Modifiers::NONE)]);
+    assert!(a.repair.is_some());
 }

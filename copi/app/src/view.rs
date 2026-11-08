@@ -19,7 +19,7 @@ type Act = Box<dyn FnOnce(&mut App)>;
 
 const KEYHELP: [&str; 5] = [
     "Tab / Shift+Tab: nächstes / vorheriges Bedienelement · Enter/Leertaste: aktivieren · Esc: schließen/zurück",
-    "Alt+1: Eingabe · Alt+2: Seitenliste · Alt+3: Chat · Alt+4: Kopfzeile · Alt+5: Vorschau\nAlt+N: neue Session · Alt+A: abbrechen · Alt+F: Fork · Alt+M: Modell · Alt+T: Thinking\nAlt+− / Alt++: Ausgabeschrift · F1: diese Hilfe · Strg/Cmd+B: Sessions · Strg/Cmd+Shift+B: rechte Seitenleiste",
+    "Alt+1: Eingabe · Alt+2: Seitenliste · Alt+3: Chat · Alt+4: Kopfzeile · Alt+5: Vorschau\nAlt+N: neue Session · Alt+A: abbrechen · Alt+F: Fork · Alt+M: Modell · Alt+T: Thinking\nAlt+L: Bibliothek (Extensions/Skills/Agent-Dateien) · Alt+− / Alt++: Ausgabeschrift · F1: diese Hilfe · Strg/Cmd+B: Sessions · Strg/Cmd+Shift+B: rechte Seitenleiste",
     "Listen: ↑/↓, Home/End · ←: Ansichtsauswahl · →: Vorschau\nSessions: Enter öffnen · R/F2 umbenennen · Backspace löschen · M/Shift+F10 Menü\nGliederung: ←/→ zu-/aufklappen · Tab/Shift+Tab ein-/ausrücken · Alt+↑/↓ verschieben · N Kategorie · Ziehen sortiert\nChat: ↑/↓ scrollen · Home/End Anfang/Ende · Tab erreicht Links und Tool-Blöcke",
     "Eingabe: ↑/↓ an erster/letzter Zeile: History; sonst Cursor · Alt+↑/↓ oder Pfeilknöpfe: History\nEnter sendet · Option/Alt+Enter: neue Zeile · Editor: Strg/Cmd+S speichert\nEsc unterbricht den Agenten · !cmd Shell (!!cmd ohne Kontext) · pi update u. a. pi-CLI-Befehle direkt\n/ öffnet Befehle · Tippen filtert Namen · Hover/↑↓ markieren · Klick/Enter ausführen · Tab vervollständigen · Esc schließen",
     "Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhalb von Textfeldern.",
@@ -96,7 +96,7 @@ pub fn btn(ui: &mut Ui, text: &str, size: f32, pad: Vec2, min: Vec2, primary: bo
 }
 
 /// Pixel-Spinner: 2×4 Punkte, 3 px, Abstand 1,5 px, gestaffelt.
-fn spinner(ui: &mut Ui) {
+pub(crate) fn spinner(ui: &mut Ui) {
     snake(ui, false);
 }
 
@@ -221,17 +221,17 @@ impl App {
         let pointer = ctx.input(|i| i.pointer.hover_pos());
         let over_preview = pointer.is_some_and(|p| self.preview_rect.contains(p) || self.preview_anchor.contains(p));
         if over_preview { self.preview_hover_until = std::time::Instant::now() + Duration::from_millis(300); }
-        if self.preview.is_some() && !over_preview && self.dialogs.is_empty() && !self.editor_open && std::time::Instant::now() > self.preview_hover_until {
+        if self.library.is_none() && self.preview.is_some() && !over_preview && self.dialogs.is_empty() && !self.editor_open && std::time::Instant::now() > self.preview_hover_until {
             self.hide_preview();
         }
-        if self.preview.is_some() {
+        if self.preview.is_some() && self.library.is_none() && self.repair.is_none() {
             let preview_area = egui::Area::new(Id::new("floating-preview"))
                 .order(Order::Foreground).fade_in(false)
                 .fixed_pos(Pos2::new(if self.preview_anchor.is_finite() { self.preview_anchor.right() + 10.0 } else { 248.0 }, if self.preview_anchor.is_finite() { self.preview_anchor.top() } else { 64.0 }))
                 .constrain(true)
                 .show(&ctx, |ui| {
                     Frame::new().fill(PANEL).corner_radius(12)
-                        .stroke(Stroke::new(1.0, match self.side_view { 1 => CAT_EXT, 2 => CAT_SKILLS, 3 => CAT_AGENTS, _ => CAT })).inner_margin(Margin::same(12))
+                        .stroke(Stroke::new(1.0, CAT)).inner_margin(Margin::same(12))
                         .show(ui, |ui| {
                             ui.set_width(350.0f32.min(ctx.content_rect().width() - 40.0));
                             ui.set_max_height((ctx.content_rect().height() - 150.0).max(150.0));
@@ -244,6 +244,9 @@ impl App {
 
         self.picker_overlay(&ctx);
         self.slash_overlay(&ctx);
+        // Bibliothek/Repair vor Dialogen und Editor zeichnen: deren Rückfragen liegen darüber.
+        self.library_overlay(&ctx);
+        self.repair_overlay(&ctx);
         self.dialog_overlay(&ctx);
         self.net_overlays(&ctx);
         #[cfg(feature = "cocopi")]
@@ -444,6 +447,17 @@ impl App {
             }
             return;
         }
+        // 3b. Kontext-Repair und Bibliothek (eigene Modale)
+        if self.repair.is_some() {
+            if plain(ctx, Key::Escape) && !egui::Popup::is_any_open(ctx) {
+                self.repair = None;
+                self.focus_prompt = true;
+            }
+            return;
+        }
+        if self.library_keys(ctx) {
+            return;
+        }
         // 4. Auswahlliste
         if let Some(kind) = self.picker.as_ref().map(|p| p.kind) {
             let n = self.picker_rows(kind).0.len();
@@ -501,7 +515,7 @@ impl App {
                     return;
                 }
             }
-            let n = if self.side_view == crate::outline_ui::OUTLINE_VIEW { 0 } else if self.side_view == 0 { self.visible_sessions().len() } else { self.visible_inventory().len() };
+            let n = if self.side_view == 0 { self.visible_sessions().len() } else { 0 };
             if n > 0 {
                 let mut moved = true;
                 let cur = self.list_cursor.unwrap_or(0).min(n - 1);
@@ -546,11 +560,12 @@ impl App {
                         self.list_menu = true;
                         return;
                     }
-                } else if plain(ctx, Key::Enter) {
-                    if let Some(e) = self.visible_inventory().get(cur).map(|e| e.path.clone()) {
-                        self.open_inventory_file(&e);
+                    if plain(ctx, Key::K) {
+                        if let Some(s) = self.visible_sessions().get(cur).cloned() {
+                            self.open_repair(&s);
+                        }
+                        return;
                     }
-                    return;
                 }
             }
         }
@@ -645,12 +660,9 @@ impl App {
                 if let Some(s) = picked {
                     self.show_preview(&s.path, &s.name, false);
                 }
-            } else {
-                let picked = self.list_cursor.and_then(|i| self.visible_inventory().get(i).map(|e| (*e).clone()));
-                if let Some(e) = picked {
-                    self.show_preview(&e.path, &e.name, false);
-                }
             }
+        } else if k(ctx, Key::L, true, false, false) {
+            self.open_library(None);
         } else if take(ctx, |kk, m| matches!(kk, Key::Plus | Key::Equals) && m.alt && !m.ctrl) {
             self.resize_output(1);
         } else if take(ctx, |kk, m| kk == Key::Minus && m.alt && !m.ctrl) {
@@ -672,85 +684,90 @@ impl App {
         ui.spacing_mut().item_spacing = vec2(5.0, 6.0);
         let w = ui.available_width();
         let side_label = SIDE_VIEWS[self.side_view.min(SIDE_VIEWS.len() - 1)];
-        self.pick_button(ui, PickerKind::SideView, side_label, w, "Ansicht wählen");
-        if self.side_view == 0 {
-            ui.horizontal(|ui| {
-                ui.set_height(28.0);
-                if btn(ui, "+ Neu", 12.0, vec2(9.0, 3.0), vec2(0.0, 28.0), false, true).on_hover_text("Neue Session (Alt+N)").clicked() {
-                    self.new_session();
+        self.pick_button(ui, PickerKind::SideView, side_label, w, "Ansicht wählen: Sessionliste oder Gliederung");
+        ui.horizontal(|ui| {
+            ui.set_height(28.0);
+            if btn(ui, "+ Neu", 12.0, vec2(9.0, 3.0), vec2(0.0, 28.0), false, true).on_hover_text("Neue Session (Alt+N)").clicked() {
+                self.new_session();
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if btn(ui, "Bibliothek", 12.0, vec2(7.0, 3.0), vec2(0.0, 28.0), self.library.is_some(), true)
+                    .on_hover_text("Extensions/Plugins, Skills sowie Agent- und Kontextdateien mit Vorschau (Alt+L)")
+                    .clicked()
+                {
+                    self.open_library(None);
                 }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let (olabel, otip) = match self.store.session_origin.as_str() {
-                        "local" => ("Lokal", "Nur lokale Sessions · Klick: nur Remote"),
-                        "remote" => ("Remote", "Nur Sessions der Server-Backends · Klick: alle Orte"),
-                        _ => ("Alle Orte", "Lokale und Remote-Sessions · Klick: nur lokal"),
-                    };
-                    if btn(ui, olabel, 12.0, vec2(7.0, 3.0), vec2(0.0, 28.0), self.store.session_origin != "all", true).on_hover_text(otip).clicked() {
-                        self.cycle_session_origin();
-                    }
-                    let only = self.store.only_bookmarks;
-                    let label = if !only { "Alle" } else if self.store.colored_bookmarks { "Farben" } else { "Bookmarks" };
-                    if btn(ui, label, 12.0, vec2(7.0,3.0), vec2(0.0,28.0), only, true).on_hover_text("Alle → nur Bookmarks (Zeit) → nur Bookmarks (Farbkategorie/Zeit)").clicked() {
-                        if !only { self.store.only_bookmarks = true; self.store.colored_bookmarks = false; }
-                        else if !self.store.colored_bookmarks { self.store.colored_bookmarks = true; }
-                        else { self.store.only_bookmarks = false; self.store.colored_bookmarks = false; }
-                        self.save_store();
-                    }
-                });
+                if btn(ui, "Import", 12.0, vec2(6.0, 3.0), vec2(0.0, 28.0), false, true).on_hover_text("Markdown-Datei als neue Session importieren").clicked() {
+                    self.import_md_session();
+                }
             });
-        } else if self.side_view == crate::outline_ui::OUTLINE_VIEW {
+        });
+        if self.side_view == crate::outline_ui::OUTLINE_VIEW {
             self.outline_sidebar(ui);
             return;
-        } else if self.inventory_loading {
-            ui.add(Label::new(txt("Lädt…", 12.0, DIM)));
         }
+        ui.horizontal(|ui| {
+            ui.set_height(28.0);
+            let (olabel, otip) = match self.store.session_origin.as_str() {
+                "local" => ("Lokal", "Nur lokale Sessions · Klick: nur Remote"),
+                "remote" => ("Remote", "Nur Sessions der Server-Backends · Klick: alle Orte"),
+                _ => ("Alle Orte", "Lokale und Remote-Sessions · Klick: nur lokal"),
+            };
+            if btn(ui, olabel, 12.0, vec2(7.0, 3.0), vec2(0.0, 28.0), self.store.session_origin != "all", true).on_hover_text(otip).clicked() {
+                self.cycle_session_origin();
+            }
+            let only = self.store.only_bookmarks;
+            if btn(ui, if only { "Bookmarks" } else { "Alle" }, 12.0, vec2(7.0, 3.0), vec2(0.0, 28.0), only, true).on_hover_text("Alle Sessions ↔ nur Bookmarks").clicked() {
+                self.store.only_bookmarks = !only;
+                self.store.colored_bookmarks = false;
+                self.list_cursor = None;
+                self.save_store();
+            }
+            let sort = self.session_sort();
+            let (_, slabel, stip) = SESSION_SORTS.iter().find(|x| x.0 == sort).copied().unwrap_or(SESSION_SORTS[0]);
+            if btn(ui, &format!("↕ {slabel}"), 12.0, vec2(7.0, 3.0), vec2(0.0, 28.0), sort != "time", true)
+                .on_hover_text(format!("Sortierung: {stip}\nKlick: Zeit → Farbe → Ort → Name"))
+                .clicked()
+            {
+                self.cycle_session_sort();
+            }
+        });
         ui.add_space(4.0);
         let sep = ui.available_rect_before_wrap();
         ui.painter().hline(sep.x_range(), sep.top(), Stroke::new(1.0, BORDER));
         ui.add_space(4.0);
-        if self.side_view == 0 {
-            let list = self.visible_sessions();
-            let cursor = self.list_cursor;
-            let scroll = std::mem::take(&mut self.list_scroll);
-            ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 5.0;
-                if list.is_empty() && self.store.session_origin == "remote" && !self.store.only_bookmarks {
-                    ui.add(Label::new(txt("Keine Remote-Sessions. Backend unter „Netz“ hinzufügen bzw. verbinden.", 12.0, DIM)).wrap());
-                }
-                if list.is_empty() && self.store.only_bookmarks {
-                    ui.add(Label::new(txt("Keine Bookmarks. Lesezeichen-Knopf oben zeigt wieder alle Sessions.", 12.0, DIM)).wrap());
-                }
-                for (i, s) in list.iter().enumerate() {
-                    let on = self.session_shown(s);
-                    let r = self.session_card(ui, s, on, cursor == Some(i));
-                    if cursor == Some(i) && scroll {
-                        r.scroll_to_me(None);
+        let list = self.visible_sessions();
+        let cursor = self.list_cursor;
+        let scroll = std::mem::take(&mut self.list_scroll);
+        ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 5.0;
+            if list.is_empty() && self.store.session_origin == "remote" && !self.store.only_bookmarks {
+                ui.add(Label::new(txt("Keine Remote-Sessions. Backend unter „Netz“ hinzufügen bzw. verbinden.", 12.0, DIM)).wrap());
+            }
+            if list.is_empty() && self.store.only_bookmarks {
+                ui.add(Label::new(txt("Keine Bookmarks. „Bookmarks“-Knopf oben zeigt wieder alle Sessions.", 12.0, DIM)).wrap());
+            }
+            let mut group: Option<String> = None;
+            for (i, s) in list.iter().enumerate() {
+                if let Some(g) = self.session_group(s) {
+                    if group.as_ref() != Some(&g) {
+                        let color = if self.session_sort() == "color" && self.store.is_bookmark(&s.key()) { self.store.palette_color(self.store.bookmark_color(&s.key())) } else if s.is_remote() && self.session_sort() == "origin" { REMOTE } else { DIM };
+                        ui.add_space(if group.is_some() { 4.0 } else { 0.0 });
+                        ui.horizontal(|ui| {
+                            let (r, _) = ui.allocate_exact_size(vec2(8.0, 14.0), Sense::hover());
+                            ui.painter().circle_filled(r.center(), 3.5, color);
+                            ui.add(Label::new(txt(&g, 11.5, color)).truncate());
+                        });
+                        group = Some(g);
                     }
                 }
-            });
-        } else {
-            let entries: Vec<pi_backend::inventory::Entry> = self.visible_inventory().into_iter().cloned().collect();
-            let cursor = self.list_cursor;
-            let scroll = std::mem::take(&mut self.list_scroll);
-            let cat_color = match self.side_view {
-                1 => CAT_EXT,
-                2 => CAT_SKILLS,
-                3 => CAT_AGENTS,
-                _ => CAT_HARNESS,
-            };
-            ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 5.0;
-                if entries.is_empty() && !self.inventory_loading {
-                    ui.add(Label::new(txt("Keine Einträge gefunden.", 12.0, DIM)).wrap());
+                let on = self.session_shown(s);
+                let r = self.session_card(ui, s, on, cursor == Some(i));
+                if cursor == Some(i) && scroll {
+                    r.scroll_to_me(None);
                 }
-                for (i, e) in entries.iter().enumerate() {
-                    let r = self.inventory_card(ui, e, cursor == Some(i), cat_color);
-                    if cursor == Some(i) && scroll {
-                        r.scroll_to_me(None);
-                    }
-                }
-            });
-        }
+            }
+        });
     }
 
     pub(crate) fn inventory_card(&mut self, ui: &mut Ui, e: &pi_backend::inventory::Entry, selected: bool, cat_color: Color32) -> Response {
@@ -797,7 +814,7 @@ impl App {
     /// Vorschau-Spalte (Stufe 3, Alt+5): lokale Kurzinfo immer; KI-Zweckerklärung nur nach
     /// ausdrücklicher Zustimmung (Datenschutz/Kosten), vereinfacht als feste Spalte statt
     /// Hover-Tooltip wie im Original.
-    fn preview_panel(&mut self, ui: &mut Ui) {
+    pub(crate) fn preview_panel(&mut self, ui: &mut Ui) {
         let Some(p) = &self.preview else { return };
         let (name, path, text, method, loading) = (p.name.clone(), p.path.clone(), p.text.clone(), p.method.clone(), p.loading);
         let (ai_text, ai_method, ai_loading, ai_visible, ask_consent) = (p.ai_text.clone(), p.ai_method.clone(), p.ai_loading, p.ai_visible, p.ask_consent);
@@ -904,6 +921,10 @@ impl App {
                 }
                 if ui.button("Umbenennen").clicked() {
                     self.rename_session(&s);
+                    close = true;
+                }
+                if !s.is_remote() && ui.button("Kontext-Repair …").clicked() {
+                    self.open_repair(&s);
                     close = true;
                 }
                 if !active && ui.button("Löschen …").clicked() {
@@ -1052,6 +1073,10 @@ impl App {
             }
             if ui.button("Session umbenennen   R").clicked() {
                 self.rename_session(s);
+                ui.close();
+            }
+            if !remote && ui.button("Kontext-Repair …   K").clicked() {
+                self.open_repair(s);
                 ui.close();
             }
             if !running && ui.button("Löschen …   ⌫").clicked() {
@@ -1744,7 +1769,7 @@ impl App {
         let (rows, _) = self.picker_rows(kind);
         let screen = ctx.content_rect();
         let width = match kind {
-            PickerKind::Thinking | PickerKind::Sort => anchor.width().max(160.0),
+            PickerKind::Thinking => anchor.width().max(160.0),
             _ => anchor.width().max(560.0f32.min(screen.width() * 0.8)),
         };
         let maxh = screen.height() * 0.55;

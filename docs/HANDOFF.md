@@ -2,6 +2,51 @@
 
 ## Aktueller Stand
 
+### Sessions-Kontextmanager, Bibliothek, Kontext-Repair · 08.11.2026 · cocopi-v2 (nur egui copi/cocopi)
+
+**Seitenleiste:** Hier stehen nur noch Sessions, entweder als Liste oder als Gliederung. Darüber liegen drei Knöpfe:
+- „+ Neu“
+- „Import“ (`.md` → neue Session)
+- „Bibliothek“
+
+**Filterzeile der Liste:**
+- Ort (Alle/Lokal/Remote)
+- Alle/Bookmarks
+- Sortierknopf „↕ Zeit → Farbe → Ort → Name“
+
+Bei Farbe und Ort erscheinen Gruppenüberschriften. Der Sort-Picker ist entfallen. `store.sort` kennt die Werte `time|color|origin|name`; der alte Wert `bookmarks` wird als `color` gelesen.
+
+**Bibliothek** (`app/src/library_ui.rs`, Alt+L):
+- Extensions/Plugins, Skills sowie Agent- und Kontextdateien in einem eigenen Modal mit Filter, Liste und fester Vorschau (wiederverwendet `preview_panel`).
+- Tasten: ←/→ Kategorie, ↑/↓ wählen, Enter bearbeitet intern (nur `.md`).
+
+**Kontext-Repair** (`crates/pi-backend/src/repair.rs` + `app/src/repair_ui.rs`):
+- Aufruf über Sessionmenü/Kartenmenü „Kontext-Repair …“, Taste K in der Liste oder das Gliederungs-Kontextmenü.
+- Nur für lokale Sessions.
+- Die Analyse liest die Session nur und zeigt:
+  - Kontextfäule
+  - Platzfresser (große alte Tool-Ergebnisse, doppelte Lesungen, Fehlerschleifen, Bilder) mit Token-Ersparnis
+  - Titelvorschlag
+  - Status/ToDos
+  - letzte Prompts
+  - geänderte Dateien
+  - Überschneidungen mit anderen Sessions
+  - Löschhinweis bei geringer Relevanz
+- **Anwenden** hängt ausschließlich pi-eigene `context_edit`- und `session_info`-Einträge an:
+  - Sie hängen per `parentId` am aktuellen Leaf; die Originale bleiben in der Datei.
+  - Vorher prüft Anwenden Länge und Leaf der Datei. Eine offene eigene Session wird danach neu geladen.
+- **Rückgängig** schneidet genau diesen Anhang ab, aber nur solange die Datei danach unverändert ist.
+- **`.md`-Export:** Bericht plus aktiver Kontext. Eine vorhandene Datei wird nicht überschrieben.
+- **`.md`-Import:** legt eine neue Session an (`session_info` + `custom_message`).
+
+**GEPLANT, NICHT IMPLEMENTIERT:**
+- Repair für Remote-Sessions
+- Bibliothek und Repair in pi-lite (Web) und cocopi-v3
+- automatische Erkennung, ob eine Session in einem anderen Fenster läuft (bisher nur Hinweistext)
+- Live-Test mit echter Maus und Tastatur
+
+**Tests:** automatisch mit copi 128, cocopi 132, Backend 87 (+1 ignorierter, nur lesender Probe `REPAIR_PROBE=<datei>`) und `test-outline.cjs`. Headless-Szenen: `COPI_SCENE=repair|library`. Die Analyse wurde nur lesend an einer echten 177-MB-Session geprüft (3,4 s); Anwenden wurde nur an Testdateien geprüft.
+
 ### Gliederung · 05.11.2026 · cocopi-v2
 
 Neue Seitenansicht **Gliederung** in derselben Codebasis für copi/cocopi und pi-lite:
