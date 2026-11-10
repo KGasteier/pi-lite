@@ -817,14 +817,14 @@ impl App {
             ui.spacing_mut().item_spacing.x = 4.0;
             let cw = ((w - 12.0) / 4.0).floor();
             if toggle_chip(ui, cw, "Gliederung", if outline { "an" } else { "aus" }, outline, true)
-                .on_hover_text("Gliederung: eigene Sicht mit Farbkategorien (Edit/View). Schaltet Zeit, Bookmark, Ort und Suche ab.")
+                .on_hover_text("Gliederung: eigene Sicht mit Farbkategorien (Kompakt/Detail). Schaltet Zeit, Bookmark, Ort und Suche ab.")
                 .clicked()
             {
                 self.set_side_view(if outline { 0 } else { crate::outline_ui::OUTLINE_VIEW });
             }
             if self.side_view == crate::outline_ui::OUTLINE_VIEW {
                 let view = self.outline.view;
-                if let Some(i) = segmented(ui, cw * 2.0 + 4.0, 34.0, &["Edit", "View"], usize::from(view), &["Bearbeiten: ziehen, ein-/ausrücken, Kategorien anlegen", "Ansicht: Karten mit Vorschau, eingerückt"]) {
+                if let Some(i) = segmented(ui, cw * 2.0 + 4.0, 34.0, &["Kompakt", "Detail"], usize::from(view), &["Kompakte Zeilen: vollständig bearbeitbar", "Karten mit Vorschau: vollständig bearbeitbar (Standard)"]) {
                     self.outline.view = i == 1;
                 }
                 if btn(ui, "+ Farbe", 11.5, vec2(4.0, 3.0), vec2(cw, 34.0), false, true).on_hover_text("Neue Farboberkategorie (Bookmark-Farbe)").clicked() {
@@ -956,7 +956,8 @@ impl App {
     pub(crate) fn inventory_card(&mut self, ui: &mut Ui, e: &pi_backend::inventory::Entry, selected: bool, cat_color: Color32) -> Response {
         let w = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(vec2(w, 44.0), Sense::hover());
-        let resp = ui.interact(rect, Id::new(("invcard", &e.path)), Sense::click());
+        let in_outline = self.side_view == crate::outline_ui::OUTLINE_VIEW && self.outline.view && self.library.is_none();
+        let resp = ui.interact(rect, Id::new(("invcard", &e.path)), if in_outline { Sense::click_and_drag() } else { Sense::click() });
         let t = if selected { 0.22 } else if resp.hovered() { 0.17 } else { 0.09 };
         let p = ui.painter();
         p.rect_filled(rect, 8, mix(cat_color, t, CARD));
@@ -980,6 +981,7 @@ impl App {
         if resp.double_clicked() {
             self.open_inventory_file(&e.path);
         }
+        if in_outline { return resp; }
         resp.context_menu(|ui| {
             ui.set_min_width(170.0);
             if ui.button("Vorschau").clicked() {
@@ -1142,7 +1144,7 @@ impl App {
         // Suchtreffer im Inhalt: dritte Zeile mit Ausschnitt und Trefferzahl.
         let hit = if in_outline || s.is_remote() || self.search.trim().is_empty() { None } else { self.search_hits.get(&s.path).cloned() };
         let (rect, _) = ui.allocate_exact_size(vec2(w, if hit.is_some() { 70.0 } else { 52.0 }), Sense::hover());
-        let mut resp = ui.interact(rect, Id::new(("card", &key)), Sense::click());
+        let mut resp = ui.interact(rect, Id::new(("card", &key)), if in_outline { Sense::click_and_drag() } else { Sense::click() });
         let bm = self.store.is_bookmark(&key);
         let t = if active || selected { 0.22 } else if resp.hovered() { 0.17 } else { 0.09 };
         let p = ui.painter();
@@ -1266,6 +1268,7 @@ impl App {
         } else if resp.clicked() && !active && !branch_clicked {
             self.open_session(s, None);
         }
+        if in_outline { return resp; }
         resp.context_menu(|ui| {
             ui.set_min_width(190.0);
             if !active && ui.button("Öffnen   ↵").clicked() {

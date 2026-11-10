@@ -1113,7 +1113,10 @@ fn outline_rows_tree_collapsed_and_loose_groups() {
 fn outline_keys_indent_collapse_and_move() {
     use crate::outline_ui::RowKey;
     use crate::shared_outline::Ref;
+    assert!(crate::outline_ui::OutlineState::default().view, "Detail ist Standard");
+    for detail in [false, true] {
     let mut a = outline_demo();
+    a.outline.view = detail;
     // Cursor auf „Recherche“ (Ebene 1, Kinder). ← klappt zu.
     outline_frame(&mut a, vec![key(Key::ArrowLeft, Modifiers::NONE)]);
     assert!(a.outline.o.items[3].collapsed);
@@ -1133,6 +1136,7 @@ fn outline_keys_indent_collapse_and_move() {
     assert!(matches!(&a.outline.o.items[1].r, Ref::Md { path } if path == "/demo/md/AGENTS.md"));
     assert_eq!(a.outline.cursor, Some(RowKey::Tree(Ref::Md { path: "/demo/md/AGENTS.md".into() })), "Cursor folgt");
     assert!(a.dialogs.is_empty(), "Gliederungstasten öffnen keine Dialoge");
+    }
 }
 
     #[test]
@@ -1165,6 +1169,7 @@ fn outline_keys_indent_collapse_and_move() {
         let mut out=ctx.run_ui(egui::RawInput::default(),|ui| {
             let r=a.session_card_outline(ui,&s,false,false,Some((0,false)),true);
             assert_eq!(r.rect.height(),52.0,"Kein separater Teilbaum-Schalter oberhalb der Karte");
+            assert!(r.sense.contains(egui::Sense::drag()), "Detailkarte ist ziehbar");
         });
         out.textures_delta.clear();
     }
@@ -1173,7 +1178,9 @@ fn outline_keys_indent_collapse_and_move() {
 fn outline_tab_adopts_loose_session_and_n_opens_dialog() {
     use crate::outline_ui::RowKey;
     use crate::shared_outline::Ref;
+    for detail in [false, true] {
     let mut a = outline_demo();
+    a.outline.view = detail;
     let loose = RowKey::Loose(Ref::Session { key: "/demo/sessions/4.jsonl".into() });
     a.outline.cursor = Some(loose);
     let n = a.outline.o.items.len();
@@ -1184,6 +1191,7 @@ fn outline_tab_adopts_loose_session_and_n_opens_dialog() {
     // Neue Kategorie per N öffnet den Eingabedialog (Demo: nichts auf Platte).
     outline_frame(&mut a, vec![key(Key::N, Modifiers::NONE)]);
     assert!(a.dialogs.iter().any(|d| d.title == "Neue Kategorie"));
+    }
 }
 
 #[test]

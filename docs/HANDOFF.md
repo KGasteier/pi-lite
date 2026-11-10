@@ -2,6 +2,34 @@
 
 ## Aktueller Stand
 
+### Gliederung: Kompakt/Detail statt Edit/View · 10.11.2026
+
+- Beide Darstellungen vollständig bearbeitbar: Ziehen ganzer Karten/Zeilen,
+  Tab/Umschalt+Tab, Alt+↑/↓, F2/R, Strukturmenü. **Detail ist Standard**, Kompakt
+  ist die schmale Zeilendarstellung. Geschützte Farboberkategorien bleiben geschützt.
+- Native Karten verwenden denselben Strukturmenü-Helfer wie kompakte Zeilen;
+  eigene Kartenknöpfe und integrierte Auf-/Zuklapppfeile bleiben erhalten.
+- Web-Detailkarten sind echte fokussierbare Baumzeilen mit Strukturmenü und
+  Drag-and-drop. Logische Ebenenkante ist unabhängig von der visuellen Staffelung;
+  der nach einem Drop entstehende Klick öffnet keine Session.
+- `scripts/test-outline-browser.cjs` prüft beide Ansichten im isolierten Chromium-DOM
+  mit Demodaten (Strukturtasten, Fokus, Umbenennen, Menü, Drag/Drop, Klickschutz).
+- 24 JS-Skripte bestanden; nur der bekannte alte `test-statusline-net.cjs` scheitert.
+  Web-Screenshot der Detailansicht angesehen. Native cocopi-Release-Tests:
+  **135 bestanden, 2 ignoriert**; Strukturtastentests laufen explizit in beiden Ansichten,
+  Detailkarten auf Drag-Sense geprüft. Nativer Release erfolgreich (52m08s), Screenshot
+  angesehen und atomar installiert: `~/.local/bin/cocopi`, SHA256
+  `46a93aa43d4ce91e7586ee441edbe96b08bc316de07ea75bd6d9c86617f7b8a0`.
+  Backup `~/.local/bin/cocopi.bak-kompakt-detail-20261110T212716`.
+  pi-lite-Release erfolgreich (32m10s), atomar installiert nach
+  `~/.local/lib/pi-lite/pi-lite`, Quelle/Ziel SHA256
+  `5fe4c3f7bd90b2e8ac02d86d931b33ad87566f9d332c9fc4ce9b68bd873589e1`.
+  Backup `~/.local/lib/pi-lite/pi-lite.bak-kompakt-detail-20261110T215856`.
+  Beide Builds offline/locked/release mit zwei Jobs, native 9 / Tauri 8 bestehende
+  Warnungen; keine Buildfehler. Rund 18 GB frei. Wrapper/Starter unverändert;
+  laufende Fenster verwenden erst nach regulärem Neustart den neuen Stand.
+- Keine echten Sessions verändert, keine Fenster geschlossen. Live-Abnahme bleibt offen.
+
 ### Kontextmanager in pi-lite (Web/Tauri) · 10.11.2026 · cocopi-v2
 
 Port des egui-Kontextmanagers (Aufgaben 15/16) in die pi-lite-Oberfläche. Gleiche Backend-Logik, kein eigener Algorithmus.

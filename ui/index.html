@@ -63,6 +63,8 @@
   .ol-row { display:flex; align-items:center; height:22px; margin:1px 0; border-radius:5px; cursor:pointer; font-size:12px; user-select:none; outline:none; }
   .ol-row:hover { background:color-mix(in srgb, var(--cat) 13%, transparent); }
   .ol-row:focus, .ol-row:focus-visible { background:color-mix(in srgb, var(--cat) 24%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--cat) 60%, transparent); }
+  /* Detailkarten bleiben normale mehrzeilige Karten, sind aber Baumzeilen für Fokus/Drag. */
+  .sess.ol-row { display:block; height:auto; min-height:52px; box-sizing:border-box; margin:5px 0; border-radius:8px; }
   .ol-row.remote { --cat:var(--remote); }
   .ol-row.dragging { opacity:.5; }
   .ol-sym { flex:0 0 12px; width:12px; height:12px; color:color-mix(in srgb, var(--cat) 85%, var(--fg)); cursor:grab; }

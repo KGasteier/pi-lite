@@ -25,7 +25,6 @@ const SYM: f32 = 12.0;
 const LOOSE_SESSIONS: &str = "sessions";
 const LOOSE_MD: &str = "md";
 
-#[derive(Default)]
 pub struct OutlineState {
     pub o: Outline,
     pub cursor: Option<RowKey>,
@@ -34,6 +33,13 @@ pub struct OutlineState {
     pub view: bool,
     last_check: Option<Instant>,
     mtime: Option<SystemTime>,
+}
+
+impl Default for OutlineState {
+    fn default() -> Self {
+        Self { o: Outline::default(), cursor: None, scroll: false, drag: None,
+            view: true, last_check: None, mtime: None }
+    }
 }
 
 /// Stabile Zeilenkennung (überlebt Änderungen der Gliederung; Kategorien über `id`).
@@ -265,18 +271,35 @@ impl App {
                 if let Some(s)=self.outline_sessions().into_iter().find(|s| &s.key()==key) {
                     let active=self.session_shown(&s);
                     let branch=if row.has_children { row.item.map(|i|(i,row.collapsed)) } else { None };
-                    return self.session_card_outline(ui,&s,active,selected,branch,true);
+                    let resp = self.session_card_outline(ui,&s,active,selected,branch,true);
+                    return self.outline_detail_interaction(ui,row,resp);
                 }
             }
             RowKey::Tree(Ref::Md{path})|RowKey::Loose(Ref::Md{path}) => {
                 if let Some(e)=self.outline_md().into_iter().find(|e|&e.path==path) {
                     let c=self.outline_row_color(row);
-                    return self.inventory_card(ui,&e,selected,c);
+                    let resp = self.inventory_card(ui,&e,selected,c);
+                    return self.outline_detail_interaction(ui,row,resp);
                 }
             }
             _=>{}
         }
         self.outline_row(ui,row,selected)
+    }
+
+    /// Karten behalten ihre Aktionen; Strukturmenü und Ziehen entsprechen kompakten Zeilen.
+    fn outline_detail_interaction(&mut self, ui: &mut Ui, row: &Row, resp: Response) -> Response {
+        if resp.clicked() || resp.secondary_clicked() || resp.drag_started() {
+            self.outline.cursor = Some(row.key.clone());
+        }
+        if resp.drag_started() {
+            // Logische Ebenenkante statt visueller 9-px-Staffelung: kein Ebenensprung beim Anziehen.
+            let x = resp.rect.left() - view_indent(row.level) + 3.0 + row.level as f32 * INDENT;
+            let grab_dx = resp.interact_pointer_pos().map(|p| p.x - x).unwrap_or(0.0);
+            self.outline.drag = Some(Drag { src: row.key.clone(), label: row.label.clone(), grab_dx });
+        }
+        self.outline_row_menu(ui,row,&resp);
+        resp
     }
 
     fn outline_new_category(&mut self, after: Option<usize>, child: bool) {
@@ -381,7 +404,6 @@ impl App {
         // Umschalt+Tab zuerst prüfen (wie AUGMOST).
         let shift_tab = take(ctx, |kk, m| kk == Key::Tab && m.shift && !m.alt && !m.command);
         let tab = !shift_tab && plain(ctx, Key::Tab);
-        if self.outline.view && (tab || shift_tab || ctx.input(|i| i.modifiers.alt && (i.key_pressed(Key::ArrowUp)||i.key_pressed(Key::ArrowDown)))) { return true; }
         if shift_tab || tab {
             // egui hat Tab bereits als Fokuswechsel vorgemerkt – zurücknehmen.
             ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
@@ -452,7 +474,7 @@ impl App {
     pub(crate) fn outline_sidebar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.set_height(18.0);
-            ui.add(Label::new(txt(if self.outline.view { "View · Karten mit Vorschau" } else { "Edit · ziehen, Tab/Umschalt+Tab" }, 11.0, DIM)).truncate());
+            ui.add(Label::new(txt(if self.outline.view { "Detail · ziehen, Tab/Umschalt+Tab" } else { "Kompakt · ziehen, Tab/Umschalt+Tab" }, 11.0, DIM)).truncate());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                 icons::info(ui.painter(), r, DIM);
@@ -502,7 +524,7 @@ impl App {
                 tree_bottom = Some(ui.cursor().top());
             }
         });
-        if !self.outline.view { self.outline_drag(ui, &rows, &geo, tree_bottom.unwrap_or(sep.top()), sep.left()); }
+        self.outline_drag(ui, &rows, &geo, tree_bottom.unwrap_or(sep.top()), sep.left());
     }
 
     fn outline_row(&mut self, ui: &mut Ui, row: &Row, selected: bool) -> Response {
@@ -512,7 +534,7 @@ impl App {
             RowKey::Tree(Ref::Cat { id, .. }) => format!("cat:{id}"),
             k => format!("{k:?}"),
         }));
-        let draggable = !self.outline.view && !matches!(row.key, RowKey::Group(_)) && !matches!(&row.key,RowKey::Tree(r) if so::color_root(r).is_some());
+        let draggable = !matches!(row.key, RowKey::Group(_)) && !matches!(&row.key,RowKey::Tree(r) if so::color_root(r).is_some());
         let resp = ui.interact(rect, id, if draggable { Sense::click_and_drag() } else { Sense::click() });
         let dragging_me = self.outline.drag.as_ref().is_some_and(|d| d.src == row.key);
         let tone = self.outline_row_color(row);
@@ -575,7 +597,8 @@ impl App {
         let resp = if row.tip.is_empty() { resp } else { resp.on_hover_text_at_pointer(&row.tip) };
         let on_sym = resp.interact_pointer_pos().is_some_and(|p| p.x < sym.right() + 3.0);
         if resp.drag_started() && draggable {
-            let grab = resp.interact_pointer_pos().map(|p| p.x - x0).unwrap_or(0.0);
+            let logical_x = if self.outline.view { rect.left() - view_indent(row.level) + 3.0 + row.level as f32 * INDENT } else { x0 };
+            let grab = resp.interact_pointer_pos().map(|p| p.x - logical_x).unwrap_or(0.0);
             self.outline.drag = Some(Drag { src: row.key.clone(), label: row.label.clone(), grab_dx: grab });
             self.outline.cursor = Some(row.key.clone());
         } else if resp.clicked() {
@@ -597,6 +620,11 @@ impl App {
         if resp.double_clicked() && !is_cat && matches!(row.key, RowKey::Tree(Ref::Md { .. }) | RowKey::Loose(Ref::Md { .. })) {
             self.outline_open(row);
         }
+        self.outline_row_menu(ui,row,&resp);
+        resp
+    }
+
+    fn outline_row_menu(&mut self, _ui: &mut Ui, row: &Row, resp: &Response) {
         let row2 = row.clone();
         resp.context_menu(|ui| {
             ui.set_min_width(190.0);
@@ -621,6 +649,9 @@ impl App {
                         act = Some(Box::new(move |a| a.outline_open(&rr)));
                     }
                     if let Ref::Session { key } = r {
+                        if ui.button("Session umbenennen …").clicked() {
+                            let rr = row2.clone(); act = Some(Box::new(move |a| a.outline_rename(&rr)));
+                        }
                         if !key.starts_with("remote:") && ui.button("Kontext-Repair …").clicked() {
                             let key = key.clone();
                             act = Some(Box::new(move |a| if let Some(s) = a.outline_sessions().into_iter().find(|s| s.key() == key) { a.open_repair(&s) }));
@@ -678,7 +709,6 @@ impl App {
                 ui.close();
             }
         });
-        resp
     }
 
     /// Ziehen & Ablegen: Einfügelinie zwischen Baumzeilen; Ebene folgt der waagrechten

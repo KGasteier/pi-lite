@@ -71,7 +71,7 @@
   /// Ansicht in `box`. `env`: {invoke, ask, toast, openSession(s), openMd(entry), previewMd(row, entry)}.
   function createView(box, env) {
     let outline = { version: 1, rev: 0, items: [], open_unsorted: [] }, list = [], cursor = null, sessions = [], md = [], drag = null;
-    let view = false;
+    let view = true;
     const inventory = () => sessions.map(s=>({t:'session',key:s.key || (s.backend?`remote:${s.backend}:${s.path}`:s.path)})).concat(md.map(e=>({t:'md',path:e.path})));
     const read = () => env.invoke('outline_read',{inventory:inventory()});
     async function load() {
@@ -137,7 +137,6 @@
       const i = list.indexOf(r), k = e.key;
       const parentOf = idx => { const l = outline.items[idx].level; for (let j = idx - 1; j >= 0; j--) if (outline.items[j].level < l) return j; return null; };
       let used = true;
-      if(view && (k==='Tab' || e.altKey && ['ArrowUp','ArrowDown'].includes(k))) { e.preventDefault(); return; }
       if (k === "Tab") { if (r.kind === "tree") op({ op: e.shiftKey ? "outdent" : "indent", i: r.item }); else if (r.kind === "loose" && !e.shiftKey) adopt(r); }
       else if (e.altKey && k === "ArrowUp") { if (r.kind === "tree") op({ op: "up", i: r.item }); }
       else if (e.altKey && k === "ArrowDown") { if (r.kind === "tree") op({ op: "down", i: r.item }); }
@@ -168,6 +167,7 @@
       if (r.kind === "tree") {
         outline.items.forEach((it,i)=>{if(it.t==='cat' && i!==r.item) items.push(['→ '+it.name,()=>op({op:'into_cat',r:r.ref,cat:i})]);});
         if (r.ref.t !== "cat") items.push(["Öffnen", () => open(r)]);
+        if (r.ref.t === "session") items.push(["Umbenennen …", () => rename(r)]);
         items.push(["Neue Kategorie danach", () => newCat(r.item, false)]);
         if (r.ref.t === "cat") items.push(["Neue Unterkategorie", () => newCat(r.item, true)], ["Umbenennen …", () => rename(r)]);
         items.push(null, ["Einrücken (Tab)", () => op({ op: "indent", i: r.item })], ["Ausrücken (Umschalt+Tab)", () => op({ op: "outdent", i: r.item })],
@@ -215,7 +215,7 @@
     }
     function startDrag(ev, r, el) {
       if (ev.button !== 0 || r.kind === "group") return;
-      const x0 = ev.clientX, y0 = ev.clientY, rx = el.getBoundingClientRect().left + 3 + r.level * INDENT;
+      const x0 = ev.clientX, y0 = ev.clientY, rx = box.getBoundingClientRect().left + 8 + r.level * INDENT;
       let moved = false;
       const move = e => {
         if (!moved && Math.hypot(e.clientX - x0, e.clientY - y0) < 5) return;
@@ -247,7 +247,8 @@
       const head = document.createElement("div"); head.className = "ol-head";
       const add = document.createElement("button"); add.textContent = "+ Farbe"; add.onclick = () => env.newColor?.();
       const edit=document.createElement('button'), show=document.createElement('button');
-      edit.textContent='Edit'; show.textContent='View';
+      edit.textContent='Kompakt'; show.textContent='Detail';
+      edit.title='Kompakte Zeilen · vollständig bearbeitbar'; show.title='Karten mit Vorschau · vollständig bearbeitbar (Standard)';
       edit.setAttribute('aria-pressed',String(!view)); show.setAttribute('aria-pressed',String(view));
       edit.onclick=()=>{view=false;render();}; show.onclick=()=>{view=true;render();};
       const help = document.createElement("span"); help.className = "ol-help"; help.textContent = "?";
@@ -261,7 +262,18 @@
         if(view && r.ref?.t==='session' && r.data && env.sessionCard) {
           const wrap=document.createElement('div');
           wrap.style.marginLeft=viewIndent(r.level)+'px';
-          const card=env.sessionCard(r.data);
+          const card=env.sessionCard(r.data), id=rowId(r);
+          card.classList.add('ol-row', r.kind);
+          card.dataset.id=id; if(r.kind==='tree') card.dataset.item=r.item;
+          card.tabIndex=id===cursor?0:-1;
+          card.setAttribute('role','treeitem'); card.setAttribute('aria-level',String(r.level+1));
+          if(r.hasChildren) card.setAttribute('aria-expanded',String(!r.collapsed));
+          card.onfocus=()=>{cursor=id; for(const o of box.querySelectorAll('.ol-row')) o.tabIndex=o===card?0:-1;};
+          card.onkeydown=e=>{if(!e.target.closest('button')) key(e,r);};
+          card.oncontextmenu=e=>{cursor=id; menu(e,r);};
+          card.onpointerdown=e=>{if(!e.target.closest('button')) startDrag(e,r,card);};
+          // Nach einem Drop darf das anschließende Klickereignis keine Session öffnen.
+          card.addEventListener('click',e=>{if(suppressClick){e.preventDefault();e.stopImmediatePropagation();}},true);
           if(r.hasChildren) {
             const b=document.createElement('button'); b.innerHTML=tri(!r.collapsed);
             b.title=r.collapsed?'Untereinträge aufklappen':'Untereinträge zuklappen';
@@ -295,7 +307,7 @@
         el.onfocus = () => { cursor = id; for (const o of box.querySelectorAll(".ol-row")) o.tabIndex = o === el ? 0 : -1; };
         el.onkeydown = e => key(e, r);
         el.oncontextmenu = e => { cursor = id; menu(e, r); };
-        el.onpointerdown = e => { if(!view && !colorRoot) startDrag(e, r, el); };
+        el.onpointerdown = e => { if(!colorRoot) startDrag(e, r, el); };
         el.onclick = e => {
           if (suppressClick) return;
           cursor = id; el.focus();

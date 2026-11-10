@@ -2,9 +2,12 @@
 
 ## Bedienung
 
-Links **Gliederung** wählen. **Edit** ist die kompakte Umordnungsansicht,
-**View** zeigt die vollständigen Sessionkarten mit bisherigen Aktionen und Vorschau.
-Im View-Modus sind ganze Karten um 9 px je Ebene eingerückt;
+Im Kontextmanager **Gliederung** einschalten. **Detail** ist die Standardansicht:
+vollständige Sessionkarten mit Aktionen und Vorschau. **Kompakt** zeigt schmale Zeilen.
+Beide Ansichten sind gleichermaßen bearbeitbar: Ziehen, Strukturtasten, Umbenennen
+und Gliederungs-Kontextmenü stehen in beiden zur Verfügung. Die frühere Trennung
+**Edit/View** bezeichnet jetzt nur noch die Darstellung, nicht die Bearbeitbarkeit.
+In Detail sind ganze Karten um 9 px je Ebene eingerückt;
 Sessionkarten mit Kindern tragen den Auf-/Zuklapppfeil direkt links im Titelbereich
 (keine separate „Teilbaum“-Zeile). Pfeilklick klappt nur die Untereinträge, die
 restliche Karte öffnet weiterhin die Session.
@@ -79,7 +82,19 @@ Der pi-lite-Rasterschalter zeigte bereits ein Raster statt „×“ und bleibt e
 
 ## Prüfstand
 
-- Native Tests: copi 123 bestanden / 2 ignoriert; cocopi 127 bestanden / 2 ignoriert.
+**Aktuell (Kompakt/Detail):** cocopi 135 Tests bestanden / 2 ignoriert;
+Strukturtasten explizit in beiden Darstellungen, Detailkarte auf Ziehbarkeit geprüft.
+24 JS-Skripte bestanden, bekannter Altfehler `test-statusline-net.cjs` unverändert.
+Native und Web-Detailscreenshots mit Demodaten angesehen. cocopi und pi-lite auf
+ARM offline/locked/release gebaut, atomar installiert und vollständig hashgeprüft.
+Details und Backups in `HANDOFF.md`. Kein echter Maus-/WebKit-/Remote-Livetest.
+Die folgenden älteren Testzahlen beschreiben die vorherigen Ausbaustufen.
+
+- Neuer DOM-Interaktionstest `node scripts/test-outline-browser.cjs`: Detail-Standard,
+  beide Ansichten mit Fokus, Strukturtasten, Umbenennen, Kontextmenü und Drag-and-drop;
+  kein Ebenensprung beim Anziehen und kein versehentliches Öffnen nach dem Drop.
+  Chromium mit isolierten Demodaten, keine echte Tauri-/WebKit-Abnahme.
+- Historischer Prüfstand vor Kompakt/Detail: copi 123 bestanden / 2 ignoriert; cocopi 127 bestanden / 2 ignoriert.
   Enthalten sind Modell-/Dateikonflikttests sowie Zeilen-, Tastatur-, Dropziel- und
   Dialogregressionen. Keine echten privaten Sessiondateien werden verändert.
 - `node scripts/test-outline.cjs` und JS-Syntaxchecks bestanden. Bestehende JS-Suite:
