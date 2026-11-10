@@ -14,19 +14,39 @@
   #app { flex:1; display:flex; min-height:0; }
   #side { width:240px; flex:none; background:var(--panel); border-right:1px solid #3a4046; display:flex; flex-direction:column; }
   #sidehead { padding:10px 8px 8px; border-bottom:1px solid #3a4046; display:flex; flex-direction:column; gap:6px; }
-  #sidetitle { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
-  #sidetools { display:flex; align-items:center; gap:5px; min-height:28px; }
-  #sidetools button, #sidetools select { height:28px; font-size:12px; border-radius:6px; }
-  #sidetools #newsess { padding:3px 9px; }
-  #sidetools #bookmarkfilter { width:auto; padding:0 7px; display:flex; align-items:center; justify-content:center; gap:4px; color:var(--dim); margin-left:auto; }
-  #bookmarkfilter svg { width:15px; height:15px; flex:none; }
-  #bookmarkfilter .filterlabel { font-size:11px; white-space:nowrap; }
-  #bookmarkfilter[data-mode=on], #bookmarkfilter[data-mode=colors] { color:var(--cat); background:color-mix(in srgb, var(--cat) 22%, #2b3137); box-shadow:inset 0 0 0 1px var(--cat); }
-  #bookmarkfilter[data-mode=on] svg path, #bookmarkfilter[data-mode=colors] svg path { fill:currentColor; }
+  /* Kontextmanager: Kopf, Umschalter Sessions|Bibliothek, Suche, Schalterreihe, Fußzeile */
+  #kmhead { display:flex; align-items:center; gap:6px; }
+  #sidetitle { flex:1; font-weight:700; font-size:14px; white-space:nowrap; }
+  #newsess { height:26px; padding:2px 10px; font-size:12px; border-radius:6px; background:var(--acc); color:#fff; }
+  .segmented { display:flex; background:#22272c; border:1px solid #3a4046; border-radius:7px; padding:2px; gap:2px; }
+  .segmented[hidden] { display:none; }
+  .segmented button { flex:1; height:24px; padding:0 6px; font-size:12px; border-radius:5px; background:transparent; color:var(--dim); }
+  .segmented button[aria-selected=true], .segmented button[aria-pressed=true] { background:#3a434d; color:var(--fg); font-weight:600; }
+  #kmsearch { width:100%; height:28px; box-sizing:border-box; padding:3px 8px; font-size:12.5px; border-radius:6px; background:#22272c; border:1px solid #3a4046; color:var(--fg); }
+  #kmsearch:focus { border-color:var(--cat); outline:none; }
+  #sidetools { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
+  #sidetools[hidden] { display:none; }
+  #sidetools .chip { height:32px; padding:1px 2px; border-radius:6px; display:flex; flex-direction:column; align-items:center; justify-content:center; line-height:1.1; color:var(--fg); background:#2f363d; min-width:0; }
+  #sidetools .chip small { font-size:9px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+  #sidetools .chip span { font-size:11px; white-space:nowrap; }
+  #sidetools .chip[aria-pressed=true] { background:color-mix(in srgb, var(--cat) 24%, #2b3137); box-shadow:inset 0 0 0 1px var(--cat); }
+  #sidetools .chip:disabled { opacity:.35; }
+  #originfilter:not([data-origin=all]) { background:color-mix(in srgb, var(--remote) 22%, #2b3137) !important; box-shadow:inset 0 0 0 1px var(--remote); }
+  #sidefoot { flex:none; display:flex; align-items:center; gap:6px; padding:5px 8px; border-top:1px solid #3a4046; }
+  #sidefoot #iobutton { height:24px; padding:0 8px; font-size:11.5px; border-radius:6px; }
+  #sesscount { margin-left:auto; font-size:11px; color:var(--dim); white-space:nowrap; }
+  #iomenu { position:relative; }
+  .iolist { position:absolute; bottom:calc(100% + 4px); left:0; z-index:50; min-width:260px; width:max-content; max-width:420px; background:#2b3137; border:1px solid var(--cat); border-radius:8px; padding:4px; box-shadow:0 8px 24px #000a; }
+  .iolist[hidden] { display:none; }
+  .iolist button { display:block; width:100%; text-align:left; background:transparent; padding:6px 10px; font-size:12.5px; border-radius:5px; white-space:nowrap; }
+  .iolist button:hover, .iolist button:focus { background:#38424d; }
+  .iolist button:disabled { opacity:.45; }
+  .sess .hit { font-size:11px; color:var(--dim); margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* Mit Trefferzeile: Knöpfe auf Höhe der Datumszeile, die Trefferzeile darunter frei. */
+  .sess.has-hit .act, .sess.has-hit .bookmark { bottom:auto; top:26px; }
+  .sess.has-hit > button[aria-label="Bookmark-Farbe wählen"] { bottom:auto !important; top:27px; }
+  .sess .hit b { color:var(--cat); font-weight:600; }
   .sessempty { color:var(--dim); font-size:12px; padding:10px 4px; }
-  #sidetools #originfilter { width:auto; padding:0 7px; font-size:11px; color:var(--dim); margin-left:auto; white-space:nowrap; }
-  #sidetools #originfilter:not([data-origin=all]) { color:var(--remote); background:color-mix(in srgb, var(--remote) 22%, #2b3137); box-shadow:inset 0 0 0 1px var(--remote); }
-  #sidetools #originfilter + #bookmarkfilter { margin-left:0; }
   /* Remote-Sessions: eigene Farbe, Streifen links, Badge mit dem Servernamen (wie copi). */
   .sess.remote { --cat:var(--remote); }
   .sess.remote::before { content:""; position:absolute; left:1px; top:8px; bottom:8px; width:3px; border-radius:2px; background:var(--remote); }
@@ -61,7 +81,6 @@
   .ol-menu button:hover, .ol-menu button:focus { background:#38424d; }
   .ol-menu hr { border:0; border-top:1px solid #444c55; margin:3px 0; }
   #inventory { flex:1; overflow:auto; padding:8px; }
-  #sideview { margin:0; max-width:none; width:100%; height:30px; font-size:13px; }
   .inventoryhint { display:block; font-size:11px; line-height:1.4; color:var(--dim); padding:2px 4px 5px; }
   .resource, .sess { border-radius:8px; background:color-mix(in srgb, var(--cat) 9%, #2b3137); border:1px solid color-mix(in srgb, var(--cat) 32%, transparent); }
   .resource:hover, .sess:hover { background:#38424d; background:color-mix(in srgb, var(--cat) 17%, #2b3137); }
@@ -181,6 +200,32 @@
   .colorswatchrow { display:flex; flex-direction:column; align-items:center; gap:2px; }
   .colorswatchrow input { width:60px; font-size:10px; text-align:center; background:var(--bg); color:var(--fg); border:1px solid #3a4046; border-radius:4px; padding:1px 2px; }
   /* Dialoge der Extensions */
+  /* Kontext-Repair (unter #modal, damit Rückfragen darüber liegen) */
+  #repair { position:fixed; inset:0; z-index:18; background:#0009; display:flex; align-items:center; justify-content:center; padding:20px; }
+  #repair[hidden] { display:none; }
+  .rp-card { width:min(980px,100%); max-height:min(800px,calc(100vh - 40px)); display:flex; flex-direction:column; gap:6px; background:var(--panel); border:1px solid var(--acc); border-radius:12px; padding:14px; font-size:12.5px; }
+  .rp-head { display:flex; align-items:center; gap:10px; }
+  .rp-head strong { font-size:16px; }
+  .rp-name { flex:1; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rp-head button { height:26px; padding:0 9px; font-size:11.5px; }
+  .rp-path { font:10.5px/1.3 ui-monospace,monospace; color:var(--dim); overflow-wrap:anywhere; }
+  .rp-body { flex:1; min-height:120px; overflow:auto; padding-right:4px; }
+  .rp-body p { margin:3px 0; }
+  .rp-body h5 { margin:10px 0 4px; font-size:13px; display:flex; gap:6px; align-items:center; }
+  .rp-body ul { margin:2px 0; padding-left:18px; }
+  .rp-small { height:20px; padding:0 7px; font-size:11px; font-weight:400; }
+  .rp-find { display:flex; gap:7px; align-items:center; padding:1px 0; cursor:pointer; }
+  .rp-kind { color:var(--acc); font-size:11px; white-space:nowrap; }
+  .rp-label { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rp-title { display:flex; gap:8px; align-items:center; }
+  .rp-title input:not([type]) { flex:1; height:26px; }
+  .rp-hint { background:color-mix(in srgb, #e0b25a 12%, var(--panel)); border-radius:6px; padding:8px; margin:4px 0; }
+  .rp-ok { color:#7cc58a; white-space:nowrap; } .rp-warn { color:#e0b25a; } .rp-err { color:#e8746e; } .rp-dim { color:var(--dim); }
+  .rp-note { font-size:10.5px; color:var(--dim); border-top:1px solid #3a4046; padding-top:6px; margin:0; }
+  .rp-foot { display:flex; gap:8px; align-items:center; }
+  .rp-foot button { height:28px; padding:0 10px; }
+  .rp-foot .primary { background:var(--acc); color:#fff; }
+  .rp-spacer { flex:1; }
   #modal { position:fixed; inset:0; background:#000a; display:none; align-items:center; justify-content:center; z-index:20; padding:12px; }
   #modal.open { display:flex; }
   #dlg { box-sizing:border-box; overflow:hidden; background:var(--panel); border:1px solid #3a4046; border-radius:12px; padding:16px; width:min(560px,100%); max-height:90vh; display:flex; flex-direction:column; gap:10px; }
@@ -383,22 +428,41 @@
 <div id="app">
 <aside id="side">
   <div id="sidehead">
-  <span id="sidetitle">Sessions</span>
-  <select id="sideview" aria-label="Seitenleistenansicht">
+  <div id="kmhead"><span id="sidetitle">Kontextmanager</span>
+    <button id="newsess" title="Neue Session (Alt+N)">+ Session</button></div>
+  <select id="sideview" hidden aria-hidden="true" tabindex="-1">
     <option value="sessions">Sessions</option><option value="extensions">Extensions / Plugins</option>
     <option value="skills">Skills</option><option value="agents">pi · Agent- und Kontextdateien</option>
     <option value="outline">Gliederung</option>
   </select>
-  <div id="sidetools" role="group" aria-label="Seitenleistenaktionen">
-    <button id="newsess" title="Neue Session (Alt+N)">+ Neu</button>
-    <span id="sidehint" hidden>Lokale Einträge</span>
- <button id="originfilter" data-origin="all" title="Lokale und Remote-Sessions · Klick: nur lokal" aria-label="Herkunftsfilter umschalten">Alle Orte</button>
-    <button id="bookmarkfilter" class="iconbutton" data-mode="off" aria-pressed="false" title="Bookmark-Filter: alle Sessions, reine Zeitsortierung" aria-label="Bookmark-Filter umschalten"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.5h7v11L8 11l-3.5 2.5z"/></svg><span class="filterlabel">Alle</span></button>
+  <div id="kmswitch" class="segmented" role="tablist" aria-label="Kontextmanager-Ansicht">
+    <button id="kmsessions" role="tab" aria-selected="true" title="Sessions (Liste bzw. Gliederung)">Sessions</button>
+    <button id="kmlibrary" role="tab" aria-selected="false" title="Bibliothek: Extensions/Plugins, Skills, Agent- und Kontextdateien">Bibliothek</button>
   </div>
+  <input id="kmsearch" type="search" placeholder="Suchen: Inhalt, Name, Ordner …" aria-label="Sessions durchsuchen (Strg/Cmd+F)" title="Stichwortsuche (Strg/Cmd+F): Nutzer-/Assistententext, Zusammenfassungen, Name, Titel, Ordner. Alle Wörter müssen vorkommen. Remote-Sessions nur nach Name/Ordner. Esc leert.">
+  <div id="sidetools" role="group" aria-label="Sessionansicht">
+    <button id="outlinetoggle" class="chip" aria-pressed="false" title="Gliederung: virtuelle Kategorien statt Liste (schaltet Zeit/Bookmark/Ort ab)"><small>Gliederung</small><span>aus</span></button>
+    <button id="timeorder" class="chip" aria-pressed="false" title="Zeit: neueste zuerst · Klick: älteste zuerst"><small>Zeit</small><span>aktuell</span></button>
+    <button id="bookmarkfilter" class="chip" data-mode="off" aria-pressed="false" title="Bookmark-Filter" aria-label="Bookmark-Filter umschalten"><small>Bookmark</small><span class="filterlabel">aus</span></button>
+    <button id="originfilter" class="chip" data-origin="all" title="Lokale und Remote-Sessions · Klick: nur lokal" aria-label="Herkunftsfilter umschalten"><small>Ort</small><span>alle</span></button>
+  </div>
+  <div id="libcats" class="segmented" role="tablist" aria-label="Bibliothek-Kategorie" hidden>
+    <button data-cat="extensions" role="tab" title="Extensions und Plugins">Extensions</button><button data-cat="skills" role="tab" title="Skills">Skills</button><button data-cat="agents" role="tab" title="pi · Agent- und Kontextdateien (AGENTS.md, CLAUDE.md …)">Kontext</button>
+  </div>
+  <span id="sidehint" hidden>Lokale Einträge</span>
   </div>
   <div id="sessions"></div>
   <div id="inventory" hidden></div>
   <div id="outline" role="tree" aria-label="Gliederung" hidden></div>
+  <div id="sidefoot">
+    <div class="picker" id="iomenu"><button id="iobutton" aria-haspopup="menu" aria-expanded="false" title="Markdown als Session importieren bzw. eine Session als Markdown exportieren">Import/Export</button>
+      <div id="iolist" class="iolist" role="menu" hidden>
+        <button id="ioimport" role="menuitem">Markdown als neue Session importieren …</button>
+        <button id="ioexport" role="menuitem">Session als Markdown exportieren …</button>
+        <button id="iorepair" role="menuitem">Kontext-Repair …</button>
+      </div></div>
+    <span id="sesscount"></span>
+  </div>
 </aside>
 <div id="main">
 <header>
@@ -472,9 +536,9 @@
 <p>Tab / Shift+Tab: nächstes / vorheriges Bedienelement · Enter/Leertaste: aktivieren · Esc: schließen/zurück</p>
 <p>Alt+1: Eingabe · Alt+2: Seitenliste · Alt+3: Chat · Alt+4: Kopfzeile · Alt+5: Vorschau<br>
 Alt+N: neue Session · Alt+A: abbrechen · Alt+F: Fork · Alt+M: Modell · Alt+T: Thinking<br>
-Alt+− / Alt++: Ausgabeschrift · F1: diese Hilfe · Strg/Cmd+B: Sessions · Strg/Cmd+Shift+B: Netz-Seitenleiste · Strg/Cmd+Shift+G: Rasteransicht (mehrere Backends)</p>
-<p>Listen: ↑/↓, Home/End · ←: Ansichtsauswahl · →: Vorschau<br>
-Sessions: Enter öffnen · R/F2 umbenennen · Backspace löschen · M/Shift+F10 Menü<br>
+Alt+− / Alt++: Ausgabeschrift · F1: diese Hilfe · Strg/Cmd+B: Sessions · Strg/Cmd+F: Suche (Esc leert, ↓ in die Liste) · Strg/Cmd+Shift+B: Netz-Seitenleiste · Strg/Cmd+Shift+G: Rasteransicht (mehrere Backends)</p>
+<p>Listen: ↑/↓, Home/End · ←: Sessions/Bibliothek · →: Vorschau<br>
+Sessions: Enter öffnen · R/F2 umbenennen · Backspace löschen · K Kontext-Repair · M/Shift+F10 Menü<br>
 Chat: ↑/↓ scrollen · Home/End Anfang/Ende · Tab erreicht Links und Tool-Blöcke</p>
 <p>Eingabe: ↑/↓ an erster/letzter Zeile: History; sonst Cursor · Alt+↑/↓ oder Pfeilknöpfe: History<br>
 Enter sendet · Option/Alt+Enter: neue Zeile · Editor: Strg/Cmd+S speichert<br>
@@ -482,6 +546,7 @@ Esc unterbricht den Agenten · !cmd Shell (!!cmd ohne Kontext) · pi update u. a
 / öffnet Befehle · Tippen filtert Namen · Hover/↑↓ markieren · Klick/Enter ausführen · Tab vervollständigen · Esc schließen<br>
 Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhalb von Textfeldern.</p>
 <button id="keyhelpclose">Schließen (Esc)</button></div>
+<div id="repair" hidden></div>
 <div id="toasts"></div>
 <script src="vendor/marked.js"></script>
 <script src="vendor/hljs.js"></script>
@@ -497,6 +562,7 @@ Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhal
 <script src="session-bookmarks.js"></script>
 <script src="remote-sessions.js"></script>
 <script src="outline.js"></script>
+<script src="context-manager.js"></script>
 <script src="commands.js"></script>
 <script src="slash.js"></script>
 <script src="dialog-selection.js"></script>

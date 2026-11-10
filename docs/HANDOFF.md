@@ -2,6 +2,36 @@
 
 ## Aktueller Stand
 
+### Kontextmanager in pi-lite (Web/Tauri) · 10.11.2026 · cocopi-v2
+
+Port des egui-Kontextmanagers (Aufgaben 15/16) in die pi-lite-Oberfläche. Gleiche Backend-Logik, kein eigener Algorithmus.
+
+- **Backend:** `src-tauri/src/context.rs`, Befehle `session_search`, `repair_analyze`, `repair_apply`, `repair_undo`, `repair_export`, `import_md`.
+  - Ruft `pi_backend::search::Corpus` und `pi_backend::repair` auf. pi-backend ist unverändert; das JSON-Mapping liegt in `context.rs`.
+  - Läuft in `spawn_blocking`. Export legt nur neue `.md` an (`create_new`).
+- **Seitenleiste (`ui/index.html`):**
+  - Kopf „Kontextmanager“ + „+ Session“.
+  - Umschalter Sessions|Bibliothek. Die Bibliothek hat ihren eigenen Umschalter Extensions|Skills|Kontext.
+  - Suchfeld (Strg/Cmd+F; Esc leert und springt in die Eingabe; ↓/Enter in die Liste).
+  - Schalter Gliederung · Zeit (aktuell/invers) · Bookmark (aus/an/Farbe) · Ort (alle/lokal/remote). Gliederung graut die anderen aus.
+  - Fußzeile: Import/Export-Menü (`.md` importieren, gewählte/offene Session exportieren, Kontext-Repair) und Sessionzähler.
+  - `select#sideview` bleibt versteckt als Zustandsträger. Gespeicherte Sichten und die Gliederungslogik bleiben dadurch gültig.
+- **Logik (`ui/context-manager.js`):**
+  - `searchWords`/`searchMatch` (UND über Inhaltstreffer + Name/Titel/Ordner/Server; Remote nur über Metadaten), `order` (Zeit, Farbrang), `hitLine`.
+  - Dialog „Kontext-Repair“: Analyse, Platzfresser-Auswahl, Titel, Anwenden/Rückgängig, `.md` Export/Import.
+  - Anwenden ist gesperrt, solange pi in der offenen Session arbeitet. Danach wird die offene Session neu gestartet, damit pi den neuen Leaf übernimmt.
+- **Karten:**
+  - Mit Suchtreffer erscheint eine Trefferzeile (Anzahl je Wort + Ausschnitt).
+  - In der Gliederung keine Bookmark-/Farbknöpfe.
+  - Kontextmenü und Taste K öffnen Kontext-Repair (nur lokal).
+- **Bibliothek:** bleibt die bisherige Inventarliste in der Seitenleiste mit Hover-Vorschau. Das egui-Modal mit fester Vorschau ist im Web GEPLANT, NICHT IMPLEMENTIERT.
+- **Getestet:**
+  - Automatisiert: `scripts/test-context-manager.cjs` (neu); `test-sidebar-header.cjs` angepasst; alle `scripts/*.cjs` außer dem alten `test-statusline-net.cjs` grün.
+  - Rust: `cargo check --offline --locked` für src-tauri ohne Fehler und ohne neue Warnungen. Der kleine Unit-Test in `context.rs` ist noch nicht gelaufen (eigener Test-Build, ca. 50 min).
+  - Headless: Chromium mit Tauri-Stub und Demodaten (Liste, Suche, Repair-Dialog, Import/Export-Menü, Gliederung, Bibliothek), Screenshots angesehen.
+  - **Kein Live-Test** im echten Tauri-Fenster und keine Schreibvorgänge auf echte Sessions.
+- **GEPLANT, NICHT IMPLEMENTIERT:** Remote-Repair, Remote-Inhaltssuche, Bibliothek-Modal im Web, Port nach v3.
+
 ### Kontextmanager (Seitenleiste) · 09.11.2026 · cocopi-v2 (nur egui copi/cocopi)
 
 **Aufbau von oben nach unten:**

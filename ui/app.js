@@ -544,7 +544,8 @@ const ORIGIN_KEY = "pi-lite.session-origin.v1";
 const sessionOrigin = () => RemoteSessions.normalizeOrigin(localStorage.getItem(ORIGIN_KEY));
 function syncOriginButton() {
   const o = sessionOrigin(), b = $("originfilter");
-  b.dataset.origin = o; b.textContent = RemoteSessions.ORIGIN_LABELS[o]; b.title = RemoteSessions.ORIGIN_TITLES[o];
+  b.dataset.origin = o; b.querySelector("span").textContent = ContextManager.ORIGIN_SHORT[o]; b.title = RemoteSessions.ORIGIN_TITLES[o];
+  b.setAttribute("aria-pressed", String(o !== "all"));
 }
 async function loadRemoteSessions() {
   let backends = [];
@@ -567,14 +568,9 @@ const bookmarkSync = createSharedBookmarkSync(invoke, window.localStorage,
   () => { syncBookmarkFilterButton(); renderSessions(); },
   message => toast("Bookmark-Synchronisierung fehlgeschlagen: " + message, "error"));
 const sessionBookmarks = createSessionBookmarks(bookmarkSync.storage);
-// Drei-Zustands-Zyklus statt getrennter Filter-/Sortierauswahl: off (alle, Zeit) ->
-// on (nur Bookmarks, Zeit) -> colors (nur Bookmarks, nach Bookmark-Farbe dann Zeit) -> off.
-const BOOKMARK_FILTER_LABELS = { off: "Alle", on: "Bookmarks", colors: "Nach Farbe" };
-const BOOKMARK_FILTER_TITLES = {
-  off: "Bookmark-Filter: alle Sessions, reine Zeitsortierung. Klicken für nur Bookmarks.",
-  on: "Bookmark-Filter: nur Bookmarks, Zeitsortierung. Klicken für Sortierung nach Bookmark-Farbe.",
-  colors: "Bookmark-Filter: nur Bookmarks, sortiert nach Farbe, dann Zeit. Klicken für alle Sessions.",
-};
+// Drei-Zustands-Zyklus (Chip „Bookmark“): off (alle) -> on (nur Bookmarks) -> colors (nur
+// Bookmarks, nach Farbe gruppiert) -> off. Bezeichnungen wie im cocopi-Kontextmanager.
+const BOOKMARK_FILTER_LABELS = ContextManager.BOOKMARK_LABELS, BOOKMARK_FILTER_TITLES = ContextManager.BOOKMARK_TITLES;
 function syncBookmarkFilterButton() {
   const mode = sessionBookmarks.filterMode, button = $("bookmarkfilter");
   button.dataset.mode = mode;
@@ -659,11 +655,53 @@ async function loadSessions() {
 const isRemote = s => !!s.backend;
 const remoteOpen = s => isRemote(s) && !!RemoteSessions.openInstance(window.PiNet?.model?.insts, s);
 const sessActive = s => isRemote(s) ? remoteOpen(s) : s.path === state.sessionFile;
+// ---------- Kontextmanager: Zeitordnung und Stichwortsuche ----------
+const TIME_KEY = "pi-lite.session-time-inverse.v1";
+const timeInverse = () => localStorage.getItem(TIME_KEY) === "1";
+function syncTimeButton() {
+  const inv = timeInverse(), b = $("timeorder");
+  b.querySelector("span").textContent = inv ? "invers" : "aktuell";
+  b.setAttribute("aria-pressed", String(inv));
+  b.title = inv ? "Zeit invers: älteste zuerst · Klick: neueste zuerst" : "Zeit aktuell: neueste zuerst · Klick: älteste zuerst";
+}
+$("timeorder").onclick = () => { try { localStorage.setItem(TIME_KEY, timeInverse() ? "0" : "1"); } catch {} renderSessions(); };
+let searchQuery = "", searchHits = {}, searchSeq = 0, searchLoading = false, searchTimer = null;
+async function runSearch() {
+  const my = ++searchSeq, words = ContextManager.searchWords(searchQuery);
+  if (!words.length) { searchHits = {}; searchLoading = false; renderSessions(); return; }
+  searchLoading = true; renderSessions();
+  try {
+    const hits = await invoke("session_search", { query: searchQuery, paths: sessionList.map(s => s.path) });
+    if (my === searchSeq) searchHits = hits;
+  } catch (e) { if (my === searchSeq) { searchHits = {}; toast("Suche fehlgeschlagen: " + e, "error"); } }
+  if (my === searchSeq) { searchLoading = false; renderSessions(); }
+}
+$("kmsearch").oninput = () => {
+  searchQuery = $("kmsearch").value;
+  clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 220);
+  if (!ContextManager.searchWords(searchQuery).length) { searchHits = {}; renderSessions(); }
+};
+$("kmsearch").onkeydown = e => {
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); $("kmsearch").value = ""; searchQuery = ""; searchSeq++; searchHits = {}; searchLoading = false; renderSessions(); $("prompt").focus(); }
+  else if (e.key === "ArrowDown" || e.key === "Enter") {
+    const first = $("sessions").hidden ? null : $("sessions").querySelector(".sess");
+    if (first) { e.preventDefault(); first.focus(); }
+  }
+};
+function visibleSessions() {
+  const all = RemoteSessions.filterOrigin(sessionList.concat(remoteSessions), sessionOrigin());
+  const marked = sessionBookmarks.visible(all), words = ContextManager.searchWords(searchQuery);
+  const found = marked.filter(s => ContextManager.searchMatch(s, words, searchHits));
+  const colorRank = sessionBookmarks.filterMode === "colors" ? s => sessionBookmarks.colorOf(RemoteSessions.sessionKey(s)) : null;
+  return { all, marked, list: ContextManager.order(found, { inverse: timeInverse(), colorRank }) };
+}
+function syncSessionCount(n) {
+  $("sesscount").textContent = searchLoading ? "sucht …" : $("sessions").hidden ? "" : `${n} Session${n === 1 ? "" : "s"}`;
+}
 function renderSessions() {
   const box = $("sessions"); box.innerHTML = "";
-  const all = RemoteSessions.filterOrigin(sessionList.concat(remoteSessions), sessionOrigin());
-  const filtered = sessionBookmarks.visible(all);
-  syncBookmarkFilterButton(); syncOriginButton();
+  const { all, marked: filtered, list } = visibleSessions();
+  syncBookmarkFilterButton(); syncOriginButton(); syncTimeButton();
   if (!all.length && sessionOrigin() === "remote") {
     const e = document.createElement("div"); e.className = "sessempty";
     e.textContent = "Keine Remote-Sessions. Backend in der Rasteransicht hinzufügen bzw. verbinden."; box.appendChild(e);
@@ -672,11 +710,17 @@ function renderSessions() {
     const e = document.createElement("div"); e.className = "sessempty";
     e.textContent = "Keine Bookmarks. Lesezeichen-Knopf oben zeigt wieder alle Sessions."; box.appendChild(e);
   }
-  for (const s of sessionBookmarks.sort(filtered)) box.appendChild(createSessionCard(s));
+  if (!list.length && filtered.length) {
+    const e = document.createElement("div"); e.className = "sessempty";
+    e.textContent = searchLoading ? "Sucht …" : "Keine Treffer. Esc leert die Suche."; box.appendChild(e);
+  }
+  const words = ContextManager.searchWords(searchQuery);
+  for (const s of list) box.appendChild(createSessionCard(s, { hit: !isRemote(s) && words.length ? searchHits[s.path] : null, words }));
+  syncSessionCount(list.length);
   markActive();
   window.piLiteSessionsChanged?.();
 }
-function createSessionCard(s) {
+function createSessionCard(s, opts = {}) {
     const d = document.createElement("div");
     const key = RemoteSessions.sessionKey(s), remote = isRemote(s);
     d.className = remote ? "sess remote" : "sess"; d.dataset.path = s.path; d.dataset.key = key;
@@ -701,7 +745,7 @@ function createSessionCard(s) {
     bookmark.style.color = marked ? BookmarkPalette.hex(sessionBookmarks.colorOf(key)) : "";
     if (marked) d.style.borderLeft = `3px solid ${BookmarkPalette.hex(sessionBookmarks.colorOf(key))}`;
     d.classList.toggle('active',sessActive(s));
-    if (marked) {
+    if (marked && !opts.outline) {
       const colorButton = mk("", "Bookmark-Farbe · zehn Standardfarben", () => openBookmarkColorPicker(s, colorButton));
       colorButton.setAttribute("aria-label", "Bookmark-Farbe wählen");
       colorButton.style.cssText = "position:absolute;right:31px;bottom:6px;width:21px;height:21px;padding:0;background:transparent";
@@ -714,7 +758,14 @@ function createSessionCard(s) {
     bookmark.title = marked ? "Bookmark entfernen" : "Als Bookmark markieren";
     bookmark.innerHTML = `<svg viewBox="0 0 16 20" aria-hidden="true"><path d="M3 2h10v16l-5-4-5 4z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="${marked ? "currentColor" : "none"}"/></svg>`;
     bookmark.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); };
-    d.append(t, m, act, bookmark);
+    d.append(t, m);
+    if (opts.hit) {
+      const h = document.createElement("div"); h.className = "hit"; d.classList.add("has-hit");
+      h.textContent = ContextManager.hitLine(opts.hit, opts.words || []); h.title = h.textContent; d.appendChild(h);
+    }
+    d.append(act);
+    // In der Gliederung keine Bookmark-/Farbknöpfe (Farbe ergibt sich aus der Oberkategorie).
+    if (opts.outline) act.style.right = "6px"; else d.append(bookmark);
     d.tabIndex = 0;
     d.onclick = () => openSession(s);
     d.oncontextmenu = (e) => { e.preventDefault(); sessMenu(s, e.clientX, e.clientY, d); };
@@ -741,6 +792,7 @@ function sessMenu(s, x, y, from) {
   if (!active) item("Öffnen", "↵", () => openSession(s));
   item(sessionBookmarks.has(RemoteSessions.sessionKey(s)) ? "Bookmark entfernen" : "Als Bookmark markieren", "", () => toggleSessionBookmark(s));
   item("Session umbenennen", "R", () => renameSession(s));
+  if (!isRemote(s)) item("Kontext-Repair …", "K", () => repairDialog.open(s));
   if (!active) item("Löschen …", "⌫", () => removeSession(s));
   document.body.appendChild(m);
   const r = m.getBoundingClientRect();
@@ -769,6 +821,7 @@ function sessKey(e, s, el) {
     case "Home": e.preventDefault(); rows[0].focus(); break;
     case "End": e.preventDefault(); rows[rows.length - 1].focus(); break;
     case "r": case "R": case "F2": e.preventDefault(); renameSession(s); break;
+    case "k": case "K": e.preventDefault(); repairDialog.open(s); break;
     case "Backspace": case "Delete":
       e.preventDefault();
       if (active) note("Die aktive Session lässt sich nicht löschen – erst eine andere öffnen.", true);
@@ -791,7 +844,7 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     document.body.classList.remove("side-hidden");
     document.body.classList.add("side-open");
-    $("sideview").value = "sessions"; changeSideView();
+    if ($("sideview").value !== "sessions" && $("sideview").value !== "outline") { $("sideview").value = "sessions"; changeSideView(); }
     const rows = [...$("sessions").querySelectorAll(".sess")];
     (rows.find((r) => r.classList.contains("active")) || rows[0])?.focus();
   }
@@ -1091,12 +1144,23 @@ async function changeSideView() {
   $("sessions").hidden = view !== "sessions";
   $("inventory").hidden = view === "sessions" || view === "outline";
   $("outline").hidden = view !== "outline";
-  $("newsess").hidden = view !== "sessions";
-  $("bookmarkfilter").hidden = view !== "sessions";
-  $("originfilter").hidden = view !== "sessions";
-  $("sidehint").hidden = view === "sessions";
-  $("sidetitle").textContent = $("sideview").selectedOptions[0].textContent;
-  if (view === "sessions") return;
+  // Kontextmanager: Sessions (Liste bzw. Gliederung) | Bibliothek (Extensions, Skills, Agent/Kontext).
+  const library = view !== "sessions" && view !== "outline";
+  $("kmsessions").setAttribute("aria-selected", String(!library));
+  $("kmlibrary").setAttribute("aria-selected", String(library));
+  $("kmsearch").hidden = library;
+  $("sidetools").hidden = library;
+  $("libcats").hidden = !library;
+  for (const b of $("libcats").children) b.setAttribute("aria-selected", String(b.dataset.cat === view));
+  const outline = view === "outline";
+  $("outlinetoggle").setAttribute("aria-pressed", String(outline));
+  $("outlinetoggle").querySelector("span").textContent = outline ? "an" : "aus";
+  for (const id of ["timeorder", "bookmarkfilter", "originfilter"]) $(id).disabled = outline;
+  $("kmsearch").disabled = outline;
+  $("kmsearch").title = outline ? "Suche gilt für die Sessionliste (Gliederung aus)." : $("kmsearch").dataset.tip || $("kmsearch").title;
+  $("sidehint").hidden = true;
+  if (view === "sessions") { renderSessions(); return; }
+  syncSessionCount(0);
   if (view === "outline") { await showOutline(gen); return; }
   const container = $("inventory"); container.replaceChildren();
   const info = document.createElement("small");
@@ -1124,7 +1188,7 @@ async function changeSideView() {
 // Gliederung (ui/outline.js): Sessions lokal + remote und alle md-Dateien des Inventars.
 const outlineView = Outline.createView($("outline"), {
   invoke, ask, toast,
-  sessionCard: s => createSessionCard(s),
+  sessionCard: s => createSessionCard(s, { outline: true }),
   renameColor: async c => {
     const n=await ask({method:'input',title:'Farbkategorie benennen',prefill:categoryNames.nameOf(c)});
     if(n?.value?.trim()) { categoryNames.rename(c,n.value); await bookmarkSync.refresh(); }
@@ -1161,6 +1225,87 @@ window.piLiteSessionsChanged = () => { if ($("sideview").value === "outline") ou
 // Änderungen aus copi/cocopi oder anderen pi-lite-Fenstern übernehmen.
 setInterval(() => { if ($("sideview").value === "outline" && !document.hidden) outlineView.refresh(); }, 1500);
 $("sideview").onchange = changeSideView;
+// Bedienelemente des Kontextmanagers schalten die (versteckte) Ansichtsauswahl.
+const LIB_KEY = "pi-lite.library-cat.v1";
+function setSideView(view) { $("sideview").value = view; $("sideview").dispatchEvent(new Event("change")); }
+$("kmsearch").dataset.tip = $("kmsearch").title;
+$("kmsessions").onclick = () => setSideView(localStorage.getItem("pi-lite.outline-on.v1") === "1" ? "outline" : "sessions");
+$("kmlibrary").onclick = () => setSideView(localStorage.getItem(LIB_KEY) || "extensions");
+for (const b of $("libcats").children) b.onclick = () => { try { localStorage.setItem(LIB_KEY, b.dataset.cat); } catch {} setSideView(b.dataset.cat); };
+$("outlinetoggle").onclick = () => {
+  const on = $("sideview").value !== "outline";
+  try { localStorage.setItem("pi-lite.outline-on.v1", on ? "1" : "0"); } catch {}
+  setSideView(on ? "outline" : "sessions");
+};
+for (const seg of [$("kmswitch"), $("libcats")]) seg.addEventListener("keydown", e => {
+  if (!["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+  const b = [...seg.children], i = b.indexOf(document.activeElement);
+  e.preventDefault(); e.stopPropagation();
+  const n = b[(i + (e.key === "ArrowLeft" ? b.length - 1 : 1)) % b.length]; n.focus(); n.click();
+});
+// Import/Export in der Fußzeile: .md importieren; gewählte bzw. offene lokale Session über den
+// Repair-Dialog exportieren.
+function ioPick() {
+  const row = document.activeElement?.closest?.("#sessions .sess") || lastFocusedSession;
+  const s = row && sessionList.find(x => x.path === row.dataset.path && !row.dataset.backend);
+  return s || sessionList.find(x => x.path === state.sessionFile) || null;
+}
+let lastFocusedSession = null;
+$("sessions").addEventListener("focusin", e => { const r = e.target.closest(".sess"); if (r && !r.dataset.backend) lastFocusedSession = r; });
+function closeIo(refocus) { $("iolist").hidden = true; $("iobutton").setAttribute("aria-expanded", "false"); if (refocus) $("iobutton").focus(); }
+$("iobutton").onclick = () => {
+  if (!$("iolist").hidden) return closeIo();
+  const s = ioPick(), label = s ? `„${(s.name || s.title || "(leer)").slice(0, 28)}“` : "";
+  $("ioexport").textContent = s ? `${label} als Markdown exportieren …` : "Session als Markdown exportieren (erst wählen)";
+  $("iorepair").textContent = s ? `Kontext-Repair für ${label} …` : "Kontext-Repair (erst Session wählen)";
+  $("ioexport").disabled = $("iorepair").disabled = !s;
+  $("ioexport").onclick = $("iorepair").onclick = () => { closeIo(); repairDialog.open(s); };
+  $("iolist").hidden = false; $("iobutton").setAttribute("aria-expanded", "true");
+  $("ioimport").focus();
+};
+$("ioimport").onclick = () => { closeIo(); importMdSession(); };
+$("iolist").onkeydown = e => {
+  const b = [...$("iolist").querySelectorAll("button:not(:disabled)")], i = b.indexOf(document.activeElement);
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); b[(i + (e.key === "ArrowUp" ? b.length - 1 : 1)) % b.length]?.focus(); }
+  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeIo(true); }
+};
+document.addEventListener("mousedown", e => { if (!$("iolist").hidden && !$("iomenu").contains(e.target)) closeIo(); }, true);
+async function importMdSession() {
+  const cwd = $("cwd").value;
+  const r = await ask({ method: "input", title: "Markdown als neue Session importieren", message: `Pfad der .md-Datei (max. 4 MB). Die neue Session gehört zu ${cwd.replace(/^\/home\/[^/]+/, "~")}.`, prefill: "" });
+  if (!r?.value?.trim()) return;
+  try { const p = await invoke("import_md", { path: r.value.trim(), cwd }); toast("Importiert als neue Session: " + p.replace(/^\/home\/[^/]+/, "~")); loadSessions(); }
+  catch (e) { toast(String(e), "error"); }
+}
+const repairDialog = ContextManager.createRepairDialog($("repair"), {
+  invoke, ask, toast,
+  isOpen: s => !isRemote(s) && s.path === state.sessionFile,
+  isBusy: () => busy,
+  importMd: importMdSession,
+  remove: s => removeSession(s),
+  // Eigene offene Session nach dem Schreiben neu laden, damit pi den neuen Leaf übernimmt.
+  afterWrite: async s => {
+    if (!isRemote(s) && s.path === state.sessionFile) { $("cwd").value = s.cwd; cwdPicker.sync(); await start({ session: s.path }); }
+    await loadSessions();
+  },
+});
+$("repair").addEventListener("keydown", e => {
+  if (e.key === "Escape" && !activeDialog) { e.preventDefault(); e.stopPropagation(); repairDialog.close(); }
+  else if (e.key === "Tab" && !activeDialog) {
+    const c = focusable($("repair")), i = c.indexOf(document.activeElement);
+    e.preventDefault(); e.stopPropagation(); c[(i + (e.shiftKey ? c.length - 1 : 1)) % c.length]?.focus();
+  }
+});
+$("repair").addEventListener("mousedown", e => { if (e.target === $("repair")) repairDialog.close(); });
+// Strg/Cmd+F: Suche im Kontextmanager.
+document.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f" && !activeDialog && $("editor").hidden && $("keyhelp").hidden && $("folderdialog").hidden && $("repair").hidden) {
+    e.preventDefault();
+    document.body.classList.remove("side-hidden"); document.body.classList.add("side-open");
+    if ($("sideview").value !== "sessions") setSideView("sessions");
+    $("kmsearch").focus(); $("kmsearch").select();
+  }
+});
 $("cwd").addEventListener("change", () => { if ($("sideview").value !== "sessions") changeSideView(); });
 let editSaving = false;
 const svgLock = shackle => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" fill="currentColor" fill-opacity=".25"/><path d="${shackle}"/></svg>`;
@@ -1569,8 +1714,8 @@ $("keyboardhelp").onclick = showKeyHelp;
 $("keyhelpclose").onclick = closeKeyHelp;
 function focusSide() {
   document.body.classList.remove("side-hidden"); document.body.classList.add("side-open");
-  const list = $("sideview").value === "sessions" ? $("sessions") : $("inventory");
-  (list.querySelector(".active") || focusable(list)[0] || $("sideview")).focus();
+  const v = $("sideview").value, list = v === "sessions" ? $("sessions") : v === "outline" ? $("outline") : $("inventory");
+  (list.querySelector(".active") || focusable(list)[0] || $("kmsessions")).focus();
 }
 function focusPreview() {
   if (!$("preview").hidden) {
@@ -1588,8 +1733,8 @@ $("inventory").addEventListener("keydown", e => {
   if (n !== undefined) { e.preventDefault(); rows[n]?.focus(); }
 });
 $("side").addEventListener("keydown", e => {
-  if (e.target.tagName === "SELECT") return;
-  if (e.key === "ArrowLeft") { e.preventDefault(); $("sideview").focus(); }
+  if (/^(SELECT|INPUT)$/.test(e.target.tagName) || e.target.closest(".segmented, .iolist, #sidetools")) return;
+  if (e.key === "ArrowLeft") { e.preventDefault(); $("kmsessions").getAttribute("aria-selected") === "true" ? $("kmsessions").focus() : $("kmlibrary").focus(); }
   if (e.key === "ArrowRight") { e.preventDefault(); focusPreview(); }
 });
 $("log").addEventListener("keydown", e => {
