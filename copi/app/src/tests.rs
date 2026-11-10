@@ -118,11 +118,11 @@ fn library_filters_entries_and_extensions_include_packages() {
 }
 
 #[test]
-fn choose_pick_side_view_updates_state() {
+fn outline_toggle_switches_side_view() {
     let mut a = demo();
-    a.choose_pick(crate::app::PickerKind::SideView, 1);
+    a.set_side_view(crate::outline_ui::OUTLINE_VIEW);
     assert_eq!(a.side_view, crate::outline_ui::OUTLINE_VIEW);
-    a.choose_pick(crate::app::PickerKind::SideView, 0);
+    a.set_side_view(0);
     assert_eq!(a.side_view, 0);
 }
 
@@ -264,6 +264,7 @@ fn empty_prompt_with_material_does_not_submit() {
 fn sidebar_temporarily_excludes_other_harnesses() {
     // Seitenleiste = nur Sessions (Liste/Gliederung); Inventar steht in der Bibliothek.
     assert_eq!(SIDE_VIEWS, ["Sessions", "Gliederung"]);
+    assert_eq!(crate::app::BOOKMARK_MODES.map(|m| m.0), ["off", "on", "color"]);
     assert_eq!(SIDE_VIEWS[crate::outline_ui::OUTLINE_VIEW], "Gliederung");
     assert!(!crate::app::LIBRARY_CATS.iter().any(|s| s.0.contains("Harness")));
     assert_eq!(crate::app::library_category(3), None);
@@ -1162,7 +1163,7 @@ fn outline_keys_indent_collapse_and_move() {
         let s=a.outline_sessions()[0].clone();
         let ctx=egui::Context::default();
         let mut out=ctx.run_ui(egui::RawInput::default(),|ui| {
-            let r=a.session_card_outline(ui,&s,false,false,Some((0,false)));
+            let r=a.session_card_outline(ui,&s,false,false,Some((0,false)),true);
             assert_eq!(r.rect.height(),52.0,"Kein separater Teilbaum-Schalter oberhalb der Karte");
         });
         out.textures_delta.clear();
@@ -1242,13 +1243,17 @@ fn outline_scene_renders_headless() {
 // ---------- Kontextmanager: Sortierung, Kontext-Repair ----------
 
 #[test]
-fn session_sort_cycles_and_orders_by_color_origin_name() {
+fn context_manager_toggles_time_bookmark_origin() {
     let mut a = demo();
     a.net.demo_scene();
-    assert_eq!(a.session_sort(), "time");
+    assert_eq!(a.bookmark_mode(), "off");
     let all = a.visible_sessions();
-    assert!(all.windows(2).all(|w| w[0].modified >= w[1].modified), "Zeit: neueste zuerst");
-    // Farbe: Bookmark mit kleinerem Index zuerst, Unmarkierte zuletzt.
+    assert!(all.windows(2).all(|w| w[0].modified >= w[1].modified), "Zeit aktuell: neueste zuerst");
+    a.toggle_time_order();
+    let inv = a.visible_sessions();
+    assert!(inv.windows(2).all(|w| w[0].modified <= w[1].modified), "Zeit invers: älteste zuerst");
+    a.toggle_time_order();
+    // Bookmark: aus → an (nur Bookmarks) → Farbe (gruppiert) → aus.
     for s in &all {
         if a.store.is_bookmark(&s.key()) { a.store.toggle_bookmark(&s.key()); }
     }
@@ -1257,33 +1262,68 @@ fn session_sort_cycles_and_orders_by_color_origin_name() {
     a.store.set_bookmark_color(&x, 0);
     a.store.toggle_bookmark(&y);
     a.store.set_bookmark_color(&y, 3);
-    a.cycle_session_sort();
-    assert_eq!(a.session_sort(), "color");
+    a.cycle_bookmark_mode();
+    assert_eq!(a.bookmark_mode(), "on");
     let v = a.visible_sessions();
-    assert_eq!(v[0].key(), x);
-    assert_eq!(v[1].key(), y);
-    assert_eq!(a.session_group(&v[2]).as_deref(), Some("Unmarkiert"));
-    let ranks: Vec<u16> = v.iter().map(|s| a.session_color_rank(s)).collect();
-    assert!(ranks.windows(2).all(|w| w[0] <= w[1]));
-    // Ort: lokal vor remote.
-    a.cycle_session_sort();
-    assert_eq!(a.session_sort(), "origin");
+    assert_eq!(v.len(), 2);
+    assert_eq!(v[0].key(), y, "an: nach Zeit");
+    assert_eq!(a.session_group(&v[0]), None);
+    a.cycle_bookmark_mode();
+    assert_eq!(a.bookmark_mode(), "color");
     let v = a.visible_sessions();
-    let first_remote = v.iter().position(|s| s.is_remote()).unwrap();
-    assert!(v[..first_remote].iter().all(|s| !s.is_remote()) && v[first_remote..].iter().all(|s| s.is_remote()));
-    assert_eq!(a.session_group(&v[0]).as_deref(), Some("Lokal"));
-    // Name: alphabetisch.
-    a.cycle_session_sort();
-    assert_eq!(a.session_sort(), "name");
-    let names: Vec<String> = a.visible_sessions().iter().map(|s| [&s.name, &s.title].into_iter().find(|t| !t.is_empty()).cloned().unwrap_or_default().to_lowercase()).collect();
-    let mut sorted = names.clone();
-    sorted.sort();
-    assert_eq!(names, sorted);
-    a.cycle_session_sort();
-    assert_eq!(a.session_sort(), "time");
-    // Alte gespeicherte Werte bleiben lesbar.
-    a.store.sort = "bookmarks".into();
-    assert_eq!(a.session_sort(), "color");
+    assert_eq!(v[0].key(), x, "Farbe: kleinerer Farbindex zuerst");
+    assert_eq!(a.session_group(&v[0]), Some(a.store.category_name(0)));
+    a.cycle_bookmark_mode();
+    assert_eq!(a.bookmark_mode(), "off");
+    // Ort: alle → lokal → remote → alle.
+    a.cycle_session_origin();
+    assert!(a.visible_sessions().iter().all(|s| !s.is_remote()));
+    a.cycle_session_origin();
+    assert!(!a.visible_sessions().is_empty() && a.visible_sessions().iter().all(|s| s.is_remote()));
+    a.cycle_session_origin();
+    assert_eq!(a.visible_sessions().len(), all.len());
+}
+
+#[test]
+fn context_manager_search_filters_by_meta_and_content_hits() {
+    let mut a = demo();
+    let all = a.visible_sessions();
+    assert!(all.len() >= 3);
+    let target = all[1].clone();
+    // Treffer im Inhalt (Ergebnis des Hintergrundindex, hier direkt gesetzt).
+    a.search = "zebrafisch".into();
+    a.search_hits.insert(target.path.clone(), pi_backend::search::Hit { counts: vec![2], snippet: "… der Zebrafisch schwimmt".into() });
+    let v = a.visible_sessions();
+    assert_eq!(v.len(), 1);
+    assert_eq!(v[0].path, target.path);
+    // Alle Wörter müssen passen: ein Wort im Inhalt, eines im Titel/Ordner.
+    let title_word = [&target.name, &target.title].into_iter().find(|t| !t.is_empty()).unwrap().split_whitespace().next().unwrap().to_lowercase();
+    a.search = format!("zebrafisch {title_word}");
+    a.search_hits.insert(target.path.clone(), pi_backend::search::Hit { counts: vec![2, 0], snippet: String::new() });
+    assert_eq!(a.visible_sessions().len(), 1);
+    a.search = "zebrafisch nichtvorhandenxyz".into();
+    assert!(a.visible_sessions().is_empty());
+    // Leere Suche zeigt wieder alles; set_search leert die Treffer.
+    a.set_search("");
+    assert!(a.search_hits.is_empty());
+    assert_eq!(a.visible_sessions().len(), all.len());
+    assert_eq!(crate::app::search_words("  Foo  BAR "), vec!["foo".to_string(), "bar".to_string()]);
+}
+
+#[test]
+fn context_manager_sidebar_renders_headless() {
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    a.net.demo_scene();
+    a.search = "demo".into();
+    let ctx = a.ctx.clone();
+    for view in [0, crate::outline_ui::OUTLINE_VIEW] {
+        a.set_side_view(view);
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(Default::default(), |ui| a.draw(ui));
+            out.textures_delta.clear();
+        }
+    }
 }
 
 #[test]
@@ -1325,4 +1365,19 @@ fn sidebar_key_k_opens_repair_for_cursor_session() {
     a.list_cursor = Some(0);
     outline_frame(&mut a, vec![key(Key::K, Modifiers::NONE)]);
     assert!(a.repair.is_some());
+}
+
+#[test]
+fn demo_scene_search_keeps_query_and_hits() {
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    let ctx = a.ctx.clone();
+    for f in 0..6 {
+        if f == 1 { a.demo_scene("search"); }
+        let mut out = ctx.run_ui(Default::default(), |ui| a.draw(ui));
+        out.textures_delta.clear();
+    }
+    assert_eq!(a.search, "kontext");
+    assert_eq!(a.search_hits.len(), 2);
+    assert_eq!(a.visible_sessions().len(), 2);
 }

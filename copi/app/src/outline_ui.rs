@@ -11,9 +11,9 @@ use crate::app::{App, DialogKind, ToastKind};
 use crate::icons;
 use crate::shared_outline::{self as so, Op, Outline, Ref};
 use crate::theme::*;
-use crate::view::{btn, k, plain, take, txt};
+use crate::view::{k, plain, take, txt};
 
-/// Index der Gliederung in `SIDE_VIEWS`.
+/// Index der Gliederung in `SIDE_VIEWS` (Schalter „Gliederung“ im Kontextmanager).
 pub const OUTLINE_VIEW: usize = 1;
 /// Einrückung je Ebene (AUGMOST: 26 px; hier schmaler für die 240-px-Seitenleiste).
 pub const INDENT: f32 = 14.0;
@@ -216,7 +216,7 @@ impl App {
         }
     }
 
-    fn outline_new_color(&mut self) {
+    pub(crate) fn outline_new_color(&mut self) {
         self.ask(DialogKind::Input,"Neue Farboberkategorie","Name der neuen Bookmark-Farbe",vec![],"",|a,r| {
             if let Some(name)=r.and_then(|v|v["value"].as_str().map(str::to_owned)).filter(|s|!s.trim().is_empty()) {
                 a.ask(DialogKind::Input,"Farbe wählen","Hex-Farbe, z. B. #74b9ff",vec![],"#74b9ff",move |a,r| {
@@ -265,7 +265,7 @@ impl App {
                 if let Some(s)=self.outline_sessions().into_iter().find(|s| &s.key()==key) {
                     let active=self.session_shown(&s);
                     let branch=if row.has_children { row.item.map(|i|(i,row.collapsed)) } else { None };
-                    return self.session_card_outline(ui,&s,active,selected,branch);
+                    return self.session_card_outline(ui,&s,active,selected,branch,true);
                 }
             }
             RowKey::Tree(Ref::Md{path})|RowKey::Loose(Ref::Md{path}) => {
@@ -451,12 +451,8 @@ impl App {
 
     pub(crate) fn outline_sidebar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            ui.set_height(28.0);
-            if btn(ui, "+ Farbe", 12.0, vec2(5.0, 3.0), vec2(0.0, 28.0), false, true).clicked() {
-                self.outline_new_color();
-            }
-            ui.selectable_value(&mut self.outline.view, false, "Edit");
-            ui.selectable_value(&mut self.outline.view, true, "View");
+            ui.set_height(18.0);
+            ui.add(Label::new(txt(if self.outline.view { "View · Karten mit Vorschau" } else { "Edit · ziehen, Tab/Umschalt+Tab" }, 11.0, DIM)).truncate());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                 icons::info(ui.painter(), r, DIM);
@@ -478,7 +474,7 @@ impl App {
         let scroll = std::mem::take(&mut self.outline.scroll);
         let mut geo: Vec<(Rect, usize)> = Vec::new();
         let mut tree_bottom = None;
-        ScrollArea::vertical().id_salt("outline").auto_shrink([false, false]).show(ui, |ui| {
+        ScrollArea::vertical().id_salt("outline").auto_shrink([false, false]).max_height((ui.available_height() - crate::view::FOOTER_H).max(40.0)).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
             if self.outline.o.items.is_empty() {
                 ui.add(Label::new(txt("Noch keine Gliederung. „+ Kategorie“ anlegen und Einträge aus den Gruppen unten hineinziehen (oder Tab).", 11.5, DIM)).wrap());
@@ -532,8 +528,15 @@ impl App {
         let sym = Rect::from_center_size(pos2(x0 + SYM / 2.0, rect.center().y), vec2(SYM, SYM));
         let is_cat = matches!(row.key, RowKey::Tree(Ref::Cat { .. }) | RowKey::Group(_));
         if matches!(&row.key,RowKey::Tree(r) if so::color_root(r).is_some()) {
-            p.rect_filled(rect, 3, mix(tone,0.18,PANEL));
-            p.rect_filled(Rect::from_min_size(rect.min,vec2(3.0,rect.height())),1,tone);
+            // Aufgeklappte Farboberkategorie deutlich hervorheben (kräftige Fläche, Rahmen,
+            // breiter Streifen), damit klar ist, zu welcher Farbe die Karten darunter gehören.
+            let open = row.has_children && !row.collapsed;
+            let (fill, stripe) = if open { (0.42, 5.0) } else { (0.18, 3.0) };
+            p.rect_filled(rect, 4, mix(tone, fill, PANEL));
+            if open {
+                p.rect_stroke(rect, 4, Stroke::new(1.2, tone), StrokeKind::Inside);
+            }
+            p.rect_filled(Rect::from_min_size(rect.min,vec2(stripe,rect.height())),2,tone);
         }
         let sym_col = if row.missing { alpha(DIM, 0.6) } else if is_cat { tone } else { tone };
         if row.has_children {

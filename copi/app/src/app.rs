@@ -47,13 +47,18 @@ pub const THINKING: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhi
 pub const SIDE_VIEWS: [&str; 2] = ["Sessions", "Gliederung"];
 /// Kategorien der Bibliothek (Anzeigename, Inventarkategorie).
 pub const LIBRARY_CATS: [(&str, &str); 3] = [("Extensions / Plugins", "extensions"), ("Skills", "skills"), ("Agent- und Kontextdateien", "agents")];
-/// Sortierungen der Sessionliste (Store-Wert, Knopftext, Hinweis).
-pub const SESSION_SORTS: [(&str, &str, &str); 4] = [
-    ("time", "Zeit", "Neueste zuerst"),
-    ("color", "Farbe", "Nach Bookmark-Farbkategorie, dann Zeit (Unmarkierte zuletzt)"),
-    ("origin", "Ort", "Lokal zuerst, dann Remote je Server, dann Zeit"),
-    ("name", "Name", "Alphabetisch nach Titel"),
+/// Bookmark-Schalter der Sessionliste (Wert, Knopftext, Hinweis): aus = alle Sessions,
+/// an = nur Bookmarks, Farbe = nur Bookmarks, nach Farbkategorie gruppiert (wie pi-lite).
+pub const BOOKMARK_MODES: [(&str, &str, &str); 3] = [
+    ("off", "aus", "Alle Sessions"),
+    ("on", "an", "Nur Bookmarks"),
+    ("color", "Farbe", "Nur Bookmarks, nach Farbkategorie gruppiert"),
 ];
+
+/// Suchwörter (kleingeschrieben, durch Leerraum getrennt, höchstens 8).
+pub fn search_words(q: &str) -> Vec<String> {
+    q.split_whitespace().map(str::to_lowercase).take(8).collect()
+}
 
 /// Inventar-Kategorie der Bibliothek für `LIBRARY_CATS[idx]`.
 pub fn library_category(idx: usize) -> Option<&'static str> {
@@ -65,7 +70,6 @@ pub enum PickerKind {
     Workspace,
     Model,
     Thinking,
-    SideView,
 }
 
 /// Ziel des großen Editors (`editor_open`): Eingabefeld-Text oder eine Inventar-Markdown-Datei.
@@ -259,6 +263,13 @@ pub struct App {
     pub(crate) library: Option<crate::library_ui::LibraryState>,
     /// Kontext-Repair-Dialog einer Session.
     pub(crate) repair: Option<crate::repair_ui::RepairState>,
+    /// Stichwortsuche des Kontextmanagers (nur lesend): Anfrage, Treffer je lokalem
+    /// Sessionpfad und der im Hintergrund gepflegte Index.
+    pub(crate) search: String,
+    pub(crate) search_hits: HashMap<String, pi_backend::search::Hit>,
+    pub(crate) search_loading: bool,
+    search_seq: u64,
+    search_corpus: Arc<Mutex<pi_backend::search::Corpus>>,
 
     // Status
     pub(crate) busy: bool,
@@ -391,6 +402,11 @@ impl App {
             outline: Default::default(),
             library: None,
             repair: None,
+            search: String::new(),
+            search_hits: HashMap::new(),
+            search_loading: false,
+            search_seq: 0,
+            search_corpus: Default::default(),
             busy: false,
             busy_since: None,
             activity: Default::default(),
@@ -1271,66 +1287,128 @@ impl App {
             return;
         }
         let cache = self.info_cache.clone();
-        self.spawn(move || cache.lock().map(|mut c| c.list()).unwrap_or_default(), |a, list| a.sessions = list);
+        self.spawn(move || cache.lock().map(|mut c| c.list()).unwrap_or_default(), |a, list| {
+            a.sessions = list;
+            if !a.search.trim().is_empty() {
+                a.search_run();
+            }
+        });
         self.net.refresh_all_remote_sessions();
     }
 
-    /// Lokale und Remote-Sessions in einer Liste; Herkunfts- und Bookmark-Filter, Sortierung
-    /// wie gehabt (Farbe bei „Farben“, dann Zeit, dann Backend/Pfad). Bookmarks remote über
-    /// [`SessionInfo::key`], damit gleiche Pfade auf zwei Rechnern nicht verwechselt werden.
+    /// Lokale und Remote-Sessions in einer Liste: Herkunfts-, Bookmark- und Suchfilter;
+    /// Zeit (neueste bzw. älteste zuerst), bei „Farbe“ vorher nach Farbkategorie. Bookmarks
+    /// remote über [`SessionInfo::key`], damit gleiche Pfade auf zwei Rechnern nicht
+    /// verwechselt werden.
     pub fn visible_sessions(&self) -> Vec<SessionInfo> {
         let origin = self.store.session_origin.as_str();
         let local = self.sessions.iter().filter(|_| origin != "remote");
         let remote = self.net.remote_sessions.iter().filter(|_| origin != "local");
-        let mut v: Vec<SessionInfo> = local.chain(remote).filter(|s| !self.store.only_bookmarks || self.store.is_bookmark(&s.key())).cloned().collect();
-        let sort = self.session_sort();
-        let label = |s: &SessionInfo| [&s.name, &s.title].into_iter().find(|t| !t.is_empty()).map(|t| t.to_lowercase()).unwrap_or_default();
+        let only = self.bookmark_mode() != "off";
+        let words = search_words(&self.search);
+        let mut v: Vec<SessionInfo> = local.chain(remote).filter(|s| (!only || self.store.is_bookmark(&s.key())) && self.search_match(s, &words)).cloned().collect();
+        let by_color = self.bookmark_mode() == "color";
+        let inverse = self.store.time_inverse;
         v.sort_by(|a, b| {
-            let first = match sort {
-                "color" => self.session_color_rank(a).cmp(&self.session_color_rank(b)),
-                "origin" => (a.is_remote(), self.net.backend_label(&a.backend)).cmp(&(b.is_remote(), self.net.backend_label(&b.backend))),
-                "name" => label(a).cmp(&label(b)),
-                _ => std::cmp::Ordering::Equal,
-            };
-            first.then(b.modified.cmp(&a.modified)).then(a.backend.cmp(&b.backend)).then(a.path.cmp(&b.path))
+            let first = if by_color { self.session_color_rank(a).cmp(&self.session_color_rank(b)) } else { std::cmp::Ordering::Equal };
+            let t = if inverse { a.modified.cmp(&b.modified) } else { b.modified.cmp(&a.modified) };
+            first.then(t).then(a.backend.cmp(&b.backend)).then(a.path.cmp(&b.path))
         });
         v
     }
 
-    /// Aktive Sortierung; alte Werte („bookmarks“, „Farben“-Filter) werden als „Farbe“ gelesen.
-    pub fn session_sort(&self) -> &'static str {
-        match self.store.sort.as_str() {
-            "color" | "bookmarks" => "color",
-            "origin" => "origin",
-            "name" => "name",
-            _ if self.store.only_bookmarks && self.store.colored_bookmarks => "color",
-            _ => "time",
+    /// Jedes Suchwort muss in Name, Titel, Ordner/Server oder (lokal) im Gesprächsinhalt
+    /// vorkommen.
+    pub fn search_match(&self, s: &SessionInfo, words: &[String]) -> bool {
+        if words.is_empty() {
+            return true;
+        }
+        let meta = format!("{} {} {} {}", s.name, s.title, s.cwd, if s.is_remote() { self.net.backend_label(&s.backend) } else { String::new() }).to_lowercase();
+        let hit = if s.is_remote() { None } else { self.search_hits.get(&s.path) };
+        words.iter().enumerate().all(|(i, w)| meta.contains(w.as_str()) || hit.is_some_and(|h| h.counts.get(i).is_some_and(|&n| n > 0)))
+    }
+
+    /// Suche (neu) starten: Index der lokalen Sessions im Hintergrund abgleichen und
+    /// durchsuchen; ältere Antworten werden über `search_seq` verworfen.
+    pub fn search_run(&mut self) {
+        self.search_seq += 1;
+        let seq = self.search_seq;
+        self.list_cursor = None;
+        let words = search_words(&self.search);
+        if words.is_empty() {
+            self.search_hits.clear();
+            self.search_loading = false;
+            return;
+        }
+        let paths: Vec<String> = self.sessions.iter().map(|s| s.path.clone()).collect();
+        let corpus = self.search_corpus.clone();
+        self.search_loading = true;
+        self.spawn(
+            move || {
+                corpus
+                    .lock()
+                    .map(|mut c| {
+                        c.sync(&paths);
+                        c.search(&words)
+                    })
+                    .unwrap_or_default()
+            },
+            move |a, hits: HashMap<String, pi_backend::search::Hit>| {
+                if seq != a.search_seq {
+                    return;
+                }
+                a.search_loading = false;
+                a.search_hits = hits;
+            },
+        );
+    }
+
+    pub fn set_search(&mut self, q: &str) {
+        if self.search != q {
+            self.search = q.to_string();
+            self.search_run();
         }
     }
 
-    /// Rang für die Farbsortierung: Bookmarks nach Farbindex, Unmarkierte zuletzt.
+    /// Bookmark-Schalter: "off", "on" oder "color" (gespeichert als `only_bookmarks` /
+    /// `colored_bookmarks`, kompatibel zu früheren Ständen).
+    pub fn bookmark_mode(&self) -> &'static str {
+        match (self.store.only_bookmarks, self.store.colored_bookmarks) {
+            (false, _) => "off",
+            (true, false) => "on",
+            (true, true) => "color",
+        }
+    }
+
+    /// aus → an → Farbe → aus.
+    pub fn cycle_bookmark_mode(&mut self) {
+        let (only, colored) = match self.bookmark_mode() {
+            "off" => (true, false),
+            "on" => (true, true),
+            _ => (false, false),
+        };
+        self.store.only_bookmarks = only;
+        self.store.colored_bookmarks = colored;
+        self.list_cursor = None;
+        self.save_store();
+    }
+
+    /// Zeit: aktuell (neueste zuerst) ↔ invers (älteste zuerst).
+    pub fn toggle_time_order(&mut self) {
+        self.store.time_inverse = !self.store.time_inverse;
+        self.list_cursor = None;
+        self.save_store();
+    }
+
+    /// Rang für die Farbgruppierung: Bookmarks nach Farbindex, Unmarkierte zuletzt.
     pub fn session_color_rank(&self, s: &SessionInfo) -> u16 {
         let k = s.key();
         if self.store.is_bookmark(&k) { u16::from(self.store.bookmark_color(&k)) } else { u16::MAX }
     }
 
-    /// Gruppenüberschrift einer Session für die aktuelle Sortierung (`None` bei Zeit/Name).
+    /// Gruppenüberschrift einer Session (nur beim Bookmark-Schalter „Farbe“).
     pub fn session_group(&self, s: &SessionInfo) -> Option<String> {
-        match self.session_sort() {
-            "color" => Some(if self.store.is_bookmark(&s.key()) { self.store.category_name(self.store.bookmark_color(&s.key())) } else { "Unmarkiert".into() }),
-            "origin" => Some(if s.is_remote() { format!("Remote · {}", self.net.backend_label(&s.backend)) } else { "Lokal".into() }),
-            _ => None,
-        }
-    }
-
-    /// Sortierung weiterschalten: Zeit → Farbe → Ort → Name → Zeit.
-    pub fn cycle_session_sort(&mut self) {
-        let cur = self.session_sort();
-        let i = SESSION_SORTS.iter().position(|s| s.0 == cur).unwrap_or(0);
-        self.store.sort = SESSION_SORTS[(i + 1) % SESSION_SORTS.len()].0.into();
-        self.store.colored_bookmarks = false;
-        self.list_cursor = None;
-        self.save_store();
+        (self.bookmark_mode() == "color").then(|| if self.store.is_bookmark(&s.key()) { self.store.category_name(self.store.bookmark_color(&s.key())) } else { "Unmarkiert".into() })
     }
 
     /// Herkunftsfilter weiterschalten: Alle Orte → Lokal → Remote → Alle Orte. „Remote“
@@ -1892,7 +1970,6 @@ impl App {
                     let t = inst.and_then(|i| i.chat.state["thinkingLevel"].as_str()).unwrap_or("").to_string();
                     return (THINKING.iter().map(|l| format!("Denken: {l}")).collect(), THINKING.iter().position(|l| *l == t).unwrap_or(0));
                 }
-                _ => {}
             }
         }
         match kind {
@@ -1911,7 +1988,6 @@ impl App {
                 let t = self.thinking_level();
                 (THINKING.iter().map(|l| format!("Denken: {l}")).collect(), THINKING.iter().position(|l| *l == t).unwrap_or(0))
             }
-            PickerKind::SideView => (SIDE_VIEWS.iter().map(|s| s.to_string()).collect(), self.side_view),
         }
     }
 
@@ -1949,7 +2025,6 @@ impl App {
                     self.net.request_meta(&k);
                     return;
                 }
-                _ => {}
             }
         }
         match kind {
@@ -1985,7 +2060,6 @@ impl App {
                     self.state["thinkingLevel"] = json!(level);
                 }
             }
-            PickerKind::SideView => self.set_side_view(idx.min(SIDE_VIEWS.len() - 1)),
         }
     }
 
@@ -2570,6 +2644,15 @@ impl App {
                 }
             }
             "outline" => self.demo_scene_outline(),
+            // Kontextmanager mit Suche: Treffer im Inhalt (Demo, ohne Index) und Bookmark „Farbe“.
+            "search" => {
+                self.toasts.clear();
+                let paths: Vec<String> = self.sessions.iter().take(2).map(|s| s.path.clone()).collect();
+                self.search = "kontext".into();
+                for (i, p) in paths.into_iter().enumerate() {
+                    self.search_hits.insert(p, pi_backend::search::Hit { counts: vec![3 - i], snippet: "… danach den Kontext aufräumen und die Sidebar zum Kontextmanager umbauen".into() });
+                }
+            }
             "outline-edit" | "outline-view" => {
                 self.demo_scene_outline();
                 let mut b=self.store.shared_value();

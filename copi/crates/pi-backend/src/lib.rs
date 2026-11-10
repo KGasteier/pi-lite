@@ -15,6 +15,7 @@ pub mod media;
 pub mod preview;
 pub mod repair;
 pub mod rpc;
+pub mod search;
 pub mod sessions;
 pub mod ssh;
 #[cfg(test)]

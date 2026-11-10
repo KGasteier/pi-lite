@@ -2,6 +2,28 @@
 
 ## Aktueller Stand
 
+### Kontextmanager (Seitenleiste) · 09.11.2026 · cocopi-v2 (nur egui copi/cocopi)
+
+**Aufbau von oben nach unten:**
+- Kopf: „Kontextmanager“, rechts „+ Session“.
+- Umschalter Sessions | Bibliothek (kein Dropdown mehr; „Bibliothek“ öffnet das Modal, Alt+L).
+- Suchfeld (Strg/Cmd+F; Esc leert; ↓/Enter springt in die Liste).
+- Vier Schalter: Gliederung an/aus · Zeit aktuell/invers · Bookmark aus → an → Farbe · Ort alle → lokal → remote.
+  - Gliederung an: Zeit, Bookmark, Ort und Suche treten zurück; stattdessen Edit | View und „+ Farbe“.
+- Fußzeile: Menü „Import/Export“ (Markdown importieren, gewählte Session über den Repair-Dialog exportieren) und Sessionzähler.
+
+**Speicherung:** `store.time_inverse` (neu); Bookmark-Modus in den alten Feldern `only_bookmarks`/`colored_bookmarks` (aus = false/–, an = true/false, Farbe = true/true). `store.sort` wird nur noch mitgeführt. `PickerKind::SideView` und `SESSION_SORTS` sind entfernt.
+
+**Suche** (`crates/pi-backend/src/search.rs`, nur lesend):
+- `Corpus` im Speicher, inkrementell nach Länge+mtime, Abgleich und Suche im Hintergrund (`App::search_run`, verworfen über `search_seq`).
+- Indexiert nur Nutzer-/Assistententext, `compaction`/`branch_summary`-Zusammenfassungen und Sessionnamen; nie Werkzeugausgaben oder Thinking. Höchstens 4 MB Text je Session.
+- UND-Verknüpfung: jedes Wort muss in Inhalt, Name, Titel, Ordner oder Servername stehen. Karten mit Inhaltstreffern zeigen eine dritte Zeile (Anzahl + Ausschnitt mit Markierung).
+- Remote-Sessions nur über Metadaten; Remote-Inhaltssuche GEPLANT, NICHT IMPLEMENTIERT.
+
+**Gliederung:** Sessionkarten ohne Bookmark-Knopf und Farbpunkt (Farbe = Oberkategorie). Aufgeklappte Farboberkategorie mit kräftiger Fläche, Rahmen und breitem Streifen.
+
+**Geprüft (automatisiert/headless):** copi 131 + cocopi 135 Tests (je 2 ignoriert), pi-backend 88 (+1 ignoriert), `test-outline.cjs` ok; Headless-Shots `side`, `search`, `outline-view` angesehen. Live nicht geprüft.
+
 ### Sessions-Kontextmanager, Bibliothek, Kontext-Repair · 08.11.2026 · cocopi-v2 (nur egui copi/cocopi)
 
 **Seitenleiste:** Hier stehen nur noch Sessions, entweder als Liste oder als Gliederung. Darüber liegen drei Knöpfe:

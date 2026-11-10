@@ -19,7 +19,7 @@ type Act = Box<dyn FnOnce(&mut App)>;
 
 const KEYHELP: [&str; 5] = [
     "Tab / Shift+Tab: nächstes / vorheriges Bedienelement · Enter/Leertaste: aktivieren · Esc: schließen/zurück",
-    "Alt+1: Eingabe · Alt+2: Seitenliste · Alt+3: Chat · Alt+4: Kopfzeile · Alt+5: Vorschau\nAlt+N: neue Session · Alt+A: abbrechen · Alt+F: Fork · Alt+M: Modell · Alt+T: Thinking\nAlt+L: Bibliothek (Extensions/Skills/Agent-Dateien) · Alt+− / Alt++: Ausgabeschrift · F1: diese Hilfe · Strg/Cmd+B: Sessions · Strg/Cmd+Shift+B: rechte Seitenleiste",
+    "Alt+1: Eingabe · Alt+2: Seitenliste · Alt+3: Chat · Alt+4: Kopfzeile · Alt+5: Vorschau\nAlt+N: neue Session · Alt+A: abbrechen · Alt+F: Fork · Alt+M: Modell · Alt+T: Thinking\nAlt+L: Bibliothek (Extensions/Skills/Agent-Dateien) · Strg/Cmd+F: Sessions durchsuchen · Alt+− / Alt++: Ausgabeschrift · F1: diese Hilfe · Strg/Cmd+B: Sessions · Strg/Cmd+Shift+B: rechte Seitenleiste",
     "Listen: ↑/↓, Home/End · ←: Ansichtsauswahl · →: Vorschau\nSessions: Enter öffnen · R/F2 umbenennen · Backspace löschen · M/Shift+F10 Menü\nGliederung: ←/→ zu-/aufklappen · Tab/Shift+Tab ein-/ausrücken · Alt+↑/↓ verschieben · N Kategorie · Ziehen sortiert\nChat: ↑/↓ scrollen · Home/End Anfang/Ende · Tab erreicht Links und Tool-Blöcke",
     "Eingabe: ↑/↓ an erster/letzter Zeile: History; sonst Cursor · Alt+↑/↓ oder Pfeilknöpfe: History\nEnter sendet · Option/Alt+Enter: neue Zeile · Editor: Strg/Cmd+S speichert\nEsc unterbricht den Agenten · !cmd Shell (!!cmd ohne Kontext) · pi update u. a. pi-CLI-Befehle direkt\n/ öffnet Befehle · Tippen filtert Namen · Hover/↑↓ markieren · Klick/Enter ausführen · Tab vervollständigen · Esc schließen",
     "Dialoge: Tab bleibt im Dialog; Pfeile wechseln zwischen Knöpfen, nicht innerhalb von Textfeldern.",
@@ -96,6 +96,92 @@ pub fn btn(ui: &mut Ui, text: &str, size: f32, pad: Vec2, min: Vec2, primary: bo
 }
 
 /// Pixel-Spinner: 2×4 Punkte, 3 px, Abstand 1,5 px, gestaffelt.
+/// Höhe der Fußzeile des Kontextmanagers (Import/Export, Zähler).
+pub(crate) const FOOTER_H: f32 = 34.0;
+
+pub(crate) fn search_id() -> Id {
+    Id::new("km-search")
+}
+
+/// Segmentierter Umschalter über die volle Breite `w`; liefert den angeklickten Index.
+pub(crate) fn segmented(ui: &mut Ui, w: f32, h: f32, items: &[&str], cur: usize, tips: &[&str]) -> Option<usize> {
+    let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+    ui.painter().rect_filled(rect, 7, BG);
+    ui.painter().rect_stroke(rect, 7, Stroke::new(1.0, BORDER), StrokeKind::Inside);
+    let sw = (w - 4.0) / items.len() as f32;
+    let mut out = None;
+    for (i, name) in items.iter().enumerate() {
+        let r = Rect::from_min_size(rect.min + vec2(2.0 + sw * i as f32, 2.0), vec2(sw, h - 4.0));
+        let resp = ui.interact(r, ui.id().with(("seg", name)), Sense::click());
+        let on = i == cur;
+        let p = ui.painter();
+        if on {
+            p.rect_filled(r, 5, BTN);
+        } else if resp.hovered() {
+            p.rect_filled(r, 5, alpha(BTN, 0.45));
+        }
+        let fam = if on { egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()) } else { egui::FontFamily::Proportional };
+        p.text(r.center(), Align2::CENTER_CENTER, *name, FontId::new(12.0, fam), if on { FG } else { DIM });
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let resp = match tips.get(i) { Some(t) => resp.on_hover_text(*t), None => resp };
+        if resp.clicked() && !on {
+            out = Some(i);
+        }
+    }
+    out
+}
+
+/// Zweizeiliger Schalter: kleine Beschriftung oben, Zustand darunter; `on` = vom Standard
+/// abweichend (Akzentrand).
+pub(crate) fn toggle_chip(ui: &mut Ui, w: f32, caption: &str, value: &str, on: bool, enabled: bool) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 34.0), if enabled { Sense::click() } else { Sense::hover() });
+    let p = ui.painter();
+    let hov = enabled && resp.hovered();
+    let bg = if on { mix(acc(), 0.22, PANEL) } else if hov { Color32::from_rgb(0x4c, 0x52, 0x5a) } else { BTN };
+    p.rect_filled(rect, 6, if enabled { bg } else { alpha(bg, 0.5) });
+    if on {
+        p.rect_stroke(rect, 6, Stroke::new(1.0, mix(acc(), 0.7, PANEL)), StrokeKind::Inside);
+    }
+    let dim = if enabled { DIM } else { alpha(DIM, 0.5) };
+    let fg = if enabled { FG } else { alpha(FG, 0.5) };
+    p.text(rect.center_top() + vec2(0.0, 4.0), Align2::CENTER_TOP, caption, FontId::proportional(9.5), dim);
+    let fam = if on { egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()) } else { egui::FontFamily::Proportional };
+    p.text(rect.center_bottom() - vec2(0.0, 4.0), Align2::CENTER_BOTTOM, value, FontId::new(12.0, fam), fg);
+    if hov {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp
+}
+
+/// Text an `job` anhängen und Vorkommen der (kleingeschriebenen) Suchwörter hervorheben.
+pub(crate) fn append_marked(job: &mut LayoutJob, text: &str, words: &[String], base: &egui::TextFormat, mark: &egui::TextFormat) {
+    let lower: Vec<(usize, char)> = text.char_indices().collect();
+    let low: String = text.to_lowercase();
+    // Nur wenn Kleinschreibung die Bytelängen nicht verändert, sind die Positionen übertragbar.
+    if low.len() != text.len() || words.is_empty() || lower.is_empty() {
+        job.append(text, 0.0, base.clone());
+        return;
+    }
+    let mut marks = vec![false; text.len()];
+    for w in words.iter().filter(|w| !w.is_empty()) {
+        for (i, _) in low.match_indices(w.as_str()) {
+            marks[i..i + w.len()].iter_mut().for_each(|m| *m = true);
+        }
+    }
+    let mut start = 0;
+    let mut cur = marks[0];
+    for (i, _) in lower.iter().skip(1) {
+        if marks[*i] != cur {
+            job.append(&text[start..*i], 0.0, if cur { mark.clone() } else { base.clone() });
+            start = *i;
+            cur = marks[*i];
+        }
+    }
+    job.append(&text[start..], 0.0, if cur { mark.clone() } else { base.clone() });
+}
+
 pub(crate) fn spinner(ui: &mut Ui) {
     snake(ui, false);
 }
@@ -491,6 +577,28 @@ impl App {
             }
             return;
         }
+        // 4a. Suchfeld des Kontextmanagers: Strg/Cmd+F fokussiert, Esc leert, ↓/Enter springt
+        // in die Trefferliste.
+        if self.store.side_visible && self.side_view == 0 {
+            if k(ctx, Key::F, false, true, false) {
+                ctx.memory_mut(|m| m.request_focus(search_id()));
+                return;
+            }
+            if ctx.memory(|m| m.has_focus(search_id())) {
+                if plain(ctx, Key::Escape) {
+                    self.set_search("");
+                    ctx.memory_mut(|m| m.surrender_focus(search_id()));
+                    self.focus_prompt = true;
+                } else if plain(ctx, Key::ArrowDown) || plain(ctx, Key::Enter) {
+                    ctx.memory_mut(|m| m.surrender_focus(search_id()));
+                    if !self.visible_sessions().is_empty() {
+                        self.list_cursor = Some(0);
+                        self.list_scroll = true;
+                    }
+                }
+                return;
+            }
+        }
         // 4b. Sessions-/Inventarliste in der Seitenleiste (Tastaturnavigation, nur wenn die
         // Eingabe nicht fokussiert ist und keine Auswahlliste/Hilfe offen ist).
         let prompt_focused_now = ctx.memory(|m| m.has_focus(prompt_id()));
@@ -683,55 +791,70 @@ impl App {
     fn sidebar(&mut self, ui: &mut Ui) {
         ui.spacing_mut().item_spacing = vec2(5.0, 6.0);
         let w = ui.available_width();
-        let side_label = SIDE_VIEWS[self.side_view.min(SIDE_VIEWS.len() - 1)];
-        self.pick_button(ui, PickerKind::SideView, side_label, w, "Ansicht wählen: Sessionliste oder Gliederung");
+        let outline = self.side_view == crate::outline_ui::OUTLINE_VIEW;
+        // Kopf: Name links, „+ Session“ rechts (häufigste Aktion, Alt+N).
         ui.horizontal(|ui| {
-            ui.set_height(28.0);
-            if btn(ui, "+ Neu", 12.0, vec2(9.0, 3.0), vec2(0.0, 28.0), false, true).on_hover_text("Neue Session (Alt+N)").clicked() {
-                self.new_session();
-            }
+            ui.set_height(26.0);
+            ui.add(Label::new(RichText::new("Kontextmanager").size(14.0).color(FG).family(egui::FontFamily::Name(md_egui::BOLD_FAMILY.into()))).truncate());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if btn(ui, "Bibliothek", 12.0, vec2(7.0, 3.0), vec2(0.0, 28.0), self.library.is_some(), true)
-                    .on_hover_text("Extensions/Plugins, Skills sowie Agent- und Kontextdateien mit Vorschau (Alt+L)")
-                    .clicked()
-                {
-                    self.open_library(None);
-                }
-                if btn(ui, "Import", 12.0, vec2(6.0, 3.0), vec2(0.0, 28.0), false, true).on_hover_text("Markdown-Datei als neue Session importieren").clicked() {
-                    self.import_md_session();
+                if btn(ui, "+ Session", 12.0, vec2(8.0, 3.0), vec2(0.0, 26.0), true, true).on_hover_text("Neue Session (Alt+N)").clicked() {
+                    self.new_session();
                 }
             });
         });
-        if self.side_view == crate::outline_ui::OUTLINE_VIEW {
-            self.outline_sidebar(ui);
-            return;
+        // Umschalter Sessions | Bibliothek (Bibliothek = eigenes Fenster, Alt+L).
+        let lib = self.library.is_some();
+        match segmented(ui, w, 28.0, &["Sessions", "Bibliothek"], usize::from(lib), &["Sessions dieses Rechners und der Server-Backends", "Extensions/Plugins, Skills sowie Agent- und Kontextdateien mit Vorschau (Alt+L)"]) {
+            Some(0) if lib => self.close_library(),
+            Some(1) if !lib => self.open_library(None),
+            _ => {}
         }
+        // Stichwortsuche (Inhalt lokaler Sessions, Name, Titel, Ordner/Server).
+        self.search_field(ui, w, !outline);
+        // Schalter: Gliederung links fest; daneben Zeit/Bookmark/Ort bzw. in der Gliederung
+        // Edit/View und „+ Farbe“.
         ui.horizontal(|ui| {
-            ui.set_height(28.0);
-            let (olabel, otip) = match self.store.session_origin.as_str() {
-                "local" => ("Lokal", "Nur lokale Sessions · Klick: nur Remote"),
-                "remote" => ("Remote", "Nur Sessions der Server-Backends · Klick: alle Orte"),
-                _ => ("Alle Orte", "Lokale und Remote-Sessions · Klick: nur lokal"),
-            };
-            if btn(ui, olabel, 12.0, vec2(7.0, 3.0), vec2(0.0, 28.0), self.store.session_origin != "all", true).on_hover_text(otip).clicked() {
-                self.cycle_session_origin();
-            }
-            let only = self.store.only_bookmarks;
-            if btn(ui, if only { "Bookmarks" } else { "Alle" }, 12.0, vec2(7.0, 3.0), vec2(0.0, 28.0), only, true).on_hover_text("Alle Sessions ↔ nur Bookmarks").clicked() {
-                self.store.only_bookmarks = !only;
-                self.store.colored_bookmarks = false;
-                self.list_cursor = None;
-                self.save_store();
-            }
-            let sort = self.session_sort();
-            let (_, slabel, stip) = SESSION_SORTS.iter().find(|x| x.0 == sort).copied().unwrap_or(SESSION_SORTS[0]);
-            if btn(ui, &format!("↕ {slabel}"), 12.0, vec2(7.0, 3.0), vec2(0.0, 28.0), sort != "time", true)
-                .on_hover_text(format!("Sortierung: {stip}\nKlick: Zeit → Farbe → Ort → Name"))
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let cw = ((w - 12.0) / 4.0).floor();
+            if toggle_chip(ui, cw, "Gliederung", if outline { "an" } else { "aus" }, outline, true)
+                .on_hover_text("Gliederung: eigene Sicht mit Farbkategorien (Edit/View). Schaltet Zeit, Bookmark, Ort und Suche ab.")
                 .clicked()
             {
-                self.cycle_session_sort();
+                self.set_side_view(if outline { 0 } else { crate::outline_ui::OUTLINE_VIEW });
+            }
+            if self.side_view == crate::outline_ui::OUTLINE_VIEW {
+                let view = self.outline.view;
+                if let Some(i) = segmented(ui, cw * 2.0 + 4.0, 34.0, &["Edit", "View"], usize::from(view), &["Bearbeiten: ziehen, ein-/ausrücken, Kategorien anlegen", "Ansicht: Karten mit Vorschau, eingerückt"]) {
+                    self.outline.view = i == 1;
+                }
+                if btn(ui, "+ Farbe", 11.5, vec2(4.0, 3.0), vec2(cw, 34.0), false, true).on_hover_text("Neue Farboberkategorie (Bookmark-Farbe)").clicked() {
+                    self.outline_new_color();
+                }
+                return;
+            }
+            let inv = self.store.time_inverse;
+            if toggle_chip(ui, cw, "Zeit", if inv { "invers" } else { "aktuell" }, inv, true).on_hover_text(if inv { "Älteste zuerst · Klick: neueste zuerst" } else { "Neueste zuerst · Klick: älteste zuerst" }).clicked() {
+                self.toggle_time_order();
+            }
+            let mode = self.bookmark_mode();
+            let (_, blabel, btip) = BOOKMARK_MODES.iter().find(|m| m.0 == mode).copied().unwrap_or(BOOKMARK_MODES[0]);
+            if toggle_chip(ui, cw, "Bookmark", blabel, mode != "off", true).on_hover_text(format!("{btip}\nKlick: aus → an → Farbe")).clicked() {
+                self.cycle_bookmark_mode();
+            }
+            let (olabel, otip) = match self.store.session_origin.as_str() {
+                "local" => ("lokal", "Nur lokale Sessions · Klick: nur Remote"),
+                "remote" => ("remote", "Nur Sessions der Server-Backends · Klick: alle"),
+                _ => ("alle", "Lokale und Remote-Sessions · Klick: nur lokal"),
+            };
+            if toggle_chip(ui, cw, "Ort", olabel, self.store.session_origin != "all", true).on_hover_text(otip).clicked() {
+                self.cycle_session_origin();
             }
         });
+        if outline {
+            self.outline_sidebar(ui);
+            self.sidebar_footer(ui);
+            return;
+        }
         ui.add_space(4.0);
         let sep = ui.available_rect_before_wrap();
         ui.painter().hline(sep.x_range(), sep.top(), Stroke::new(1.0, BORDER));
@@ -739,19 +862,21 @@ impl App {
         let list = self.visible_sessions();
         let cursor = self.list_cursor;
         let scroll = std::mem::take(&mut self.list_scroll);
-        ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        ScrollArea::vertical().auto_shrink([false, false]).max_height((ui.available_height() - FOOTER_H).max(40.0)).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 5.0;
-            if list.is_empty() && self.store.session_origin == "remote" && !self.store.only_bookmarks {
+            let searching = !self.search.trim().is_empty();
+            if list.is_empty() && searching {
+                ui.add(Label::new(txt(if self.search_loading { "Suche läuft …" } else { "Keine passende Session. Suchbegriff ändern oder Filter lockern." }, 12.0, DIM)).wrap());
+            } else if list.is_empty() && self.store.session_origin == "remote" && !self.store.only_bookmarks {
                 ui.add(Label::new(txt("Keine Remote-Sessions. Backend unter „Netz“ hinzufügen bzw. verbinden.", 12.0, DIM)).wrap());
-            }
-            if list.is_empty() && self.store.only_bookmarks {
-                ui.add(Label::new(txt("Keine Bookmarks. „Bookmarks“-Knopf oben zeigt wieder alle Sessions.", 12.0, DIM)).wrap());
+            } else if list.is_empty() && self.store.only_bookmarks {
+                ui.add(Label::new(txt("Keine Bookmarks. Schalter „Bookmark“ auf „aus“ zeigt wieder alle Sessions.", 12.0, DIM)).wrap());
             }
             let mut group: Option<String> = None;
             for (i, s) in list.iter().enumerate() {
                 if let Some(g) = self.session_group(s) {
                     if group.as_ref() != Some(&g) {
-                        let color = if self.session_sort() == "color" && self.store.is_bookmark(&s.key()) { self.store.palette_color(self.store.bookmark_color(&s.key())) } else if s.is_remote() && self.session_sort() == "origin" { REMOTE } else { DIM };
+                        let color = if self.store.is_bookmark(&s.key()) { self.store.palette_color(self.store.bookmark_color(&s.key())) } else { DIM };
                         ui.add_space(if group.is_some() { 4.0 } else { 0.0 });
                         ui.horizontal(|ui| {
                             let (r, _) = ui.allocate_exact_size(vec2(8.0, 14.0), Sense::hover());
@@ -766,6 +891,64 @@ impl App {
                 if cursor == Some(i) && scroll {
                     r.scroll_to_me(None);
                 }
+            }
+        });
+        self.sidebar_footer(ui);
+    }
+
+    /// Suchfeld: filtert die Sessionliste; Esc leert es. In der Gliederung abgeschaltet.
+    fn search_field(&mut self, ui: &mut Ui, w: f32, enabled: bool) {
+        let mut q = self.search.clone();
+        let hits = self.search_hits.len();
+        ui.add_enabled_ui(enabled, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let clear_w = if q.is_empty() { 0.0 } else { 26.0 };
+                let r = ui.add(egui::TextEdit::singleline(&mut q).id(search_id()).hint_text("Suchen: Inhalt, Name, Ordner …").desired_width(w - clear_w - if clear_w > 0.0 { 4.0 } else { 0.0 }).margin(vec2(8.0, 5.0)));
+                let tip = if self.search_loading { "Durchsucht lokale Sessions …".to_string() } else if q.trim().is_empty() { "Stichwortsuche (Strg/Cmd+F): alle Wörter müssen vorkommen – in Nutzer-/Assistententext, Zusammenfassungen, Name, Titel oder Ordner. Werkzeugausgaben werden nicht durchsucht.".to_string() } else { format!("{hits} Session(s) mit Treffern im Inhalt · Esc leert") };
+                r.on_hover_text(tip);
+                if clear_w > 0.0 && btn(ui, "×", 13.0, vec2(6.0, 2.0), vec2(22.0, 26.0), false, true).on_hover_text("Suche leeren (Esc)").clicked() {
+                    q.clear();
+                }
+            });
+        });
+        if enabled {
+            self.set_search(&q);
+        }
+    }
+
+    /// Fußzeile: Import/Export als Menü, dazu der Trefferhinweis der Suche.
+    fn sidebar_footer(&mut self, ui: &mut Ui) {
+        let sep = ui.available_rect_before_wrap();
+        ui.painter().hline(sep.x_range(), sep.top(), Stroke::new(1.0, BORDER));
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.set_height(24.0);
+            let r = btn(ui, "Import/Export", 11.5, vec2(7.0, 3.0), vec2(0.0, 24.0), false, true).on_hover_text("Markdown als Session importieren bzw. eine Session als Markdown exportieren");
+            egui::Popup::menu(&r).show(|ui| {
+                ui.set_min_width(230.0);
+                if ui.button("Markdown als neue Session importieren …").clicked() {
+                    self.import_md_session();
+                    ui.close();
+                }
+                let pick = self.list_cursor.and_then(|i| self.visible_sessions().get(i).cloned()).filter(|s| !s.is_remote()).or_else(|| self.sessions.iter().find(|s| s.path == self.session_file()).cloned());
+                let label = match &pick {
+                    Some(s) => format!("„{}“ als Markdown exportieren …", [&s.name, &s.title].into_iter().find(|t| !t.is_empty()).cloned().unwrap_or("(leer)".into()).chars().take(28).collect::<String>()),
+                    None => "Session als Markdown exportieren (erst wählen)".into(),
+                };
+                if ui.add_enabled(pick.is_some(), egui::Button::new(label)).on_hover_text("Gewählte bzw. offene lokale Session über den Kontext-Repair-Dialog exportieren").clicked() {
+                    if let Some(s) = pick {
+                        self.open_repair(&s);
+                    }
+                    ui.close();
+                }
+            });
+            if self.side_view == 0 {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let n = self.visible_sessions().len();
+                    let t = if self.search_loading { "sucht …".to_string() } else { format!("{n} Session{}", if n == 1 { "" } else { "s" }) };
+                    ui.add(Label::new(txt(t, 11.0, DIM)));
+                });
             }
         });
     }
@@ -941,11 +1124,13 @@ impl App {
     }
 
     pub(crate) fn session_card(&mut self, ui: &mut Ui, s: &pi_backend::sessions::SessionInfo, active: bool, selected: bool) -> Response {
-        self.session_card_outline(ui,s,active,selected,None)
+        self.session_card_outline(ui,s,active,selected,None,false)
     }
 
-    /// Optionaler Gliederungspfeil ist eine eigene Klickfläche innerhalb der Karte.
-    pub(crate) fn session_card_outline(&mut self, ui: &mut Ui, s: &pi_backend::sessions::SessionInfo, active: bool, selected: bool, branch: Option<(usize,bool)>) -> Response {
+    /// Optionaler Gliederungspfeil ist eine eigene Klickfläche innerhalb der Karte. In der
+    /// Gliederung (`in_outline`) entfallen Bookmark-Knopf und Farbpunkt: die Farbe ergibt sich
+    /// dort aus der Farboberkategorie, unter der die Karte steht.
+    pub(crate) fn session_card_outline(&mut self, ui: &mut Ui, s: &pi_backend::sessions::SessionInfo, active: bool, selected: bool, branch: Option<(usize,bool)>, in_outline: bool) -> Response {
         let key = s.key();
         let remote = s.is_remote();
         // `active` = gerade gezeigt (Hervorhebung, Klick ohne Wirkung); `running` = in einer
@@ -954,7 +1139,9 @@ impl App {
         // Remote-Karten: eigene Farbe (Rand, Streifen links) und Badge mit dem Servernamen.
         let tone = if self.store.is_bookmark(&key) { self.store.palette_color(self.store.bookmark_color(&key)) } else if remote { REMOTE } else { CAT };
         let w = ui.available_width();
-        let (rect, _) = ui.allocate_exact_size(vec2(w, 52.0), Sense::hover());
+        // Suchtreffer im Inhalt: dritte Zeile mit Ausschnitt und Trefferzahl.
+        let hit = if in_outline || s.is_remote() || self.search.trim().is_empty() { None } else { self.search_hits.get(&s.path).cloned() };
+        let (rect, _) = ui.allocate_exact_size(vec2(w, if hit.is_some() { 70.0 } else { 52.0 }), Sense::hover());
         let mut resp = ui.interact(rect, Id::new(("card", &key)), Sense::click());
         let bm = self.store.is_bookmark(&key);
         let t = if active || selected { 0.22 } else if resp.hovered() { 0.17 } else { 0.09 };
@@ -998,6 +1185,17 @@ impl App {
         let mut job = LayoutJob::simple_singleline(meta, FontId::proportional(11.0), DIM);
         job.wrap = TextWrapping::truncate_at_width((tw - 102.0 - (meta_x - 12.0)).max(10.0));
         p.galley(rect.min + vec2(meta_x, 29.0), p.layout_job(job), DIM);
+        if let Some(h) = &hit {
+            let n: usize = h.counts.iter().sum();
+            let words = crate::app::search_words(&self.search);
+            let mut job = LayoutJob::default();
+            job.wrap = TextWrapping::truncate_at_width(rect.width() - 24.0);
+            let base = egui::TextFormat { font_id: FontId::proportional(10.5), color: alpha(FG, 0.75), ..Default::default() };
+            let mark = egui::TextFormat { font_id: FontId::proportional(10.5), color: FG, background: mix(tone, 0.45, CARD), ..Default::default() };
+            job.append(&format!("{n}× "), 0.0, egui::TextFormat { color: tone, ..base.clone() });
+            append_marked(&mut job, &h.snippet, &words, &base, &mark);
+            p.galley(rect.min + vec2(12.0, 49.0), p.layout_job(job), FG);
+        }
 
         if resp.hovered() {
             self.preview_anchor = rect;
@@ -1009,16 +1207,23 @@ impl App {
         } else if resp.hovered() && self.preview.as_ref().is_none_or(|p| p.path != s.path) {
             self.show_preview(&s.path, &title, false);
         }
-        let bm_rect = Rect::from_min_size(rect.right_bottom() - vec2(6.0 + 23.0, 5.0 + 23.0), vec2(23.0, 23.0));
+        let bm_rect = Rect::from_min_size(rect.right_top() + vec2(-6.0 - 23.0, 52.0 - 5.0 - 23.0), vec2(23.0, 23.0));
         let color_rect = bm_rect.translate(vec2(-25.0, 0.0));
-        let act_rect = bm_rect.translate(vec2(-75.0, 0.0));
-        let delete_rect = bm_rect.translate(vec2(-50.0, 0.0));
+        // Ohne Bookmark-/Farbknopf (Gliederung) rücken Löschen und Umbenennen nach rechts.
+        let shift = if in_outline { 50.0 } else { 0.0 };
+        let act_rect = bm_rect.translate(vec2(-75.0 + shift, 0.0));
+        let delete_rect = bm_rect.translate(vec2(-50.0 + shift, 0.0));
         let delete_resp = ui.interact(delete_rect, Id::new(("card-delete", &key)), Sense::click()).on_hover_text(if running { "Offene Session kann nicht gelöscht werden" } else if remote { "Remote-Session auf dem Server löschen" } else { "Session löschen" });
         icons::paint_icon_button(ui, delete_rect, &delete_resp, !running, IconStyle { bg: None, fg: DIM, hover_fg: FG, icon: 13.0, radius: 5 }, icons::trash);
         if !running && delete_resp.clicked() { self.remove_session(s); }
-        let bm_resp = ui.interact(bm_rect, Id::new(("cardbm", &key)), Sense::click()).on_hover_text(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" });
-        let st = IconStyle { bg: None, fg: if bm { self.store.palette_color(self.store.bookmark_color(&key)) } else { DIM }, hover_fg: FG, icon: 13.0, radius: 5 };
-        icons::paint_icon_button(ui, bm_rect, &bm_resp, true, st, |p, r, c| icons::bookmark_card(p, r, c, bm));
+        let bm_clicked = if in_outline {
+            false
+        } else {
+            let bm_resp = ui.interact(bm_rect, Id::new(("cardbm", &key)), Sense::click()).on_hover_text(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" });
+            let st = IconStyle { bg: None, fg: if bm { self.store.palette_color(self.store.bookmark_color(&key)) } else { DIM }, hover_fg: FG, icon: 13.0, radius: 5 };
+            icons::paint_icon_button(ui, bm_rect, &bm_resp, true, st, |p, r, c| icons::bookmark_card(p, r, c, bm));
+            bm_resp.clicked()
+        };
         let act_resp = ui
             .interact(act_rect, Id::new(("cardact", &key)), Sense::click())
             .on_hover_text(if remote { "Umbenennen ist für Remote-Sessions noch nicht verfügbar" } else { "Session umbenennen (F2)" });
@@ -1027,8 +1232,8 @@ impl App {
             icons::paint_icon_button(ui, act_rect, &act_resp, true, st, icons::pencil);
         }
         // Farbmenü muss Klicks und Textbearbeitung innen erlauben.
-        let color_resp = ui.interact(color_rect, Id::new(("bookmark-color", &key)), Sense::click()).on_hover_text("Bookmark-Farbe · zehn Standardfarben");
-        if bm {
+        if bm && !in_outline {
+            let color_resp = ui.interact(color_rect, Id::new(("bookmark-color", &key)), Sense::click()).on_hover_text("Bookmark-Farbe · zehn Standardfarben");
             ui.painter().circle_filled(color_rect.center(), 5.0, self.store.palette_color(self.store.bookmark_color(&key)));
             egui::Popup::menu(&color_resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
                 for i in 0..self.store.palette_len() as u8 {
@@ -1054,7 +1259,7 @@ impl App {
                 }
             });
         }
-        if bm_resp.clicked() {
+        if bm_clicked {
             self.toggle_bookmark(&key);
         } else if act_resp.clicked() {
             self.rename_session(s);
@@ -1067,7 +1272,7 @@ impl App {
                 self.open_session(s, None);
                 ui.close();
             }
-            if ui.button(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" }).clicked() {
+            if !in_outline && ui.button(if bm { "Bookmark entfernen" } else { "Als Bookmark markieren" }).clicked() {
                 self.toggle_bookmark(&key);
                 ui.close();
             }
@@ -1093,7 +1298,7 @@ impl App {
         let mut job = LayoutJob::simple_singleline(label.to_string(), FontId::proportional(13.0), FG);
         job.wrap = TextWrapping::truncate_at_width((max_w - 34.0).max(20.0));
         let galley = ui.painter().layout_job(job);
-        let size = vec2(if matches!(kind, PickerKind::SideView | PickerKind::Workspace) { max_w } else { (galley.size().x + 34.0).min(max_w) }, if kind == PickerKind::SideView { 30.0 } else { 28.0 });
+        let size = vec2(if kind == PickerKind::Workspace { max_w } else { (galley.size().x + 34.0).min(max_w) }, 28.0);
         let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
         let open = self.picker.as_ref().is_some_and(|p| p.kind == kind);
         let bg = if open {

@@ -20,8 +20,10 @@ pub struct Store {
     /// mehr markierte Pfade werden beim nächsten `toggle_bookmark`-Entfernen aufgeräumt, sind
     /// aber auch sonst harmlos (werden einfach nie gelesen).
     pub bookmark_colors: HashMap<String, u8>,
-    /// "time" oder "bookmarks"
+    /// Früherer Sortierwert (nur noch gelesen/mitgeschrieben, ohne Wirkung).
     pub sort: String,
+    /// Zeitordnung der Sessionliste: `false` = aktuell (neueste zuerst), `true` = invers.
+    pub time_inverse: bool,
     pub only_bookmarks: bool,
     pub colored_bookmarks: bool,
     /// Herkunftsfilter der Sessionliste: "all", "local" oder "remote".
@@ -50,6 +52,7 @@ impl Default for Store {
             bookmarks: Vec::new(),
             bookmark_colors: HashMap::new(),
             sort: "time".into(),
+            time_inverse: false,
             only_bookmarks: false,
             colored_bookmarks: false,
             session_origin: "all".into(),
