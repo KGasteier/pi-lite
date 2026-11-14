@@ -162,6 +162,10 @@ pub trait Instances: Send + Sync {
     fn is_remote(&self) -> bool;
     fn list(&self) -> Result<Vec<InstanceInfo>, String>;
     fn create(&self, spec: &Spec) -> Result<InstanceInfo, String>;
+    /// Vom Backend angebotene Harnesses, keine geratenen Fremd-Harnesses.
+    fn harnesses(&self) -> Result<Vec<String>, String> { Ok(vec!["pi".into()]) }
+    /// Fremd-Sessions separat lesen; die pi-Dateiliste bleibt unverändert.
+    fn harness_sessions(&self, _harness: &str) -> Result<Vec<SessionRef>, String> { Ok(Vec::new()) }
     fn remove(&self, id: &str) -> Result<(), String>;
     /// Nur für beendete Instanzen.
     fn restart(&self, id: &str) -> Result<(), String>;
@@ -717,6 +721,14 @@ pub fn parse_sessions(v: &Value) -> Vec<SessionRef> {
 }
 
 impl Instances for HubInstances {
+    fn harnesses(&self) -> Result<Vec<String>, String> {
+        let v = get_json(&self.base, &self.token.get(), "/api/ping")?;
+        Ok(v["harnesses"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect())
+    }
+    fn harness_sessions(&self, harness: &str) -> Result<Vec<SessionRef>, String> {
+        let v = get_json(&self.base, &self.token.get(), &format!("/api/sessions?harness={}", enc(harness)))?;
+        Ok(parse_sessions(&v))
+    }
     fn id(&self) -> &str {
         &self.id
     }

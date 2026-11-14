@@ -1389,3 +1389,27 @@ fn demo_scene_search_keeps_query_and_hits() {
     assert_eq!(a.search_hits.len(), 2);
     assert_eq!(a.visible_sessions().len(), 2);
 }
+
+#[test]
+fn hermes_control_scene_and_unsupported_main_actions() {
+    let mut a=demo();
+    crate::setup_ctx(&a.ctx);
+    a.demo_scene("hermes");
+    let k=("hub-buero".into(),"a1b2".into());
+    assert_eq!(a.net.inst(&k).unwrap().info.harness,"hermes");
+    assert_eq!(a.net.inst(&k).unwrap().chat.asks.len(),1);
+    prompt_frame(&mut a,vec![]);
+    a.net.grid=false; a.net.remote_main=true;
+    assert!(a.net.main_is_hermes());
+    a.net.inst_mut(&k).unwrap().chat.input="Entwurf".into();
+    a.net.send_prompt(&k);
+    assert_eq!(a.net.inst(&k).unwrap().chat.input,"Entwurf","Kein Steer und kein Entwurfsverlust bei Hermes");
+    a.set_prompt("Zweiter Entwurf".into());
+    a.submit();
+    assert_eq!(a.prompt,"Zweiter Entwurf");
+    a.open_picker(crate::app::PickerKind::Thinking);
+    assert!(a.picker.is_none(),"Hermes bietet keine pi-Denkstufen an");
+    a.fork_from_here();
+    assert!(a.dialogs.is_empty(),"Kein pi-Fork für Hermes");
+    crate::headless::shot("/tmp/cocopi-hermes-control-test.png",(1100,850),1.0,Some("hermes".into())).unwrap();
+}

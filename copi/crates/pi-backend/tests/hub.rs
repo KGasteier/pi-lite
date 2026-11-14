@@ -23,6 +23,9 @@ fn start(port: u16, state: &std::path::Path, root: &std::path::Path) -> Option<H
         .current_dir(&dir)
         .env("HUB_PORT", port.to_string())
         .env("HUB_TOKEN", "t0k")
+        .env("HUB_NTFY_URL", "")
+        .env("HERMES_API_KEY", "")
+        .env_remove("HERMES_API_URL")
         .env("HUB_ROOTS", root)
         .env("HUB_STATE", state)
         .env("PI_SESSIONS_DIR", root.join("sess"))
@@ -67,6 +70,9 @@ fn hub_transport_end_to_end() {
 
     let be = HubInstances::new("h", "Hub", &url, "t0k");
     assert!(be.is_remote());
+    assert_eq!(be.harnesses().unwrap(), vec!["pi", "mock"], "Harness-Discovery statt UI-Vermutung");
+    assert!(be.harness_sessions("hermes").unwrap().is_empty(), "Ohne Hermes-Key keine Fremdsessions");
+    assert!(bad.harnesses().unwrap_err().contains("401"));
     let root = be.files().dirs(None).unwrap();
     assert!(root.dirs.iter().any(|d| d == "proj"));
     assert!(be.files().dirs(Some("/")).is_err(), "Sandbox muss greifen");

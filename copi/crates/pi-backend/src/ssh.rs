@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const HUB_JS: &str = include_str!("../hub/server.mjs");
+const HERMES_JS: &str = include_str!("../hub/hermes.mjs");
 /// Die agentscope-Erweiterung (eingebettet wie der Hub): sie schreibt den Live-Zustand jedes
 /// pi-Prozesses als JSON. Auf dem Server installiert sie `pi` selbst nach
 /// `<home>/.pi/agent/extensions/agentscope/`.
@@ -101,18 +102,24 @@ command -v node >/dev/null 2>&1 || {{ echo "ERR:node nicht gefunden" >&2; exit 3
 node -e 'process.exit(+process.versions.node.split(".")[0] < 20 ? 1 : 0)' || {{ echo "ERR:Node 20 oder neuer nötig" >&2; exit 3; }}
 A="${{XDG_RUNTIME_DIR:-$HOME/.local/state}}/agentscope"
 cat > "$D/server.mjs.new"
+printf '%s' '{hermes}' | base64 -d > "$D/hermes.mjs.new"
+sd() {{ command -v systemctl >/dev/null 2>&1 && systemctl --user is-active -q pi-hub.service 2>/dev/null; }}
+alive() {{ [ -f "$D/pid" ] && kill -0 "$(cat "$D/pid")" 2>/dev/null; }}
+if ! cmp -s "$D/server.mjs" "$D/server.mjs.new" || ! cmp -s "$D/hermes.mjs" "$D/hermes.mjs.new"; then
+  if sd || alive; then
+    echo "ERR:Hub-Update bereit, aber Hub läuft. Kein automatischer Neustart; Wartungsfenster und Hub-Stopp erforderlich." >&2
+    exit 4
+  fi
+  mv "$D/hermes.mjs.new" "$D/hermes.mjs"
+  mv "$D/server.mjs.new" "$D/server.mjs"
+else
+  rm -f "$D/server.mjs.new" "$D/hermes.mjs.new"
+fi
 E="$HOME/.pi/agent/extensions/agentscope"; mkdir -p "$E"
 changed=0
 decode() {{ printf '%s' "$2" | base64 -d > "$1.new"; if cmp -s "$1.new" "$1" 2>/dev/null; then rm -f "$1.new"; else mv "$1.new" "$1"; changed=1; fi; }}
 decode "$E/core.ts" '{core}'
 decode "$E/index.ts" '{index}'
-sd() {{ command -v systemctl >/dev/null 2>&1 && systemctl --user is-active -q pi-hub.service 2>/dev/null; }}
-alive() {{ [ -f "$D/pid" ] && kill -0 "$(cat "$D/pid")" 2>/dev/null; }}
-if [ -f "$D/server.mjs" ] && cmp -s "$D/server.mjs" "$D/server.mjs.new"; then rm -f "$D/server.mjs.new"; else
-  mv "$D/server.mjs.new" "$D/server.mjs"
-  if sd; then systemctl --user restart pi-hub.service; sleep 1
-  elif alive; then kill "$(cat "$D/pid")" 2>/dev/null || true; sleep 1; fi
-fi
 if ! sd && ! alive; then
   AGENTSCOPE_DIR="$A" HUB_HOST=127.0.0.1 HUB_PORT={port} nohup node "$D/server.mjs" >"$D/hub.log" 2>&1 </dev/null &
   echo $! > "$D/pid"
@@ -126,6 +133,7 @@ echo "STATE:$A"
 echo "TOKEN:$(cat "$T")"
 "#,
         path = REMOTE_PATH,
+        hermes = b64(HERMES_JS),
         core = b64(EXT_CORE),
         index = b64(EXT_INDEX),
     )
@@ -472,6 +480,10 @@ macro_rules! after_ready {
 }
 
 impl Instances for SshInstances {
+    fn harnesses(&self) -> Result<Vec<String>, String> { after_ready!(self, self.inner.harnesses()) }
+    fn harness_sessions(&self, harness: &str) -> Result<Vec<crate::instances::SessionRef>, String> {
+        after_ready!(self, self.inner.harness_sessions(harness))
+    }
     fn id(&self) -> &str {
         self.inner.id()
     }
@@ -626,8 +638,29 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_does_not_replace_or_restart_running_hub() {
+        let home=std::env::temp_dir().join(format!("hermes-bootstrap-{}",std::process::id()));
+        let d=home.join(".local/share/pi-hub"); std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("server.mjs"),"alter Hub").unwrap();
+        std::fs::write(d.join("pid"),std::process::id().to_string()).unwrap();
+        let mut child=Command::new("sh").arg("-c").arg(remote_script(9911))
+            .env("HOME",&home).env("PATH","/usr/bin:/bin").env("DBUS_SESSION_BUS_ADDRESS","unix:path=/nonexistent")
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        child.stdin.take().unwrap().write_all(HUB_JS.as_bytes()).unwrap();
+        let out=child.wait_with_output().unwrap();
+        assert_eq!(out.status.code(),Some(4));
+        assert_eq!(std::fs::read_to_string(d.join("server.mjs")).unwrap(),"alter Hub");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("Kein automatischer Neustart"));
+        assert!(!home.join(".pi/agent/extensions/agentscope").exists());
+    }
+
+    #[test]
     fn script_mentions_port_and_binds_loopback() {
         let s = remote_script(9911);
         assert!(s.contains("HUB_PORT=9911") && s.contains("HUB_HOST=127.0.0.1"));
+        assert!(s.contains("hermes.mjs.new"));
+        assert!(s.contains("Kein automatischer Neustart"));
+        assert!(!s.contains("systemctl --user restart"));
+        assert!(!s.contains("then kill"));
     }
 }

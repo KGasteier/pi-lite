@@ -1376,6 +1376,7 @@ impl App {
                     self.open_editor(None);
                 }
             });
+            ui.add_enabled_ui(!self.net.main_is_hermes(), |ui| {
             let ml = self.model_label();
             self.pick_button(ui, PickerKind::Model, &ml, 260.0, "Modell wählen (Alt+M)");
             let tl = match &rctx {
@@ -1386,6 +1387,7 @@ impl App {
             if btn(ui, "⑂ Fork", 13.0, vec2(10.0, 4.0), vec2(0.0, 28.0), false, true).on_hover_text("Ab einer früheren Nachricht abzweigen (Alt+F)").clicked() {
                 self.fork_from_here();
             }
+            });
             ui.spacing_mut().item_spacing.x = 2.0;
             if btn(ui, "A−", 13.0, vec2(7.0, 4.0), vec2(0.0, 28.0), false, true).on_hover_text("Ausgabeschrift kleiner (Alt+−)").clicked() {
                 self.resize_output(-1);

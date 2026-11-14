@@ -8,6 +8,10 @@
 
 # pi-lite
 
+**cocopi-v2:** [Hermes-Agent-Steuerung (lokaler oder entfernter Hub)](docs/HERMES.md).
+Implementierter Quellstand mit Fake-Server-Tests; echte Hermes-Konfiguration und
+Liveabnahme stehen aus. Kein Slot-v1-/v3- oder pi-lite-Web-Port behauptet.
+
 Ein schlankes Desktop-Frontend für [pi](https://github.com/earendil-works/pi).
 Tauri 2, System-Webview und Vanilla-JavaScript: kein Electron, kein Webserver.
 

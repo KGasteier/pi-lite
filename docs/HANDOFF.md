@@ -2,6 +2,31 @@
 
 ## Aktueller Stand
 
+### Hermes-Agent-Steuerung · cocopi-v2
+
+- Neuer separater Hub-Arbeitsbranch `cocopi-v2b-hermes` (Basis `3dae8ca`), kein Push.
+  Adapter `hermes.mjs`: Loopback-REST, API-Session/Verlauf, Runs-Streaming, Tools,
+  Abbruch, once/deny und Clarify mit genauer ID/Generation; raw bleibt an den
+  normalisierten Ereignissen. Keine automatische Freigabe/Promptwiederholung.
+- cocopi: Backend-Discovery statt festem pi/mock-Angebot, Hermes-Sessionwahl in
+  „Neue Instanz“, eigener Host-Kontext sichtbar. Modell/Thinking/Fork im Hermes-
+  Einzelchat deaktiviert und per Shortcut geschützt. Direkter lokaler pi-Backend
+  unverändert; lokales Hermes nutzt einen lokalen Hub. Details: [HERMES.md](HERMES.md).
+- Gemeinsamer Backendvertrag ergänzt `harnesses`/`harness_sessions`, auch durch SSH.
+  Embedded-Hub enthält beide JS-Module; SSH-Bootstrap ersetzt/restartet einen
+  laufenden veralteten Hub nicht mehr automatisch, sondern verlangt ein Wartungsfenster.
+- Tests: Hub `npm test` grün (bestehende Smokes + Fake-Hermes HTTP/SSE + Unitfälle).
+  Finale native Release-Tests: 136 bestanden / 2 ignoriert; Backend 89 Libtests
+  (+1 ignoriert) sowie 1 Hub- und 3 SSH-Integrationstests bestanden (+2 SSH ignoriert).
+  Embedded-Module abschließend bytegleich zum Hub. Demodaten-Headless-Screenshot
+  `docs/assets/hermes-control-demo.png` angesehen; keine echte Hermes-Sitzung.
+  JS-Suite: 24 Skripte grün, bekannter alter `test-statusline-net.cjs` weiterhin rot.
+- **Kein echter Hermes-Lauf**, keine private Hermes-Konfiguration gelesen/geändert,
+  kein API-Key erzeugt, kein Gateway-/Dienststart, keine R2-Übertragung, kein Push,
+  keine neue Release-Installation. Livebedienung und echte Hermes-Version bleiben offen.
+- Slot-v1/v3, CLI-/TUI-Liveübernahme, vollständiger Toolverlauf, Subagent-Lifecycle,
+  Fork/Modell/Thinking/Anhänge und Hermes-Auswahl im Web GEPLANT, NICHT IMPLEMENTIERT.
+
 ### Gliederung: Kompakt/Detail statt Edit/View · 10.11.2026
 
 - Beide Darstellungen vollständig bearbeitbar: Ziehen ganzer Karten/Zeilen,

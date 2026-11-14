@@ -304,15 +304,6 @@ impl Backend {
     fn inst_mut(&mut self, id: &str) -> Option<&mut Inst> {
         self.insts.iter_mut().find(|i| i.info.id == id)
     }
-    /// Harnesses, die beim Anlegen angeboten werden. Der Vertrag meldet (noch) keine
-    /// Harness-Liste; der Hub kennt `pi` und `mock`, lokal gibt es nur `pi`.
-    pub fn harnesses(&self) -> Vec<&'static str> {
-        if self.remote() {
-            vec!["pi", "mock"]
-        } else {
-            vec!["pi"]
-        }
-    }
 }
 
 /// Formular „Backend hinzufügen/bearbeiten“. Das gespeicherte Token wird nie vorbelegt.
@@ -344,7 +335,10 @@ pub struct NewInst {
     pub loading: bool,
     pub name: String,
     pub harness: String,
-    pub harnesses: Vec<&'static str>,
+    pub harnesses: Vec<String>,
+    pub harness_loading: bool,
+    pub hermes_sessions: Vec<pi_backend::instances::SessionRef>,
+    pub session: String,
     pub error: Option<String>,
     pub busy: bool,
 }
@@ -705,6 +699,10 @@ impl NetState {
     }
 
     /// Läuft die Instanz im Einzelchat auf einem entfernten Backend? (Signalfarbe Cyan)
+    pub fn main_is_hermes(&self) -> bool {
+        self.remote_ctx().and_then(|k|self.inst(&k)).is_some_and(|i|i.info.harness=="hermes")
+    }
+
     pub fn main_is_remote(&self) -> bool {
         self.remote_ctx().and_then(|k| self.backend(&k.0).map(Backend::remote)).unwrap_or(false)
     }
@@ -870,6 +868,10 @@ impl NetState {
     /// Eingabe der Kachel als Prompt senden (während der Agent arbeitet: als Steuerung).
     pub fn send_prompt(&mut self, k: &InstKey) {
         let Some(i) = self.inst_mut(k) else { return };
+        if i.info.harness=="hermes" && matches!(i.info.state, State::Busy | State::Waiting) {
+            i.chat.note("Hermes arbeitet bereits. Erst Rückfrage beantworten oder Lauf abbrechen; kein Steer/zweiter Prompt.",true);
+            return;
+        }
         let msg = i.chat.input.trim().to_string();
         if msg.is_empty() {
             return;
@@ -1010,9 +1012,23 @@ impl NetState {
 
     pub fn open_new_inst(&mut self, backend: &str) {
         let Some(b) = self.backend(backend) else { return };
-        let harnesses = b.harnesses();
-        self.new_inst = Some(NewInst { backend: backend.into(), harness: "pi".into(), harnesses, loading: true, ..Default::default() });
+        let api = b.api.clone();
+        let bid = backend.to_string();
+        self.new_inst = Some(NewInst { backend: backend.into(), harness: "pi".into(), harnesses: vec!["pi".into()], harness_loading: true, loading: true, ..Default::default() });
         self.load_dirs(None);
+        self.run(move || {
+            let api = api.ok_or("Backend ist nicht verbunden")?;
+            let hs = api.harnesses()?;
+            let sessions = if hs.iter().any(|h|h=="hermes") { api.harness_sessions("hermes")? } else { Vec::new() };
+            Ok::<_, String>((hs,sessions))
+        }, move |s,r| {
+            let Some(n)=s.new_inst.as_mut().filter(|n|n.backend==bid) else { return };
+            n.harness_loading=false;
+            match r {
+                Ok((hs,sessions)) => { if !hs.contains(&n.harness) { n.harness=hs.first().cloned().unwrap_or_default(); } n.harnesses=hs; n.hermes_sessions=sessions; },
+                Err(e) => n.error=Some(e),
+            }
+        });
     }
 
     /// Ordnerliste des Backends laden (im Thread).
@@ -1054,11 +1070,11 @@ impl NetState {
     /// Instanz im gewählten Ordner anlegen (im Thread) und danach auswählen.
     pub fn create_inst(&mut self) {
         let Some(n) = &mut self.new_inst else { return };
-        if n.path.is_empty() || n.busy {
+        if n.path.is_empty() || n.busy || n.harness_loading || !n.harnesses.contains(&n.harness) {
             return;
         }
         n.busy = true;
-        let spec = Spec { name: Some(n.name.trim().to_string()).filter(|s| !s.is_empty()), harness: Some(n.harness.clone()), cwd: n.path.clone(), session: None, args: Vec::new() };
+        let spec = Spec { name: Some(n.name.trim().to_string()).filter(|s| !s.is_empty()), harness: Some(n.harness.clone()), cwd: n.path.clone(), session: if n.harness=="hermes" && !n.session.is_empty() { Some(n.session.clone()) } else { None }, args: Vec::new() };
         let bid = n.backend.clone();
         let Some(b) = self.backend(&bid) else { return };
         let Some(api) = b.api.clone() else { return };
@@ -1235,6 +1251,23 @@ impl NetState {
                 Err(e) => n.notice(format!("Abruf fehlgeschlagen: {}", friendly_err(&e, &tok)), true),
             },
         );
+    }
+
+    /// Hermes-Steuerung ohne Netz, Schlüssel oder Modellaufruf.
+    pub fn demo_hermes(&mut self) {
+        self.demo_scene();
+        let b=self.backends.iter_mut().find(|b|b.cfg.id=="hub-buero").unwrap();
+        b.cfg.label="Hermes · Remote-Hub".into();
+        b.insts.truncate(1);
+        let i=&mut b.insts[0]; i.info.harness="hermes".into(); i.info.name="Hermes-Projekt".into();
+        i.chat.reset();
+        for v in [
+            json!({"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"Prüfe die Projektdateien. Frage vor Shell-Änderungen nach."}]}}),
+            json!({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Ich habe den Verlauf geladen. Vor dem nächsten Werkzeugaufruf benötige ich deine Freigabe."}]}}),
+            json!({"type":"tool_execution_start","toolCallId":"hermes-demo-tool","toolName":"terminal","args":{"command":"cargo test --offline"}}),
+            json!({"type":"extension_ui_request","id":"demo-hermes-approval","method":"confirm","title":"Hermes: einmalig freigeben?","message":"terminal: cargo test --offline\nNur dieser Aufruf; keine dauerhafte Freigabe."}),
+        ] {i.chat.line(&v.to_string());}
+        self.selected=vec![("hub-buero".into(),"a1b2".into())]; self.grid=true; self.remote_main=false;
     }
 
     /// Synthetische Szene ohne Netz (`COPI_SCENE=net`): 2 Backends, 4 Instanzen, eine wartet.

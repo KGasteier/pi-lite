@@ -14,6 +14,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { HermesApi, hermesHarness, isHermesSession } from './hermes.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.HUB_PORT || 8787);
@@ -53,7 +54,8 @@ function persist() {
   if (!STATE_FILE) return;
   try {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-    const list = [...instances.values()].map(i => ({ id: i.id, name: i.name, harness: i.harness, cwd: i.cwd, session: i.session, created: i.created }));
+    const list = [...instances.values()].map(i => ({ id: i.id, name: i.name, harness: i.harness, cwd: i.cwd, session: i.session, created: i.created,
+      ...(i.harness === 'hermes' ? {hermesRunId:i.runId,hermesAdmissionPending:!!i.active && !i.runId} : {}) }));
     const tmp = STATE_FILE + '.new';
     fs.writeFileSync(tmp, JSON.stringify({ version: 1, instances: list }, null, 1) + '\n', { mode: 0o600 });
     fs.renameSync(tmp, STATE_FILE);
@@ -207,7 +209,9 @@ class MockInstance extends Instance {
   stop() { for (const t of this.timers || []) clearTimeout(t); this.emit({ type: 'hub_exit', code: 0 }); }
 }
 
-const HARNESSES = { pi: PiInstance, mock: MockInstance };
+const hermesApi = new HermesApi();
+const HARNESSES = { pi: PiInstance, mock: MockInstance,
+  ...(hermesApi.enabled ? {hermes:hermesHarness(Instance,hermesApi,persist)} : {}) };
 
 // ---------- Dateien: Sandbox ----------
 function inRoots(p) {
@@ -285,7 +289,11 @@ const server = http.createServer(async (req, res) => {
         res.on('close', () => globalClients.delete(res)); return;
       }
       if (p[0] === 'dirs') return json(res, 200, listDirs(url.searchParams.get('path')));
-      if (p[0] === 'sessions' && req.method === 'GET') return json(res, 200, listSessions());
+      if (p[0] === 'sessions' && req.method === 'GET') {
+        const harness = url.searchParams.get('harness');
+        if (harness === 'hermes') return json(res, 200, await hermesApi.sessions(ROOTS[0]));
+        return json(res, 200, listSessions());
+      }
       if (p[0] === 'sessions' && p[1] === 'rename' && req.method === 'POST') {
         const b = await body(req); const f = path.resolve(b.path || ''); const name = String(b.name || '').replace(/\s+/g, ' ').trim().slice(0, 120);
         if (!f.endsWith('.jsonl') || !f.startsWith(path.resolve(SESSIONS_DIR) + path.sep)) return json(res, 403, { error: 'Session außerhalb' });
@@ -309,14 +317,25 @@ const server = http.createServer(async (req, res) => {
           const H = HARNESSES[b.harness || 'pi']; if (!H) return json(res, 400, { error: 'unbekannter Harness' });
           const cwd = inRoots(b.cwd || ROOTS[0]); if (!cwd) return json(res, 403, { error: 'cwd außerhalb der erlaubten Wurzeln' });
           let session = null;
-          if (b.session) { session = path.resolve(b.session); if (!session.startsWith(path.resolve(SESSIONS_DIR) + path.sep)) return json(res, 403, { error: 'Session außerhalb' }); }
+          if (b.session) {
+            if (b.harness === 'hermes') {
+              if (!isHermesSession(b.session)) return json(res, 400, {error:'Hermes erwartet eine Hermes-Session-ID'});
+              session = b.session;
+              if ([...instances.values()].some(i=>i.session===session && i.state!=='exited')) return json(res,409,{error:'Hermes-Session ist bereits in einer Hub-Instanz offen'});
+            } else { session = path.resolve(b.session); if (!session.startsWith(path.resolve(SESSIONS_DIR) + path.sep)) return json(res, 403, { error: 'Session außerhalb' }); }
+          }
           const inst = new H({ name: b.name, harness: b.harness || 'pi', cwd, session });
-          instances.set(inst.id, inst); inst.start(); persist();
+          instances.set(inst.id, inst); inst.start();
+          if (inst.harness === 'hermes') {
+            await inst.ready;
+            if(inst.state==='exited') {instances.delete(inst.id);return json(res,502,{error:'Hermes nicht bereit; API-Konfiguration/Version prüfen'});}
+          }
+          persist();
           broadcastGlobal({ type: 'inst', inst: inst.summary() });
           return json(res, 201, inst.summary());
         }
         const inst = instances.get(p[1]); if (!inst) return json(res, 404, { error: 'unbekannte Instanz' });
-        if (p.length === 2 && req.method === 'DELETE') { inst.stop(); instances.delete(inst.id); persist(); broadcastGlobal({ type: 'gone', id: inst.id }); return json(res, 200, { ok: true }); }
+        if (p.length === 2 && req.method === 'DELETE') { await inst.stop(); instances.delete(inst.id); persist(); broadcastGlobal({ type: 'gone', id: inst.id }); return json(res, 200, { ok: true }); }
         if (p[2] === 'restart' && req.method === 'POST') return inst.restart() ? json(res, 200, inst.summary()) : json(res, 409, { error: 'Instanz läuft noch' });
         if (p[2] === 'events') {
           const since = Number(req.headers['last-event-id'] || url.searchParams.get('since') || 0);
@@ -339,7 +358,11 @@ const server = http.createServer(async (req, res) => {
 
 setInterval(() => { for (const r of globalClients) r.write(': hb\n\n'); for (const i of instances.values()) for (const r of i.clients) r.write(': hb\n\n'); }, 20000).unref();
 // Beim Beenden bleibt die Registry unverändert, damit der nächste Start die Instanzen wieder aufnimmt.
-const shutdown = () => { for (const i of instances.values()) i.stop(); process.exit(0); };
+const shutdown = async () => {
+  persist(); // Hermes-Run-ID erhalten: Wiederaufnahme darf keinen zweiten Lauf starten.
+  await Promise.allSettled([...instances.values()].map(i=>i.stop()));
+  process.exit(0);
+};
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
@@ -349,7 +372,7 @@ function restore() {
   for (const e of saved.instances || []) {
     const H = HARNESSES[e.harness]; const cwd = inRoots(e.cwd || '');
     if (!H || !cwd || instances.has(e.id)) continue;
-    const inst = new H({ id: e.id, name: e.name, harness: e.harness, cwd, session: e.session, created: e.created });
+    const inst = new H({ id: e.id, name: e.name, harness: e.harness, cwd, session: e.session, created: e.created, hermesRunId:e.hermesRunId, hermesAdmissionPending:e.hermesAdmissionPending });
     instances.set(inst.id, inst); inst.start();
   }
   console.log(`${instances.size} Instanz(en) aus der Registry wieder aufgenommen.`);

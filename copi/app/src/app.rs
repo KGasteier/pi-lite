@@ -1992,6 +1992,10 @@ impl App {
     }
 
     pub fn open_picker(&mut self, kind: PickerKind) {
+        if self.net.main_is_hermes() {
+            self.toast("Hermes nutzt seine Host-Konfiguration; Workspace-, Modell- und Denkstufenwechsel hier nicht verfügbar.", ToastKind::Info);
+            return;
+        }
         if self.picker.as_ref().is_some_and(|p| p.kind == kind) {
             self.picker = None;
             return;
@@ -2095,6 +2099,11 @@ impl App {
             // Remote-Modus: dasselbe Eingabefeld, die Nachricht geht an die Server-Instanz.
             if self.net.inst(&k).is_some_and(|i| matches!(i.info.state, pi_backend::instances::State::Exited | pi_backend::instances::State::Starting)) {
                 self.toast("Die gewählte Instanz ist nicht bereit.", ToastKind::Warn);
+                return;
+            }
+            if self.net.inst(&k).is_some_and(|i|i.info.harness=="hermes" && matches!(i.info.state,pi_backend::instances::State::Busy|pi_backend::instances::State::Waiting)
+                && !i.chat.asks.first().is_some_and(|a|a.kind==crate::net::AskKind::Input)) {
+                self.toast("Hermes arbeitet bereits; Rückfrage beantworten oder abbrechen. Eingabe bleibt erhalten.",ToastKind::Warn);
                 return;
             }
             self.history.add(&t);
@@ -2254,6 +2263,7 @@ impl App {
     }
 
     pub fn fork_from_here(&mut self) {
+        if self.net.main_is_hermes() { self.toast("Fork für Hermes ist hier nicht implementiert.", ToastKind::Info); return; }
         if self.busy {
             self.note("pi arbeitet noch – erst abbrechen.", true);
             return;
@@ -2596,6 +2606,10 @@ impl App {
             "dialog" => self.ask(DialogKind::Select, "Ab welcher Nachricht abzweigen?", "", vec!["1. Wie ist das Projekt aufgebaut?".into(), "2. Zweite Beispielnachricht".into()], "", |_, _| {}),
             "confirm" => self.ask(DialogKind::Confirm, "Session löschen?", "Beispiel-Session\n\nDie Datei wird endgültig gelöscht.", vec![], "", |_, _| {}),
             "keyhelp" => self.keyhelp = true,
+            "hermes" => {
+                self.store.net_visible=true;
+                self.net.demo_hermes();
+            }
             "net" => {
                 self.store.net_visible = true;
                 self.net.demo_scene();

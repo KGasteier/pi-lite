@@ -357,7 +357,7 @@ impl App {
                     badge(ui, inst.info.asks);
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         ui.add(Label::new(bold(inst.info.name.clone(), 13.0, FG)).truncate()).on_hover_text(inst.info.cwd.clone());
-                        ui.add(Label::new(txt(format!("{blabel} · {}", short_cwd(&inst.info.cwd)), 11.0, DIM)).truncate());
+                        ui.add(Label::new(txt(if inst.info.harness=="hermes" { format!("Hermes Agent · {blabel} · eigener Host-Kontext") } else { format!("{blabel} · {}", short_cwd(&inst.info.cwd)) }, 11.0, DIM)).truncate());
                     });
                 });
             });
@@ -463,7 +463,8 @@ impl App {
             // Eingabe
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                let can_send = linked && !matches!(state, State::Exited | State::Starting);
+                let can_send = linked && !matches!(state, State::Exited | State::Starting)
+                    && !(inst.info.harness=="hermes" && matches!(state,State::Busy|State::Waiting));
                 let te = ui.add_enabled(
                     can_send,
                     egui::TextEdit::singleline(&mut chat.input)
@@ -635,16 +636,25 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label(txt("Harness", 12.0, FG));
                         for h in n.harnesses.clone() {
-                            ui.radio_value(&mut n.harness, h.to_string(), h);
+                            ui.radio_value(&mut n.harness, h.clone(), if h=="hermes" { "Hermes Agent" } else { &h });
                         }
                     });
+                }
+                if n.harness_loading { ui.label(txt("Agenten werden vom Backend ermittelt …", 11.5, DIM)); }
+                if n.harness=="hermes" {
+                    ui.add(Label::new(txt("Hermes über diesen Hub (lokal oder remote). Hermes nutzt seine eigene Host-/Werkzeug-Konfiguration; die Ordnerwahl und HUB_ROOTS begrenzen seine Shell nicht.", 11.5, WARN)).wrap());
+                    egui::ComboBox::from_id_salt("hermes-session").selected_text(n.hermes_sessions.iter().find(|s|s.path==n.session).map(|s|s.title.as_str()).unwrap_or("Neue Hermes-API-Session")).show_ui(ui,|ui| {
+                        ui.selectable_value(&mut n.session,String::new(),"Neue Hermes-API-Session");
+                        for s in &n.hermes_sessions { ui.selectable_value(&mut n.session,s.path.clone(),&s.title); }
+                    });
+                    ui.label(txt("Keine Übernahme laufender CLI/TUI-Sessions. Fork, Modell-/Denkstufenwechsel und Anhänge sind hier nicht verfügbar.",11.0,DIM));
                 }
                 if let Some(e) = &n.error {
                     ui.add(Label::new(txt(e.clone(), 12.5, ERR)).wrap());
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let label = if n.busy { "Startet …" } else { "Starten" };
-                    if btn(ui, label, 13.0, vec2(14.0, 5.0), vec2(80.0, 0.0), true, !n.busy && !n.loading && !n.path.is_empty()).clicked() {
+                    if btn(ui, label, 13.0, vec2(14.0, 5.0), vec2(80.0, 0.0), true, !n.busy && !n.loading && !n.harness_loading && !n.harness.is_empty() && !n.path.is_empty()).clicked() {
                         create = true;
                     }
                     if btn(ui, "Abbrechen", 13.0, vec2(14.0, 5.0), Vec2Zero::z(), false, true).clicked() {
