@@ -8,11 +8,17 @@ description = "Natives egui-Frontend für pi (Nachfolger-Prototyp von pi-lite)"
 [features]
 default = []
 cocopi = ["dep:pi-net"]
+cocopi-h = ["cocopi"]
 
 [[bin]]
 name = "cocopi"
 path = "src/cocopi.rs"
 required-features = ["cocopi"]
+
+[[bin]]
+name = "cocopi-h"
+path = "src/cocopi_h.rs"
+required-features = ["cocopi-h"]
 
 [dependencies]
 pi-net = { path = "../crates/pi-net", optional = true }

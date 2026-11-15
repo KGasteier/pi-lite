@@ -1,5 +1,36 @@
 # Hermes-Agent-Steuerung in cocopi-v2
 
+## Separate Ausgabe cocopi-h · Branch cocopi-v2b-hermes
+
+Build und Installation ohne Ersatz der vorhandenen cocopi-/v3-Binaries:
+
+```sh
+CARGO_BUILD_JOBS=2 cargo test --offline --locked --release --manifest-path copi/Cargo.toml --features cocopi-h --bin cocopi-h
+bash copi/scripts/install-cocopi-h.sh
+```
+
+Der Installer baut offline/locked mit zwei Jobs, prüft freien Platz, sichert
+vorhandene gleichnamige Ziele und installiert atomar mit vollständigem SHA256-Abgleich.
+`--skip-build` nur unmittelbar nach einem nachgewiesenen Build dieses Quellstands.
+Ziele: `~/.local/bin/cocopi-h`, eigener Desktop-Eintrag `cocopi-h.desktop` und SVG
+mit H-Plakette. Eigener Fenstername/App-ID `cocopi-h`; Launchpad-Kategorie **Agents**
+über `Categories=Development;X-Agent;`. Kein Shell-/App-/Hub-Neustart nötig oder ausgeführt.
+
+Die Ausgabe nutzt weiterhin die Konfiguration und Sessions des cocopi-Kerns;
+sie ist **kein isoliertes Profil**. Dieselbe Session nicht gleichzeitig in beiden
+Ausgaben bearbeiten. Es wird weder ein Hub noch Hermes automatisch gestartet.
+Der direkte lokale pi-Backend bleibt verfügbar.
+
+Installationsabnahme: 137 Release-Tests bestanden / 2 ignoriert. ARM-Release gebaut,
+installiert und vollständig hashgeprüft, SHA256
+`70e36f4c1c7ee864fbcb1365d17fd9d8a53053936b6ab5727e6d8f9a63e926b1`.
+Desktop-Validator und installierter Launchpad-Klassifikator bestätigen Agents/GUIs;
+Installer-Backup in isoliertem HOME geprüft. Keine App-/Shell-/Hub-Neustarts und
+kein echter Modelllauf. Details in `HANDOFF.md`.
+
+Desktop und eingebetteter Hub sind im pi-lite-Branch enthalten. Das eigenständige
+pi-hub-Repository hat aktuell kein Remote; für dessen separaten Push fehlt ein Ziel.
+
 ## Was implementiert ist
 
 Hermes wird als weiterer Harness eines **Hub-Backends** gesteuert. Lokal bedeutet:
@@ -74,7 +105,8 @@ ist der Endpointname, kein zuverlässig existierendes Featureflag.
   Hermes-Kachel, Rückfrage, keine pi-Denkstufen/Fork; Software-Screenshot mit Demodaten.
 - Finale native Releaseprüfung: 136 bestanden / 2 ignoriert. Backend 89 Libtests
   (+1 ignoriert), 1 Hub- und 3 SSH-Integrationstests (+2 ignoriert) bestanden.
-  Embedded-Module abschließend bytegleich zum Hub; kein neues Release installiert.
+  Embedded-Module abschließend bytegleich zum Hub. Dieser Prüfstand vor der
+  separaten cocopi-h-Ausgabe; deren Installationsprüfung siehe `HANDOFF.md`.
   Weitere Prüfresultate und Installationsstand: `HANDOFF.md`.
 
 ![Hermes-Freigabe in cocopi – ausschließlich synthetische Demodaten, kein Livetest](assets/hermes-control-demo.png)

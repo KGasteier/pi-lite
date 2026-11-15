@@ -2,6 +2,27 @@
 
 ## Aktueller Stand
 
+### Separate Hermes-Ausgabe cocopi-h · cocopi-v2b-hermes
+
+Neuer Desktopbranch ab `4720a7a`. Feature/Binary `cocopi-h` verwendet denselben
+cocopi-Kern mit eigener App-ID/Fensterkennung und H-Icon. Installer
+`copi/scripts/install-cocopi-h.sh`: offline/locked, zwei Jobs, Platzprüfung,
+Backups, atomare Installation und voller SHA256-Abgleich; eigener Starter mit
+`X-Agent` für Launchpad/Agents. Bestehende cocopi-/v3-Binaries nicht ersetzen.
+Die Konfiguration und Sessions bleiben gemeinsam, kein isoliertes Profil.
+Releaseprüfung: 137 bestanden / 2 ignoriert, einschließlich eigener App-Identität.
+Release-Build erfolgreich (1m42s, 9 vorhandene Warnungen), atomar installiert nach
+`~/.local/bin/cocopi-h`. Quelle und Installation vollständig SHA256-identisch:
+`70e36f4c1c7ee864fbcb1365d17fd9d8a53053936b6ab5727e6d8f9a63e926b1`.
+Installer in isoliertem HOME zweimal geprüft (3 Backups beim zweiten Durchlauf).
+`--version`, Desktop-Validator und Klassifikation durch die tatsächlich installierte
+Radial-Mesh-Launchpad-Types.js geprüft: primär Agents, zusätzlich GUIs. H-SVG und
+Headless-Hermes-Demo aus installierter Binary angesehen; kein Livefenster geöffnet.
+Vorhandene cocopi-/v3-Binaries vor/nach Installation unverändert hashgeprüft;
+ca. 15 GB frei. Kein echter Hermes-Lauf, keine Konfigurations-/Dienständerung.
+Nur Desktop-Remote vorhanden; eingebetteter Hub wird mit diesem Branch gepusht.
+Eigenständiges pi-hub hat kein Remote, Ziel für separaten Push noch offen.
+
 ### Hermes-Agent-Steuerung · cocopi-v2
 
 - Neuer separater Hub-Arbeitsbranch `cocopi-v2b-hermes` (Basis `3dae8ca`), kein Push.

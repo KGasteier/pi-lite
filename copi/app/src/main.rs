@@ -3,7 +3,11 @@
 mod coco;
 #[cfg(feature = "cocopi")]
 mod coco_view;
-fn app_name() -> &'static str { if cfg!(feature = "cocopi") { "cocopi" } else { "copi" } }
+fn app_name() -> &'static str {
+    if cfg!(feature = "cocopi-h") { "cocopi-h" }
+    else if cfg!(feature = "cocopi") { "cocopi" }
+    else { "copi" }
+}
 mod app;
 mod bookmark_palette;
 mod commands;
