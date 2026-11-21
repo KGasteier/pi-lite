@@ -270,6 +270,9 @@ pub struct App {
     // Eingabe
     pub(crate) prompt: String,
     pub(crate) history: InputHistory,
+    history_scope: String,
+    history_pending: Option<(String, String, i32, Instant)>,
+    pub(crate) history_seq: u64,
     pub(crate) slash_cursor: usize,
     pub(crate) slash_dismissed: Option<String>,
     pub(crate) slash_scroll: bool,
@@ -393,6 +396,9 @@ impl App {
             widgets: Vec::new(),
             prompt: String::new(),
             history: InputHistory::default(),
+            history_scope: String::new(),
+            history_pending: None,
+            history_seq: 0,
             slash_cursor: 0,
             slash_dismissed: None,
             slash_scroll: false,
@@ -527,6 +533,7 @@ impl App {
         }
         self.drain();
         self.net.pump(self.store.net_visible);
+        self.poll_history();
         self.remote_speech();
         let now = Instant::now();
         let expired: Vec<String> = self.pending.iter().filter(|(_, p)| p.deadline.is_some_and(|d| d <= now)).map(|(k, _)| k.clone()).collect();
@@ -957,6 +964,7 @@ impl App {
     }
 
     fn drop_dialogs(&mut self) {
+        self.reset_material_preview();
         self.dialogs.clear();
         self.ext_status.clear();
         self.widgets.clear();
@@ -964,6 +972,7 @@ impl App {
 
     /// Antwort auf den vorderen Dialog; `None` = Zeitüberschreitung.
     pub fn close_dialog(&mut self, resp: Option<Value>) {
+        if self.dialogs.front().is_some_and(|d| d.kind == DialogKind::Material) { self.reset_material_preview(); }
         let Some(d) = self.dialogs.pop_front() else { return };
         match d.origin {
             Origin::Ext(id) => {
@@ -1006,11 +1015,16 @@ impl App {
     // ---------- Start, Zustand, Modelle ----------
 
     pub fn start(&mut self, session: Option<String>, then: Cont) {
+        if self.material.preparing {
+            self.toast("Materialvorbereitung erst abschließen oder abbrechen.", ToastKind::Warn);
+            return;
+        }
         if matches!(self.active_job, Some(Job::Cli(_))) {
             self.toast("Bitte den laufenden pi-Befehl erst beenden oder abbrechen.", ToastKind::Warn);
             return;
         }
         self.start_seq += 1;
+        self.state["sessionFile"] = Value::Null;
         self.commands = local_commands();
         self.remote_commands.clear();
         self.slash_cursor = 0;
@@ -1914,14 +1928,84 @@ impl App {
         self.focus_prompt = true;
     }
 
+    pub(crate) fn input_scope(&self) -> String {
+        if let Some(k) = self.remote_single() {
+            let session = self.net.inst(&k).and_then(|i| i.info.session.as_deref()).unwrap_or("");
+            return format!("remote\0{}\0{}\0{session}", k.0, k.1);
+        }
+        format!("local\0{}\0{}", self.start_seq, self.session_file())
+    }
+
+    fn poll_history(&mut self) {
+        let scope = self.input_scope();
+        if self.history_scope != scope {
+            self.history_scope = scope;
+            if self.history.browsing() {
+                let draft = self.history.move_by(i32::MAX, &self.prompt);
+                self.set_prompt(draft);
+            }
+            self.history.replace(Vec::new());
+            self.history_pending = None;
+        }
+        let Some((id, draft, dir, start)) = self.history_pending.clone() else { return };
+        if draft != self.prompt { self.history_pending = None; return; }
+        if let Some(k) = self.remote_single() {
+            let result = self.net.inst_mut(&k).and_then(|i| i.chat.history_reply.take());
+            if let Some((reply_id, result)) = result {
+                if reply_id == id { self.finish_history(&id, result); return; }
+            }
+        }
+        if start.elapsed() >= Duration::from_secs(15) {
+            self.finish_history(&id, Err("Zeitüberschreitung".into()));
+        }
+    }
+
+    fn finish_history(&mut self, id: &str, result: Result<Vec<String>, String>) {
+        if self.history_scope != self.input_scope() || !self.history_pending.as_ref().is_some_and(|(pending, draft, _, _)| pending == id && draft == &self.prompt) { return; }
+        let (_, _, dir, _) = self.history_pending.take().unwrap();
+        match result {
+            Ok(prompts) => {
+                self.history.replace(prompts);
+                let text = self.history.move_by(dir, &self.prompt);
+                self.set_prompt(text);
+            }
+            Err(e) => self.toast(format!("Sessionverlauf nicht verfügbar: {e}"), ToastKind::Warn),
+        }
+    }
+
     pub fn recall(&mut self, dir: i32) {
-        let t = self.history.move_by(dir, &self.prompt);
-        self.set_prompt(t);
+        self.poll_history();
+        if self.history_scope == "collaboration" { return; }
+        if self.history.browsing() {
+            let t = self.history.move_by(dir, &self.prompt);
+            self.set_prompt(t);
+            return;
+        }
+        if let Some((_, _, queued, _)) = &mut self.history_pending {
+            *queued = queued.saturating_add(dir).min(0);
+            return;
+        }
+        if dir > 0 { return; }
+        self.history_seq += 1;
+        let id = format!("copi-prompt-history-{}-{}", std::process::id(), self.history_seq);
+        self.history_pending = Some((id.clone(), self.prompt.clone(), dir, Instant::now()));
+        if let Some(k) = self.remote_single() {
+            let kind = if self.net.inst(&k).is_some_and(|i| i.info.harness == "hermes") { "get_messages" } else { "get_entries" };
+            self.net.send(&k, json!({"type":kind,"id":id}));
+        } else {
+            let path = self.session_file();
+            if path.is_empty() || self.demo {
+                let items = self.items.iter().filter_map(|it| match it { Item::User(t) => Some(t.clone()), _ => None }).collect();
+                self.finish_history(&id, Ok(items));
+            } else {
+                self.spawn(move || pi_backend::prompt_history::read(&path), move |a, r| a.finish_history(&id, r));
+            }
+        }
     }
 
     pub fn submit(&mut self) {
         let t = self.prompt.trim().to_string();
-        if t.is_empty() || self.material.preparing {
+        if t.is_empty() || self.material.preparing || self.material.paste_pending {
             return;
         }
         if let Some(k) = self.remote_single() {
@@ -1930,7 +2014,7 @@ impl App {
                 self.toast("Die Remote-Instanz ist nicht bereit.", ToastKind::Warn);
                 return;
             }
-            self.history.add(&t);
+            self.history.reset();
             self.prompt.clear();
             self.slash_dismissed = None;
             self.slash_cursor = 0;
@@ -1963,7 +2047,7 @@ impl App {
             self.submit_material(t);
             return;
         }
-        self.history.add(&t);
+        self.history.reset();
         self.prompt.clear();
         self.slash_dismissed = None;
         self.slash_cursor = 0;
@@ -2502,7 +2586,7 @@ impl App {
             Location { name: "Demo-Unterordner".into(), path: "/demo/projekt/unter".into() },
         ];
         self.material.items = (0..3)
-            .map(|i| crate::material_ui::MaterialItem { value: format!("/demo/material/beispiel-{i}.png"), url: false })
+            .map(|i| crate::material_ui::MaterialItem { value: format!("/demo/material/beispiel-{i}.png"), url: false, image: None })
             .collect();
         self.toast("Demo: Inventar/Ordner/Material mit synthetischen Pfaden befüllt.", ToastKind::Info);
     }

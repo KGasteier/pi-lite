@@ -113,13 +113,9 @@ impl InputHistory {
         self.index = self.items.len();
         self.draft.clear();
     }
-    pub fn add(&mut self, text: &str) {
-        if !text.is_empty() && self.items.last().map(String::as_str) != Some(text) {
-            self.items.push(text.into());
-        }
-        if self.items.len() > 100 {
-            self.items.drain(..self.items.len() - 100);
-        }
+    pub fn browsing(&self) -> bool { self.index < self.items.len() }
+    pub fn replace(&mut self, prompts: Vec<String>) {
+        self.items = prompts;
         self.reset();
     }
     pub fn move_by(&mut self, dir: i32, current: &str) -> String {
@@ -386,13 +382,13 @@ mod tests {
     #[test]
     fn history() {
         let mut h = InputHistory::default();
-        h.add("a");
-        h.add("b");
-        h.add("b");
+        h.replace(vec!["a".into(), "b".into(), "b".into()]);
         assert_eq!(h.move_by(-1, "draft"), "b");
+        assert_eq!(h.move_by(-1, "b"), "b");
         assert_eq!(h.move_by(-1, "b"), "a");
         assert_eq!(h.move_by(-1, "a"), "a");
         assert_eq!(h.move_by(1, "a"), "b");
+        assert_eq!(h.move_by(1, "b"), "b");
         assert_eq!(h.move_by(1, "b"), "draft");
     }
 
