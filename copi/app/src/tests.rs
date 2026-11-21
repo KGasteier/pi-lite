@@ -27,6 +27,21 @@ fn enter_event(modifiers: Modifiers) -> Event {
 }
 
 #[test]
+fn prompt_history_arrows_traverse_multiline_entries() {
+    let mut a = demo();
+    crate::setup_ctx(&a.ctx);
+    a.items.push(crate::app::Item::User("Erster\nPrompt".into()));
+    a.items.push(crate::app::Item::User("Letzter\nPrompt".into()));
+    a.set_prompt("Entwurf".into());
+    prompt_frame(&mut a, vec![]);
+    let arrow = |key| Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+    for (key, expected) in [(Key::ArrowUp, "Letzter\nPrompt"), (Key::ArrowUp, "Erster\nPrompt"), (Key::ArrowDown, "Letzter\nPrompt"), (Key::ArrowDown, "Entwurf")] {
+        prompt_frame(&mut a, vec![arrow(key)]);
+        assert_eq!(a.prompt, expected);
+    }
+}
+
+#[test]
 fn enter_sends_with_empty_ime_preedit() {
     let mut a = demo();
     crate::setup_ctx(&a.ctx);
@@ -407,14 +422,13 @@ fn virtualized_log_renders_only_a_fraction_of_ten_thousand_entries() {
     // die eigentliche Absicherung der Virtualisierung unter einer langen Sitzung.
     let mut a = demo();
     a.demo_scene_longlog(10_000);
-    // `push` setzt `force_scroll`, was den nächsten Frame zwingt, *alles* zu rendern (siehe
-    // `log()`/`view.rs`), damit nach einem Sitzungswechsel ans Ende gescrollt werden kann.
-    // Für diesen Test interessiert aber gerade das normale (nicht erzwungene) Verhalten.
+    // Normalen Viewport und den erzwungenen Sprung ans Ende im selben Test prüfen.
     a.force_scroll = false;
     let ctx = a.ctx.clone();
     crate::setup_ctx(&ctx);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0));
-    for frame in 0..3 {
+    for frame in 0..4 {
+        if frame == 2 { a.force_scroll = true; }
         let input = RawInput { screen_rect: Some(screen), time: Some(frame as f64 * 0.1), ..Default::default() };
         let mut out = ctx.run_ui(input, |ui| a.draw(ui));
         out.textures_delta.clear();

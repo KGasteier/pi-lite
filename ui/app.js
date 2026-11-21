@@ -1172,7 +1172,7 @@ $("prompt").addEventListener("keydown", (e) => {
     const field = e.target, up = e.key === "ArrowUp";
     if (field.selectionStart !== field.selectionEnd) return;
     const boundary = up ? !field.value.slice(0, field.selectionStart).includes("\n") : !field.value.slice(field.selectionEnd).includes("\n");
-    if (!e.altKey && !boundary) return;
+    if (!e.altKey && !boundary && !inputHistory.browsing()) return;
     e.preventDefault(); recallInput(up ? -1 : 1, up);
   }
 });

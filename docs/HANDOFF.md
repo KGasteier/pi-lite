@@ -2,7 +2,14 @@
 
 ## Aktueller Stand
 
-### Separate Hermes-Ausgabe cocopi-h · cocopi-v2b-hermes
+### Gesprächsende, vollständige Prompt-Rückschau und Material · 21.11.2026
+
+- Native App und pi-lite: direkte Ende-Schaltfläche, inklusive Kacheln; native Langverläufe bleiben virtualisiert. ↑/↓ liest Nutzerprompts der aktiven Session vor und nach Kompaktierung, mit Wiederholungen und Entwurfsrückkehr. Mehrzeilige Prompts unterbrechen das Blättern nicht. Remote-pi setzt `get_entries` voraus; Hermes verwendet seine API-Nachrichten (im Hub derzeit höchstens 500), keinen pi-Logpfad.
+- Strg/Cmd+V legt Bilddaten als Materialchip in den **lokalen pi-Chat**, ohne sofort zu senden. Der Materialdialog zeigt nur die angeforderte Datei; Navigation/Schließen verwerfen alte Vorschauantworten. [Bedienung und Testgrenzen](CHAT-MATERIAL.md).
+- Feature-Port statt Branchmerge: `main` bleibt ohne Remote; `copi`, `copi-multi`, `cocopi`, `cocopi-v2`, `cocopi-v3` und `cocopi-v3d` behalten ihre eigenen Funktionen. Bei v3/v3d nur gemeinsamer/Legacy-Code; Slot-v3 und separates v3-Repository nicht geändert. Native Remote-Raster erhalten den Ende-Knopf; native Remote-Rückschau gibt es im Einzelchat, im Web auch in der Remote-Kachel.
+- Neuer portabler Skill `~/.agents/skills/cocopi2-dev` inkl. Projektnotizen, ohne Logs/Secrets; Links für Claude Code und Codex. Keine Installation, kein Push, kein R2-Eingriff oder Modelllauf. Die unten genannten installierten Binaries stammen aus der früheren Lieferung.
+
+### Separate Hermes-Ausgabe cocopi-h · letzter installierter Stand
 
 Neuer Desktopbranch ab `4720a7a`. Feature/Binary `cocopi-h` verwendet denselben
 cocopi-Kern mit eigener App-ID/Fensterkennung und H-Icon. Installer
