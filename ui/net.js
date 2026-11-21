@@ -142,6 +142,10 @@
       case "auto_retry_start": push(t, { kind: "note", text: `Wiederholung ${ev.attempt}/${ev.maxAttempts}: ${ev.errorMessage || ""}`, err: true }); return true;
       case "compaction_start": push(t, { kind: "note", text: "Kontext wird komprimiert …" }); return true;
       case "response":
+        if (typeof ev.id === "string" && ev.id.startsWith("pilite-prompt-history-")) {
+          if (t.live && t.historyRequest?.id === ev.id) t.historyRequest.finish(ev);
+          return false;
+        }
         if (ev.success === false) { push(t, { kind: "note", text: `${ev.command || "Befehl"}: ${ev.error || "Fehler"}`, err: true }); return true; }
         return false;
       default: return false;
@@ -328,15 +332,57 @@
     log.tabIndex = 0; log.setAttribute("role", "region");
     const input = el("textarea", "nettileinput"); input.placeholder = "Nachricht (Enter = senden, Alt+Enter = Zeilenumbruch)"; input.rows = 2;
     const sendBtn = el("button", "primary", "Senden"), abortBtn = el("button", null, "Abbruch");
+    const history = new InputHistory();
+    let scope = null, recallPending = null;
+    const session = () => infoOf(x.t)?.session || "";
+    const recall = async direction => {
+      if (scope !== session()) { scope = session(); history.replace([]); recallPending = null; }
+      if (!history.browsing()) {
+        if (recallPending) { recallPending.direction = Math.min(0, recallPending.direction + direction); return; }
+        if (direction > 0 || !x.t.live) return;
+        const job = {scope, draft:input.value, direction};
+        const id = "pilite-prompt-history-" + crypto.randomUUID();
+        recallPending = job;
+        let timer;
+        try {
+          const reply = await new Promise((resolve, reject) => {
+            x.t.historyRequest = {id, finish:resolve};
+            timer = setTimeout(() => reject(new Error("Zeitüberschreitung")), 15000);
+            const type = infoOf(x.t)?.harness === "hermes" ? "get_messages" : "get_entries";
+            call("net_send", {backend:x.t.backend, inst:x.t.inst, cmd:{id,type}}).catch(reject);
+          });
+          if (job !== recallPending || job.scope !== session() || input.value !== job.draft || !input.isConnected) return;
+          if (reply.success !== true) throw new Error("Dieser Server liefert keine vollständigen Sessioneinträge.");
+          const prompts = reply.command === "get_entries" ? InputHistory.entries(reply.data?.entries) : (reply.data?.messages || []).map(InputHistory.text).filter(t => t !== null);
+          history.replace(prompts);
+          direction = job.direction;
+        } catch (e) { if (recallPending === job) say(String(e), "error"); return; }
+        finally {
+          clearTimeout(timer);
+          if (x.t.historyRequest?.id === id) x.t.historyRequest = null;
+          if (recallPending === job) recallPending = null;
+        }
+      }
+      input.value = history.move(direction, input.value); input.focus(); input.setSelectionRange(input.value.length, input.value.length);
+    };
+    input.addEventListener("input", () => { recallPending = null; history.reset(); });
     const submit = async () => {
       const text = input.value.trim(); if (!text) return;
       const info = infoOf(x.t);
       if (info?.state === "exited") { say("Instanz ist beendet – erst neu starten.", "warning"); return; }
-      input.value = "";
+      input.value = ""; history.reset(); recallPending = null;
       try { await call("net_send", { backend: x.t.backend, inst: x.t.inst, cmd: promptCmd(text, x.t.busy || info?.state === "busy") }); }
       catch (e) { if (!input.value) input.value = text; say(String(e), "error"); }
     };
-    input.onkeydown = (e) => { if (e.key === "Enter" && !e.altKey && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); } else if (e.key === "Escape") { e.preventDefault(); abort(x); } };
+    input.onkeydown = e => {
+      if (e.isComposing) return;
+      if (e.key === "Enter" && !e.altKey && !e.shiftKey) { e.preventDefault(); submit(); }
+      else if (e.key === "Escape") { e.preventDefault(); abort(x); }
+      else if (!e.shiftKey && !e.ctrlKey && !e.metaKey && input.selectionStart === input.selectionEnd && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        const up = e.key === "ArrowUp";
+        if (e.altKey || !(up ? input.value.slice(0,input.selectionStart) : input.value.slice(input.selectionEnd)).includes("\n")) { e.preventDefault(); recall(up ? -1 : 1); }
+      }
+    };
     sendBtn.onclick = submit; abortBtn.onclick = () => abort(x);
     const btns = el("div", "nettilebtns"); btns.append(sendBtn, abortBtn);
     foot.append(input, btns);
@@ -359,6 +405,7 @@
     if (!t.live) head.append(el("span", "netloading", "lädt Verlauf …"));
     const tool = (icon, label, fn, cls) => { const btn = el("button", "neticon" + (cls ? " " + cls : "")); btn.innerHTML = icon; btn.title = label; btn.setAttribute("aria-label", label); btn.onclick = fn; return btn; };
     const tools = el("span", "nettiletools");
+    tools.append(tool('<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2v8M4 7l4 4 4-4M3 14h10"/></svg>', "Zum Gesprächsende", () => { x.dom.log.scrollTop = x.dom.log.scrollHeight; }));
     if (info.state === "exited") tools.append(tool(ICON.restart, "Neu starten", () => call("net_restart", { backend: t.backend, inst: t.inst }).then(() => { tiles.delete(tileKey(t.backend, t.inst)); renderGrid(); }).catch(e => say(String(e), "error"))));
     else tools.append(tool(ICON.stop, "Abbrechen (Esc)", () => abort(x)));
     tools.append(tool(ICON.trash, "Instanz löschen …", () => removeInst(x), "danger"), tool(ICON.close, "Aus dem Raster nehmen", () => { selected = selected.filter(k => k !== tileKey(t.backend, t.inst)); renderBar(); renderGrid(); }));
