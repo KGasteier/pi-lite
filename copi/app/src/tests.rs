@@ -37,7 +37,8 @@ fn prompt_history_arrows_traverse_multiline_entries() {
     let arrow = |key| Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
     for (key, expected) in [(Key::ArrowUp, "Letzter\nPrompt"), (Key::ArrowUp, "Erster\nPrompt"), (Key::ArrowDown, "Letzter\nPrompt"), (Key::ArrowDown, "Entwurf")] {
         prompt_frame(&mut a, vec![arrow(key)]);
-        assert_eq!(a.prompt, expected);
+        assert_eq!(a.prompt, expected, "Nach {key:?}");
+        assert!(a.ctx.memory(|m| m.has_focus(crate::view::prompt_id())), "History soll im Eingabefeld bleiben");
     }
 }
 
