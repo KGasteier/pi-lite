@@ -104,6 +104,16 @@ pub fn setup_ctx(ctx: &egui::Context) {
 struct Main(app::App);
 
 impl eframe::App for Main {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        // egui-winit verbraucht die gedrückte Einfügetaste für Text. Loslassen
+        // bleibt auch für reine Bildangebote sichtbar. Text-Paste bleibt nativ.
+        if ctx.memory(|m| m.has_focus(view::prompt_id())) && self.0.dialogs.is_empty() && !self.0.editor_open
+            && raw.events.iter().any(|ev| matches!(ev, egui::Event::Key {key: egui::Key::V, pressed: false, modifiers, ..} if modifiers.command))
+        {
+            self.0.paste_clipboard_image(false);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.draw(ui);
     }

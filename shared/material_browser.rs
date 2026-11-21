@@ -27,16 +27,25 @@ fn bounded(path: &Path, limit:u64) -> Result<Vec<u8>,String> {
     if data.len() as u64 > limit {return Err("Datei zu groß für lokale Vorschau".into());} Ok(data)
 }
 pub fn preview(path:&str) -> Result<Preview,String> {
-    let p=Path::new(path); let ext=p.extension().and_then(|s|s.to_str()).unwrap_or("").to_lowercase();
+    let path=std::fs::canonicalize(path).map_err(|e|e.to_string())?;
+    let p=path.as_path(); let ext=p.extension().and_then(|s|s.to_str()).unwrap_or("").to_lowercase();
     if !p.is_file() {return Err("Keine reguläre Datei".into());}
-    if ext=="png" {let bytes=bounded(p,8*1024*1024)?;return Ok(Preview{text:"Lokale Bildvorschau · Original unverändert".into(),png:Some(STANDARD.encode(bytes))});}
+    if ext=="png" {
+        let bytes=bounded(p,8*1024*1024)?;
+        if !bytes.starts_with(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR") || bytes.len()<24 {return Err("Ungültiger PNG-Kopf".into());}
+        let w=u32::from_be_bytes(bytes[16..20].try_into().unwrap()) as u64;
+        let h=u32::from_be_bytes(bytes[20..24].try_into().unwrap()) as u64;
+        if w==0 || h==0 || w*h>16_000_000 || w>8192 || h>8192 {return Err("Bild zu groß für Vorschau (maximal 16 Megapixel)".into());}
+        return Ok(Preview{text:"Lokale Bildvorschau · Original unverändert".into(),png:Some(STANDARD.encode(bytes))});
+    }
     if ext=="pdf" || ["jpg","jpeg","webp"].contains(&ext.as_str()) {
         if p.metadata().map_err(|e|e.to_string())?.len()>100*1024*1024 {return Err("Vorschau auf 100 MiB begrenzt".into());}
         // Eindeutiger privater temporärer Arbeitsordner, immer entfernen.
         static NEXT:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
         let dir=std::env::temp_dir().join(format!("material-preview-{}-{}",std::process::id(),NEXT.fetch_add(1,std::sync::atomic::Ordering::Relaxed)));
-        std::fs::create_dir(&dir).map_err(|e|e.to_string())?;
-        #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&dir,std::fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;}
+        let mut dirs=std::fs::DirBuilder::new();
+        #[cfg(unix)] {use std::os::unix::fs::DirBuilderExt;dirs.mode(0o700);}
+        dirs.create(&dir).map_err(|e|e.to_string())?;
         let result=(|| {
             let output=dir.join("page.png");
             let mut cmd=if ext=="pdf" {let mut c=std::process::Command::new("pdftoppm");c.args(["-f","1","-singlefile","-scale-to","1200","-png"]).arg(p).arg(dir.join("page"));c} else {let mut c=std::process::Command::new("magick");c.arg(p).args(["-thumbnail","1200x1200>"]).arg(&output);c};
