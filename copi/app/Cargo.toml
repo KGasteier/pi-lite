@@ -26,6 +26,7 @@ pi-sync = { path = "../crates/pi-sync", optional = true }
 sha2 = { version = "0.11", optional = true }
 md-egui = { path = "../crates/md-egui" }
 md-core = { path = "../crates/md-core" }
+arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 base64 = "0.22"
 png = "0.17.16"
 libc = "0.2"

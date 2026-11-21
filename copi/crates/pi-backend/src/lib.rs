@@ -12,6 +12,8 @@ pub mod hub_v1;
 pub mod instances;
 pub mod inventory;
 pub mod material;
+#[path = "../../../../shared/prompt_history.rs"]
+pub mod prompt_history;
 pub mod media;
 pub mod mode;
 pub mod preview;

@@ -8,6 +8,8 @@ assert(js.includes('openBookmarkColorPicker'));assert(rust.includes('"bookmark-c
 assert(browser.includes("'material_preview'"));assert(browser.includes("'material_browser'"));
 assert(browser.includes("value=\"date\""));assert(rust.includes('"Datum ↓"'));
 assert(shared.includes('DL_Omarchy'));assert(!shared.includes('fs::copy'));
-assert(browser.includes('renderMd(text,data.text,true)'));assert(js.includes('FORBID_TAGS'));
+assert(browser.includes('text.textContent=data.text'));
+assert(!browser.includes('renderMd('), 'Materialvorschau darf keine Markdown-Bilder/Links nachladen');
+assert(js.includes('FORBID_TAGS'));
 assert(read('copi/app/src/material_ui.rs').includes('#[default]\n    ReferencesOnly'));
 console.log('Material/Bookmarks: Paritäts-Strukturen und lokale Vorschau geprüft.');
