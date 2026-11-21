@@ -6,7 +6,12 @@
 
 - Der frühere Kopfzeilenknopf sitzt unten rechts im Verlauf – nativ und in pi-lite, je getrennt für Einzelchat und Remote-Kacheln. Bei kurzem Verlauf oder am Ende weder sichtbar noch fokussierbar. Klick springt direkt ans Ende; natives Tail-Rendering bleibt virtualisiert.
 - Web: Sichtbarkeit folgt Scrollen, Layoutwechsel und aufklappenden Blöcken; neue Ausgabe behält bei zurückgescrolltem Verlauf den Leseplatz. Am Ende wird weiter automatisch gefolgt.
-- Nativer Test prüft Position, Hitbox und Ausblenden (cocopi-h 142 bestanden / 2 ignoriert; Release-Testprofil mit `opt-level=0` im App-Crate). Chromium-Tauri-Stub prüft Einzelchat und Remote-Kachel sowie Erhalt der Leseposition. Kein Livefenster-/R2-Test.
+- Nativer Test prüft Position, Hitbox und Ausblenden (cocopi-h 142 bestanden / 2 ignoriert; Release-Testprofil mit `opt-level=0` im App-Crate). Chromium-Tauri-Stub für alle acht Branches prüft Einzelchat und, wo vorhanden, Remote-Kachel sowie Erhalt der Leseposition. Native Branch-Checks und net.js-Unit-Test grün; identische Quellstände gegenüber `copi-multi`/`cocopi-v3d` abgeglichen.
+- Alle acht aktualisierten Branches atomar nach `origin` gepusht, Remote-Refs verifiziert. Beide lokalen ARM-Releases aus `943b6fea930c0f2c933cdfc58b5ee32b42eb7e0b` (offline/locked, zwei Jobs; cocopi-h 1m11s, pi-lite 52.68s) nach Sicherung atomar installiert. Quelle/Ziel SHA256:
+  - `~/.local/bin/cocopi-h`: `7cfd8f88b2bcea1e6a7979da6fb68c6fe7d2e0022b0fbbd88ad4236e8a6a97ab`
+  - `~/.local/lib/pi-lite/pi-lite`: `f27df5c07933c5eb6a9bc54b92ac322f660f38a418658f507015509c9375a72e`
+  - Backups daneben mit Suffix `.bak-jump-overlay-20261121T232101-3356810`.
+- Headless-Hermes-Demo geprüft (am Ende ohne Knopf, auch nicht mehr im Kopf). `copi`, `cocopi`, v3 und der pi-lite-Wrapper bleiben hashgleich; keine laufenden Fenster neu gestartet, kein Livefenster-/R2-Test.
 
 ### Gesprächsende, vollständige Prompt-Rückschau und Material · 21.11.2026
 
@@ -16,7 +21,7 @@
 - Schlussprüfung: `cocopi-h` **141 bestanden / 2 ignoriert**, `copi` **136 bestanden / 2 ignoriert** (offline/locked Release-Testprofil, für das App-Crate `opt-level=0`; kein Distributionsbuild). Native Fokusregression und virtueller 10.000-Zeilen-Sprung eingeschlossen. JSONL-Backendtest, Tauri-Release-Checks und Chromium-DOM-Test mit simuliertem Backend bestanden. `test-statusline-net.cjs` behält seinen bekannten Altfehler. Kein Live-Clipboard- oder Remote-Test.
 - Neuer portabler Skill `~/.agents/skills/cocopi2-dev` inkl. Projektnotizen, ohne Logs/Secrets; Links für Claude Code und Codex.
 
-### Release und lokale Installation · 22.11.2026
+### Voriger Release und lokale Installation · 22.11.2026
 
 - Alle acht aktualisierten Branches atomar und ohne Force nach `origin` gepusht; vollständige Refs per `ls-remote` geprüft. `copi-multi` war zuvor nur lokal. Kein R2-Eingriff.
 - Produktions-Releases für ARM/aarch64 aus `4486a2903448bd75c438ee536a6d97a73dce71b4`, offline/locked mit zwei Jobs: `cocopi-h` 5m53s, `pi-lite` 4m50s. Atomarer Austausch nach lokalen Backups. Quelle/Ziel mit vollständigem SHA256 geprüft:
