@@ -6,10 +6,9 @@ use pi_backend::instances::State;
 use serde_json::json;
 
 use crate::app::{App, ToastKind};
-use crate::icons::{self, IconStyle};
 use crate::net::{short_cwd, AskKind, InstKey, NetItem};
 use crate::theme::*;
-use crate::view::{btn, txt, NET_PLACEHOLDER};
+use crate::view::{btn, log_jump, txt, NET_PLACEHOLDER};
 
 /// Aktionen aus der Zeichnung; werden nach dem Zeichnen angewandt (Borrow-frei).
 enum Act {
@@ -259,9 +258,6 @@ impl App {
                     if state == State::Exited && btn(ui, "Neustart", 11.5, vec2(6.0, 1.0), vec2(0.0, 20.0), true, linked).clicked() {
                         acts.push(Act::Restart(k.clone()));
                     }
-                    if icons::icon_button(ui, vec2(22.0, 20.0), true, IconStyle::default(), "Zum Gesprächsende", icons::down).clicked() {
-                        inst.chat.jump_to_end = true;
-                    }
                     pill(ui, state);
                     badge(ui, inst.info.asks);
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -278,7 +274,7 @@ impl App {
             let chat = &mut inst.chat;
             let jump = std::mem::take(&mut chat.jump_to_end);
             let area = ScrollArea::vertical().id_salt(("net-hist", &k.0, &k.1)).max_height(hist_h).min_scrolled_height(hist_h).stick_to_bottom(true).animated(!jump).auto_shrink([false, false]);
-            area.show(ui, |ui| {
+            let out = area.show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 let w = ui.available_width();
                 if chat.items.is_empty() {
@@ -323,6 +319,7 @@ impl App {
                 }
                 if jump { ui.scroll_to_cursor(Some(Align::BOTTOM)); }
             });
+            if log_jump(ui, &out) { chat.jump_to_end = true; }
             // Rückfrage inline (älteste zuerst)
             if let Some(a) = chat.asks.first_mut() {
                 let aid = a.id.clone();

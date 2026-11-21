@@ -69,7 +69,7 @@ function renderMd(el, text, localOnly = false) {
 // Während des Streamings höchstens alle 80 ms neu rendern.
 function scheduleRender(b) {
   if (b.timer) return;
-  b.timer = setTimeout(() => { b.timer = 0; renderMd(b.el, b.text); scroll(); }, 80);
+  b.timer = setTimeout(() => { b.timer = 0; changeLog(() => renderMd(b.el, b.text)); }, 80);
 }
 
 // ---------- Hilfen ----------
@@ -116,14 +116,35 @@ async function copyText(text) {
   try { if (!document.execCommand("copy")) throw new Error("Zwischenablage nicht verfügbar"); }
   finally { field.remove(); focused?.focus(); }
 }
-function nearBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
-function scroll(force) { if (force || nearBottom()) log.scrollTop = log.scrollHeight; }
-$("jumpend").onclick = () => scroll(true);
+function logEndGap(view) { return view.scrollHeight - view.clientHeight - view.scrollTop; }
+function bindLogJump(view, button) {
+  const sync = () => { button.hidden = !view.clientHeight || logEndGap(view) <= 4; };
+  view.addEventListener("scroll", sync, {passive:true});
+  view.addEventListener("toggle", sync, true);
+  view.addEventListener("load", sync, true);
+  button.onclick = () => {
+    view.scrollTop = view.scrollHeight;
+    if (document.activeElement === button) view.focus({preventScroll:true});
+    sync();
+  };
+  const observer = new ResizeObserver(sync);
+  observer.observe(view);
+  sync();
+  return {sync, disconnect:() => observer.disconnect()};
+}
+const logJump = bindLogJump(log, $("jumpend"));
+function scroll(force) { if (force || logEndGap(log) <= 4) log.scrollTop = log.scrollHeight; logJump.sync(); }
+// Die Entscheidung vor dem Layoutwechsel treffen: auch ein großer neuer Block
+// folgt nur dann automatisch, wenn wir bereits am Ende gelesen haben.
+function changeLog(update, force = false) {
+  const follow = force || logEndGap(log) <= 4;
+  update(); scroll(follow);
+}
 function add(cls, text = "") {
   const d = document.createElement("div");
   d.className = "msg " + cls; d.textContent = text;
   if (cls === "user") attachRepeat(d, text);
-  log.appendChild(d); scroll(true); return d;
+  changeLog(() => log.appendChild(d), cls === "user"); return d;
 }
 function attachRepeat(el, text) {
   const button = document.createElement("button"); button.className = "repeatrequest chataction";
@@ -161,7 +182,7 @@ function attachCopy(block) {
 function note(text, err = false) {
   const d = document.createElement("div");
   d.className = "note" + (err ? " err" : ""); d.textContent = text;
-  log.appendChild(d); scroll(true);
+  changeLog(() => log.appendChild(d));
 }
 const textOf = (c) => typeof c === "string" ? c :
   (c || []).filter((p) => p.type === "text").map((p) => p.text).join("");
@@ -173,8 +194,7 @@ function newAssistant() {
 function finishBlock(b) {
   if (!b) return;
   clearTimeout(b.timer); b.timer = 0;
-  renderMd(b.el, b.text);
-  attachCopy(b);
+  changeLog(() => { renderMd(b.el, b.text); attachCopy(b); });
 }
 function addTool(id, name, args) {
   const d = document.createElement("details");
@@ -186,12 +206,12 @@ function addTool(id, name, args) {
     actions.appendChild(editorButton({ path: args.path }, sessionCwd || $("cwd").value));
     d.appendChild(actions);
   }
-  log.appendChild(d); tools.set(id, d); scroll();
+  changeLog(() => log.appendChild(d)); tools.set(id, d);
   return d;
 }
 function addThinking(text) {
-  const el = add("assistant thinking");
-  el.textContent = text; return { el, text, plain: true };
+  const el = add("assistant thinking", text);
+  return { el, text, plain: true };
 }
 
 // ---------- Verlauf einer geladenen Session ----------
@@ -240,7 +260,7 @@ function handle(ev) {
         cur.text += e.delta; scheduleRender(cur);
       } else if (e.type === "thinking_delta") {
         curThink ??= addThinking("");
-        curThink.text += e.delta; curThink.el.textContent = curThink.text; scroll();
+        curThink.text += e.delta; changeLog(() => { curThink.el.textContent = curThink.text; });
       }
       break;
     }
@@ -254,9 +274,10 @@ function handle(ev) {
     case "tool_execution_update": case "tool_execution_end": {
       const d = tools.get(ev.toolCallId); if (!d) break;
       const r = ev.result || ev.partialResult;
-      d.querySelector("pre").textContent = textOf(r?.content);
-      if (ev.isError) d.classList.add("err");
-      scroll();
+      changeLog(() => {
+        d.querySelector("pre").textContent = textOf(r?.content);
+        if (ev.isError) d.classList.add("err");
+      });
       break;
     }
     case "auto_retry_start":
@@ -820,7 +841,7 @@ async function start({ session = null } = {}) {
   state = {};
   inputHistory.replace([]);
   slashPicker.setCommands([]); slashPicker.close();
-  log.innerHTML = ""; tools.clear(); cur = curThink = null; pending.clear(); dropDialogs();
+  log.innerHTML = ""; logJump.sync(); tools.clear(); cur = curThink = null; pending.clear(); dropDialogs();
   usageSequence++; usageSnapshot = null;
   $("usagetext").textContent = "Tokenverbrauch: —";
   $("usagepopup").hidden = true; usageExplanationSequence++;

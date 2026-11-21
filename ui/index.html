@@ -313,8 +313,10 @@
   #keyhelp { position:fixed; inset:10vh 10vw; z-index:80; background:var(--panel); border:1px solid var(--acc); padding:20px; overflow:auto; border-radius:10px; box-shadow:0 0 0 100vmax #000a; }
   #keyhelp[hidden] { display:none; }
   /* Fokusrahmen als Overlay über dem Scrollbereich: Inhalte laufen nicht darüber */
-  #logwrap { flex:1; min-height:0; display:flex; flex-direction:column; position:relative; }
-  #jumpend { position:absolute; right:20px; bottom:12px; z-index:3; background:var(--panel); }
+  #logwrap, .nettilelogwrap { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; position:relative; }
+  .jumpend { position:absolute; right:18px; bottom:10px; z-index:3; display:grid; place-items:center; width:32px; height:32px; padding:0; background:var(--panel); }
+  .jumpend svg { width:17px; height:17px; }
+  .jumpend[hidden] { display:none; }
   #log:focus, #log:focus-visible { outline:none; }
   #logwrap:has(#log:focus-visible)::after { content:""; position:absolute; inset:2px; border:2px solid var(--acc); border-radius:6px; pointer-events:none; z-index:2; }
   #materialbar { background:var(--panel); padding:0 12px; }
@@ -384,7 +386,7 @@
   <button id="keyboardhelp" title="Tastaturhilfe (F1)" aria-label="Tastaturhilfe">?</button>
   <button id="nettoggle" aria-pressed="false" title="Netz-Seitenleiste einblenden (menschlicher Chat, in Vorbereitung) · Strg/Cmd+Shift+B" aria-label="Netz-Seitenleiste"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor"><rect x="2" y="3" width="14" height="12" rx="2"/><path d="M12 3v12"/><rect class="fill" x="12.6" y="4.1" width="2.8" height="9.8" rx=".6" stroke="none"/></svg></button>
 </header>
-<div id="workrow"><div id="logwrap"><div id="log" tabindex="0" role="region" aria-label="Chatverlauf"></div><button id="jumpend" class="iconbutton" title="Zum Gesprächsende" aria-label="Zum Gesprächsende"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4 7l4 4 4-4M3 14h10"/></svg></button></div>
+<div id="workrow"><div id="logwrap"><div id="log" tabindex="0" role="region" aria-label="Chatverlauf"></div><button id="jumpend" class="iconbutton jumpend" type="button" hidden title="Zum Gesprächsende" aria-label="Zum Gesprächsende"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4 7l4 4 4-4M3 14h10"/></svg></button></div>
 <aside id="netpanel" hidden aria-label="Netz"><div id="nethead"><strong>Netz</strong><span class="badge">in Vorbereitung</span><button id="netclose" title="Netz-Seitenleiste ausblenden" aria-label="Netz-Seitenleiste ausblenden">✕</button></div>
 <p>Hier entsteht der Chat mit Menschen: Kurs, Projekt oder Direktnachricht.</p>
 <p>Noch ohne Funktion – es wird nichts gesendet, empfangen oder gespeichert.</p>

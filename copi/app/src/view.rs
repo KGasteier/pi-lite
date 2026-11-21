@@ -62,6 +62,28 @@ fn plain(ctx: &Context, key: Key) -> bool {
     k(ctx, key, false, false, false)
 }
 
+/// Schwebender Knopf im sichtbaren Verlauf; kein Layoutplatz und kein Trefferbereich am Ende.
+pub(crate) fn log_jump<R>(ui: &Ui, out: &egui::scroll_area::ScrollAreaOutput<R>) -> bool {
+    let viewport = out.inner_rect;
+    if out.content_size.y - viewport.height() - out.state.offset.y <= 4.0 {
+        return false;
+    }
+    let rect = Rect::from_min_size(viewport.right_bottom() - vec2(45.0, 42.0), vec2(32.0, 32.0));
+    if !viewport.intersect(ui.clip_rect()).contains_rect(rect) {
+        return false;
+    }
+    let label = "Zum Gesprächsende";
+    let resp = ui.interact(rect, out.id.with("jump-end"), Sense::click()).on_hover_text(label);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    icons::paint_icon_button(ui, rect, &resp, true, IconStyle { icon: 17.0, ..Default::default() }, icons::down);
+    ui.painter().rect_stroke(rect, 6, Stroke::new(1.0, BORDER), StrokeKind::Inside);
+    if resp.clicked() {
+        ui.ctx().request_repaint();
+        return true;
+    }
+    false
+}
+
 pub fn txt(s: impl Into<String>, size: f32, c: Color32) -> RichText {
     RichText::new(s.into()).size(size).color(c)
 }
@@ -1058,9 +1080,6 @@ impl App {
             if btn(ui, "⑂ Fork", 13.0, vec2(10.0, 4.0), vec2(0.0, 28.0), false, true).on_hover_text("Ab einer früheren Nachricht abzweigen (Alt+F)").clicked() {
                 self.fork_from_here();
             }
-            if icons::icon_button(ui, vec2(28.0, 26.0), true, IconStyle::default(), "Zum Gesprächsende", icons::down).clicked() {
-                self.force_scroll = true;
-            }
             ui.spacing_mut().item_spacing.x = 2.0;
             if btn(ui, "A−", 13.0, vec2(7.0, 4.0), vec2(0.0, 28.0), false, true).on_hover_text("Ausgabeschrift kleiner (Alt+−)").clicked() {
                 self.resize_output(-1);
@@ -1459,7 +1478,7 @@ impl App {
                 }
             });
         });
-        let _ = out;
+        if log_jump(ui, &out) { self.force_scroll = true; }
         virtual_log::save(ui, cache_id, cache);
         for a in acts {
             a(self);

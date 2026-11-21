@@ -423,6 +423,43 @@ fn virtualized_log_renders_only_a_fraction_of_ten_thousand_entries() {
     );
 }
 
+#[test]
+fn jump_to_end_is_in_the_output_and_only_present_above_the_end() {
+    let ctx = egui::Context::default();
+    crate::setup_ctx(&ctx);
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480.0, 400.0));
+    let mut jump = false;
+    let mut id = egui::Id::NULL;
+    let mut viewport = egui::Rect::NOTHING;
+    let mut draw = |offset, height, events| {
+        let mut frame = ctx.run_ui(RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+            let out = egui::ScrollArea::vertical().max_height(230.0).auto_shrink([false, false]).vertical_scroll_offset(offset).show(ui, |ui| {
+                ui.allocate_exact_size(egui::vec2(100.0, height), egui::Sense::hover());
+            });
+            id = out.id.with("jump-end");
+            viewport = out.inner_rect;
+            jump |= crate::view::log_jump(ui, &out);
+        });
+        frame.textures_delta.clear();
+        (ctx.read_response(id), viewport, jump)
+    };
+    for (offset, height) in [(0.0, 40.0), (1000.0, 1000.0)] {
+        draw(offset, height, vec![]);
+        assert!(draw(offset, height, vec![]).0.is_none(), "Nicht nötig, daher kein Knopf");
+    }
+    let (resp, view, _) = draw(20.0, 1000.0, vec![]);
+    let rect = resp.expect("Knopf im zurückgescrollten Verlauf").rect;
+    assert!(view.contains_rect(rect));
+    assert!(view.right() - rect.right() < 20.0 && view.bottom() - rect.bottom() < 20.0);
+    let at = rect.center();
+    draw(20.0, 1000.0, vec![Event::PointerMoved(at)]);
+    let click = |pressed| Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+    draw(20.0, 1000.0, vec![click(true)]);
+    assert!(draw(20.0, 1000.0, vec![click(false)]).2, "Schaltfläche empfängt den Klick");
+    draw(1000.0, 1000.0, vec![]);
+    assert!(draw(1000.0, 1000.0, vec![]).0.is_none(), "Nach dem Sprung wieder unsichtbar");
+}
+
 // ---------- Statuszeile und Netz-Seitenleiste ----------
 
 #[test]
