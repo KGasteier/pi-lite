@@ -303,7 +303,11 @@
   // ---------- Raster ----------
   function renderGrid() {
     // Abos nur für sichtbare Kacheln halten.
-    for (const [k, x] of tiles) if (!selected.includes(k)) { call("net_unsubscribe", { backend: x.t.backend, inst: x.t.inst }).catch(() => {}); tiles.delete(k); }
+    for (const [k, x] of tiles) if (!selected.includes(k)) {
+      x.dom.jump.disconnect();
+      call("net_unsubscribe", { backend: x.t.backend, inst: x.t.inst }).catch(() => {});
+      tiles.delete(k);
+    }
     grid.innerHTML = "";
     const lay = gridLayout(selected.length);
     grid.style.gridTemplateColumns = lay.columns; grid.style.gridTemplateRows = lay.rows; grid.style.gridTemplateAreas = lay.areas || "";
@@ -317,7 +321,7 @@
       if (!x) { const [b, i] = splitKey(k); x = { t: createTile(b, i, String(++tagSeq)), dom: null, timer: 0 }; tiles.set(k, x); buildTile(x); subscribe(x); }
       if (lay.areas) x.dom.root.style.gridArea = "t" + n; else x.dom.root.style.gridArea = "";
       grid.append(x.dom.root);
-      renderTileHead(x);
+      renderTileHead(x); x.dom.jump.sync();
     });
   }
 
@@ -329,7 +333,12 @@
 
   function buildTile(x) {
     const root = el("section", "nettile"), head = el("div", "nettilehead"), log = el("div", "nettilelog"), asks = el("div", "netasks"), foot = el("div", "nettilefoot");
-    log.tabIndex = 0; log.setAttribute("role", "region");
+    log.tabIndex = 0; log.setAttribute("role", "region"); log.setAttribute("aria-label", "Chatverlauf");
+    const logWrap = el("div", "nettilelogwrap"), jumpBtn = el("button", "iconbutton jumpend");
+    jumpBtn.type = "button"; jumpBtn.hidden = true; jumpBtn.title = "Zum Gesprächsende"; jumpBtn.setAttribute("aria-label", jumpBtn.title);
+    jumpBtn.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4 7l4 4 4-4M3 14h10"/></svg>';
+    logWrap.append(log, jumpBtn);
+    const jump = bindLogJump(log, jumpBtn);
     const input = el("textarea", "nettileinput"); input.placeholder = "Nachricht (Enter = senden, Alt+Enter = Zeilenumbruch)"; input.rows = 2;
     const sendBtn = el("button", "primary", "Senden"), abortBtn = el("button", null, "Abbruch");
     const history = new InputHistory();
@@ -386,8 +395,8 @@
     sendBtn.onclick = submit; abortBtn.onclick = () => abort(x);
     const btns = el("div", "nettilebtns"); btns.append(sendBtn, abortBtn);
     foot.append(input, btns);
-    root.append(head, log, asks, foot);
-    x.dom = { root, head, log, asks, input };
+    root.append(head, logWrap, asks, foot);
+    x.dom = { root, head, log, asks, input, jump };
   }
 
   function infoOf(t) { return model.insts[t.backend]?.[t.inst]; }
@@ -405,8 +414,7 @@
     if (!t.live) head.append(el("span", "netloading", "lädt Verlauf …"));
     const tool = (icon, label, fn, cls) => { const btn = el("button", "neticon" + (cls ? " " + cls : "")); btn.innerHTML = icon; btn.title = label; btn.setAttribute("aria-label", label); btn.onclick = fn; return btn; };
     const tools = el("span", "nettiletools");
-    tools.append(tool('<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2v8M4 7l4 4 4-4M3 14h10"/></svg>', "Zum Gesprächsende", () => { x.dom.log.scrollTop = x.dom.log.scrollHeight; }));
-    if (info.state === "exited") tools.append(tool(ICON.restart, "Neu starten", () => call("net_restart", { backend: t.backend, inst: t.inst }).then(() => { tiles.delete(tileKey(t.backend, t.inst)); renderGrid(); }).catch(e => say(String(e), "error"))));
+    if (info.state === "exited") tools.append(tool(ICON.restart, "Neu starten", () => call("net_restart", { backend: t.backend, inst: t.inst }).then(() => { x.dom.jump.disconnect(); tiles.delete(tileKey(t.backend, t.inst)); renderGrid(); }).catch(e => say(String(e), "error"))));
     else tools.append(tool(ICON.stop, "Abbrechen (Esc)", () => abort(x)));
     tools.append(tool(ICON.trash, "Instanz löschen …", () => removeInst(x), "danger"), tool(ICON.close, "Aus dem Raster nehmen", () => { selected = selected.filter(k => k !== tileKey(t.backend, t.inst)); renderBar(); renderGrid(); }));
     head.append(tools);
@@ -428,15 +436,16 @@
   function renderTile(x) {
     if (!x.dom) return;
     const { log } = x.dom, t = x.t;
-    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    const atBottom = logEndGap(log) <= 4;
     // Gekürzten Anfang entfernen.
     while (log.firstChild && !t.items.includes(log.firstChild._item)) log.firstChild.remove();
     for (const it of t.items) {
       if (!it.el) { it.el = itemNode(it); it.el._item = it; log.append(it.el); }
       if (it.dirty) { fillItem(it); it.dirty = false; }
     }
-    if (atBottom) log.scrollTop = log.scrollHeight;
     renderAsks(x); renderTileHead(x);
+    if (atBottom) log.scrollTop = log.scrollHeight;
+    x.dom.jump.sync();
   }
 
   function itemNode(it) {
