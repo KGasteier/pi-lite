@@ -7,6 +7,7 @@ const stub = () => {
   const listeners = {}, calls = [], prompts = [], pending = {}, previews = {};
   let sessionFile = '/demo/a.jsonl';
   const model = {provider:'demo',id:'vision',name:'Vision',input:['text','image']};
+  const remote = {id:'inst',name:'Demo',harness:'pi',cwd:'/demo',session:'/demo/remote.jsonl',state:'idle',asks:0};
   window.fixture = { calls, prompts, pending, previews };
   window.__TAURI__ = {
     event: {listen:async (n, fn) => {listeners[n]=fn;return ()=>{};}},
@@ -23,6 +24,9 @@ const stub = () => {
       if(c==='resume_session') return '/demo/a.jsonl';
       if(c==='startup_info') return {cwd:'/demo'};
       if(c==='work_locations') return [];
+      if(c==='net_backends') return [{id:'demo',label:'Demo',remote:true,connected:true}];
+      if(c==='net_list') return [remote];
+      if(c==='net_create') return remote;
       if(c==='prepare_material') return {text:'',images:[]};
       if(c==='material_browser') return {path:'/demo',entries:['a.png','b.png'].map(name=>({name,path:'/demo/'+name,is_dir:false}))};
       if(c==='material_preview') return await new Promise(ok=>{previews[p.path]=ok;});
@@ -52,9 +56,28 @@ const test = async () => {
   assert(field.value!=='FREMDE SESSION','verspätete fremde Session bleibt unsichtbar');
   const b=recallInput(-1); await until(()=>pending['/demo/b.jsonl']); pending['/demo/b.jsonl'](['Nur B']); await b;
   assert(field.value==='Nur B','richtiger Sessionpfad');
-  const log=$('log');
-  const long=document.createElement('div'); long.style='flex:none; height:18000px'; log.append(long); log.scrollTop=0;
-  $('jumpend').click(); assert(log.scrollTop > 10000,'sprung ans Ende ohne Scrollschritte');
+  function verifyJump(view, button, whileBack = () => {}) {
+    const update = () => view.dispatchEvent(new Event('scroll'));
+    const invisible = () => button.hidden && getComputedStyle(button).display==='none';
+    view.scrollTop=view.scrollHeight; update();
+    assert(invisible(),'am Ende kein Knopf');
+    const long=document.createElement('div'); long.style='flex:none; height:18000px'; view.append(long);
+    view.scrollTop=view.scrollHeight; update();
+    assert(invisible(),'auch langer Verlauf am Ende ohne Knopf');
+    view.scrollTop=0; update();
+    assert(!button.hidden && getComputedStyle(button).display!=='none','nach Zurückscrollen sichtbar');
+    const a=view.getBoundingClientRect(), b=button.getBoundingClientRect();
+    assert(a.right-b.right>=0 && a.right-b.right<28 && a.bottom-b.bottom>=0 && a.bottom-b.bottom<24 && b.left>a.left && b.top>a.top,'unten rechts im Ausgabefenster');
+    whileBack();
+    button.focus(); button.click();
+    assert(view.scrollTop>10000 && logEndGap(view)<=4 && invisible(),'sofort ans Ende, Knopf wieder verborgen');
+    assert(document.activeElement===view,'Tastaturfokus bleibt im Verlauf');
+    long.remove();
+  }
+  verifyJump($('log'), $('jumpend'), () => {
+    note('Neue Ausgabe beim Zurücklesen');
+    assert($('log').scrollTop===0 && !$('jumpend').hidden,'neue Ausgabe reißt den Leseplatz nicht weg');
+  });
   const data=new DataTransfer(); data.items.add(new File([Uint8Array.of(137,80,78,71,13,10,26,10,0)],'clipboard.png',{type:'image/png'}));
   const ev=new ClipboardEvent('paste',{clipboardData:data,cancelable:true,bubbles:true}); field.dispatchEvent(ev);
   await until(()=>$('materialchips').textContent.includes('Zwischenablagebild'));
@@ -75,6 +98,12 @@ const test = async () => {
   assert(!document.querySelector('dialog .preview').textContent,'Ordnerwechsel leert und invalidiert Vorschau');
   buttons()[0].click(); document.querySelector('dialog .accept').click();
   assert((await choose)[0]==='/demo/a.png','Auswahl nach Vorschau weiterhin möglich');
+  if (window.PiNet?.openRemoteSession) {
+    await window.PiNet.openRemoteSession({backend:'demo',cwd:'/demo',path:'/demo/remote.jsonl'});
+    await until(()=>document.querySelector('.nettilelogwrap .jumpend'));
+    assert(!document.querySelector('.nettilehead .jumpend'),'Remote-Kopf ohne Sprungknopf');
+    verifyJump(document.querySelector('.nettilelog'), document.querySelector('.nettilelogwrap .jumpend'));
+  }
   document.body.dataset.result='PASS';
 };
 const file=path.join(dir,'index.html');
