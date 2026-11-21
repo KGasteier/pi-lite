@@ -27,7 +27,7 @@ const KEYHELP: [&str; 5] = [
 const REMOTE_PLACEHOLDER: &str = "Nachricht an die gewählte Instanz … (Enter = senden, Alt+Enter = Zeilenumbruch)";
 const PLACEHOLDER: &str = "Nachricht, /Befehl, !Shell oder pi update … (Enter = senden, Alt+Enter = Zeilenumbruch)";
 
-fn prompt_id() -> Id {
+pub(crate) fn prompt_id() -> Id {
     Id::new("copi-prompt")
 }
 
@@ -1388,6 +1388,9 @@ impl App {
                 self.fork_from_here();
             }
             });
+            if icons::icon_button(ui, vec2(28.0, 26.0), true, IconStyle::default(), "Zum Gesprächsende", icons::down).clicked() {
+                self.force_scroll = true;
+            }
             ui.spacing_mut().item_spacing.x = 2.0;
             if btn(ui, "A−", 13.0, vec2(7.0, 4.0), vec2(0.0, 28.0), false, true).on_hover_text("Ausgabeschrift kleiner (Alt+−)").clicked() {
                 self.resize_output(-1);
@@ -1549,7 +1552,7 @@ impl App {
         }
         ui.horizontal_wrapped(|ui| {
             for item in self.material.items.clone() {
-                let label = format!("{} {} ×", if item.url { "URL:" } else { "Datei:" }, item.value.rsplit('/').next().unwrap_or(&item.value));
+                let label = format!("{} {} ×", if item.image.is_some() { "Bild:" } else if item.url { "URL:" } else { "Datei:" }, item.value.rsplit('/').next().unwrap_or(&item.value));
                 let resp = btn(ui, &label, 12.0, vec2(8.0, 4.0), Vec2::ZERO, false, !self.material.preparing).on_hover_text(item.value.clone());
                 if resp.clicked() {
                     self.remove_material(item);
@@ -1560,7 +1563,7 @@ impl App {
             ui.add_enabled_ui(!self.material.preparing, |ui| {
                 let refs = self.material.mode == crate::material_ui::MaterialMode::ReferencesOnly;
                 let mut checked = refs;
-                if ui.checkbox(&mut checked, "Nur Dateiverweise").changed() {
+                if ui.checkbox(&mut checked, "Nur Dateiverweise").on_hover_text("Gilt für Originaldateien; eingefügte Bildanhänge werden beim Senden übertragen.").changed() {
                     self.material.mode = if checked { crate::material_ui::MaterialMode::ReferencesOnly } else { crate::material_ui::MaterialMode::Auto };
                 }
                 if !self.material.routes.is_empty() {
@@ -1592,7 +1595,7 @@ impl App {
         let row = |i: f32| Rect::from_min_size(tools.min + vec2(0.0, i * (h + 4.0)), vec2(32.0, h));
         let r0 = ui.interact(row(2.0), Id::new("t-add"), Sense::click()).on_hover_text("Material hinzufügen");
         icons::paint_icon_button(ui, row(2.0), &r0, true, IconStyle { fg: Color32::WHITE, bg: Some(acc()), ..st }, icons::plus);
-        let r1 = ui.interact(row(0.0), Id::new("t-up"), Sense::click()).on_hover_text("Ältere Eingabe (Alt+↑)");
+        let r1 = ui.interact(row(0.0), Id::new("t-up"), Sense::click()).on_hover_text("Älterer Prompt dieser Session (Alt+↑)");
         icons::paint_icon_button(ui, row(0.0), &r1, true, st, icons::up);
         let r2 = ui.interact(row(1.0), Id::new("t-down"), Sense::click()).on_hover_text("Neuere Eingabe (Alt+↓)");
         icons::paint_icon_button(ui, row(1.0), &r2, true, st, icons::down);
@@ -1740,7 +1743,9 @@ impl App {
         let connection_hint = self.net.remote_connection_hint(k);
         let Some(inst) = self.net.inst_mut(k) else { return };
         let items = &mut inst.chat.items;
-        ScrollArea::vertical().id_salt(("rlog", &k.0, &k.1)).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+        let jump = std::mem::take(&mut self.force_scroll);
+        let area = ScrollArea::vertical().id_salt(("rlog", &k.0, &k.1)).stick_to_bottom(true).animated(!jump);
+        area.auto_shrink([false, false]).show(ui, |ui| {
             Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 12.0;
                 let maxw = ui.available_width().min(900.0);
@@ -1818,6 +1823,7 @@ impl App {
                     }
                 }
             });
+            if jump { ui.scroll_to_cursor(Some(Align::BOTTOM)); }
         });
         for a in acts {
             a(self);
@@ -1844,7 +1850,7 @@ impl App {
         let mut cache = virtual_log::load(ui, cache_id);
         cache.sync(total, width_bucket, size, epoch);
 
-        let out = ScrollArea::vertical().id_salt("log").stick_to_bottom(true).auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
+        let out = ScrollArea::vertical().id_salt("log").stick_to_bottom(true).animated(!force).auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
             Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 12.0;
                 let avail = ui.available_width();
@@ -2290,14 +2296,12 @@ impl App {
                         if enter_pressed {
                             navigate_material = Some(d.text.clone());
                         }
-                        let moved = ui.input(|i| i.pointer.delta() != Vec2::ZERO);
-                        ScrollArea::vertical().max_height(screen.height() * 0.45).show(ui, |ui| {
+                        // Vorschau gehört zur geklickten Datei, nicht zu einer zufällig
+                        // überquerten Zeile auf dem Weg zur Vorschau-Schaltfläche.
+                        ScrollArea::vertical().id_salt("material-entries").max_height((screen.height() * 0.34).max(80.0)).show(ui, |ui| {
                             ui.spacing_mut().item_spacing.y = 2.0;
                             for (i, e) in d.entries.iter().enumerate() {
-                                let (rect, resp) = ui.allocate_exact_size(vec2(width - 32.0, 28.0), Sense::click());
-                                if resp.hovered() && moved {
-                                    d.cursor = i;
-                                }
+                                let (rect, resp) = ui.allocate_exact_size(vec2(width - 36.0, 28.0), Sense::click());
                                 let sel = i == d.cursor;
                                 let picked = d.selected.contains(&e.path);
                                 ui.painter().rect_filled(rect, 6, if sel { acc() } else if picked { mix(BTN, 0.3, OK) } else { BTN });
@@ -2326,14 +2330,17 @@ impl App {
                         if let Some(entry) = d.entries.get(d.cursor).filter(|e| !e.is_dir) {
                             if ui.button("Lokale Vorschau …").clicked() { preview_material = Some(entry.path.clone()); }
                         }
-                        if !self.material.preview_text.is_empty() {
-                            ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                                let th = md_egui::Theme::default();
-                                md_egui::show_markdown(ui, &th, &self.material.preview_text);
+                        if let Some(path) = self.material.preview_path.as_ref().filter(|path| d.entries.get(d.cursor).is_some_and(|e| &e.path == *path)) {
+                            let name = std::path::Path::new(path).file_name().and_then(|s| s.to_str()).unwrap_or(path);
+                            let max_height = (screen.height() * 0.24).clamp(72.0, 200.0);
+                            ui.add(Label::new(txt(format!("Vorschau: {name}"), 11.5, DIM)).truncate());
+                            ScrollArea::vertical().id_salt(("material-preview", self.material.preview_seq)).max_height(max_height).show(ui, |ui| {
+                                // Vorschau ist passiver Inhalt, keine Markdown-Links oder Bilder nachladen.
+                                ui.add(Label::new(txt(&self.material.preview_text, 12.0, FG)).wrap());
+                                if let Some(texture) = &self.material.preview_texture {
+                                    ui.add(egui::Image::new(texture).max_size(vec2(width - 48.0, max_height - 24.0)).maintain_aspect_ratio(true));
+                                }
                             });
-                            if let Some(texture) = &self.material.preview_texture {
-                                ui.add(egui::Image::new(texture).max_size(vec2(width - 40.0, 240.0)).maintain_aspect_ratio(true));
-                            }
                         }
                         let count = d.selected.len();
                         ui.add(Label::new(txt(format!("{count} ausgew\u{e4}hlt \u{b7} Klick: Datei an/abw\u{e4}hlen \u{b7} Doppelklick: Ordner \u{f6}ffnen \u{b7} Backspace: Hoch"), 11.0, DIM)).wrap());

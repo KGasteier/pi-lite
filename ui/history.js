@@ -1,12 +1,17 @@
 // Pure input-history state; also usable in Node tests.
 (function (root) {
   class InputHistory {
-    constructor(limit = 100) { this.items = []; this.limit = limit; this.reset(); }
+    constructor() { this.items = []; this.reset(); }
     reset() { this.index = this.items.length; this.draft = ""; }
-    add(text) {
-      if (text && this.items.at(-1) !== text) this.items.push(text);
-      this.items = this.items.slice(-this.limit); this.reset();
+    browsing() { return this.index < this.items.length; }
+    replace(items) { this.items = items; this.reset(); }
+    static text(message) {
+      if (message?.role !== "user") return null;
+      const c = message.content;
+      const text = typeof c === "string" ? c : Array.isArray(c) ? c.filter(p => p?.type === "text" && typeof p.text === "string").map(p => p.text).join("\n") : "";
+      return text.trim() ? text : null;
     }
+    static entries(entries) { return Array.isArray(entries) ? entries.filter(e => e?.type === "message").map(e => this.text(e.message)).filter(t => t !== null) : []; }
     move(direction, current) {
       if (!this.items.length) return current;
       if (this.index === this.items.length) this.draft = current;

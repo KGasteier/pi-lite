@@ -181,12 +181,50 @@ fn list_cursor_navigates_sessions_with_arrow_keys() {
     assert_eq!(a.list_cursor, Some(1));
 }
 
+#[test]
+fn prompt_recall_is_scoped_and_leaves_original_draft() {
+    let mut a = demo();
+    a.state["sessionFile"] = json!("/demo/first.jsonl");
+    a.items = vec![crate::app::Item::User("Erster Prompt".into()), crate::app::Item::User("Letzter Prompt".into())];
+    a.set_prompt("Entwurf".into());
+    a.recall(-1);
+    assert_eq!(a.prompt, "Letzter Prompt");
+    a.recall(-1);
+    assert_eq!(a.prompt, "Erster Prompt");
+    a.recall(-1);
+    assert_eq!(a.prompt, "Erster Prompt");
+    a.recall(1);
+    a.recall(1);
+    assert_eq!(a.prompt, "Entwurf");
+    a.recall(-1);
+    a.state["sessionFile"] = json!("/demo/second.jsonl");
+    a.items = vec![crate::app::Item::User("Nur zweite Session".into())];
+    a.recall(-1);
+    assert_eq!(a.prompt, "Nur zweite Session");
+    a.recall(1);
+    assert_eq!(a.prompt, "Entwurf");
+}
+
+#[test]
+fn closed_material_dialog_discards_pending_preview() {
+    let mut a = demo();
+    a.ask(DialogKind::Material, "Test", "", vec![], "", |_, _| {});
+    a.preview_material("/nonexistent-test-preview.png".into());
+    let seq = a.material.preview_seq;
+    a.close_dialog(None);
+    assert!(a.material.preview_seq > seq);
+    assert!(a.material.preview_path.is_none());
+    assert!(a.material.preview_texture.is_none());
+    a.pump();
+    assert!(a.material.preview_text.is_empty());
+}
+
 // ---------- Material (Stufe 3) ----------
 
 #[test]
 fn material_plus_slash_command_is_rejected() {
     let mut a = demo();
-    a.material.items.push(crate::material_ui::MaterialItem { value: "/tmp/a.png".into(), url: false });
+    a.material.items.push(crate::material_ui::MaterialItem { value: "/tmp/a.png".into(), url: false, image: None });
     a.prompt = "/neu".into();
     let before = a.toasts.len();
     a.submit();
@@ -200,7 +238,7 @@ fn material_plus_slash_command_is_rejected() {
 #[test]
 fn material_plus_busy_agent_is_rejected() {
     let mut a = demo();
-    a.material.items.push(crate::material_ui::MaterialItem { value: "/tmp/a.png".into(), url: false });
+    a.material.items.push(crate::material_ui::MaterialItem { value: "/tmp/a.png".into(), url: false, image: None });
     a.busy = true;
     a.prompt = "Was zeigt das Bild?".into();
     let before = a.toasts.len();
@@ -214,11 +252,11 @@ fn material_plus_busy_agent_is_rejected() {
 #[test]
 fn material_items_capped_at_twelve_and_deduplicated() {
     let mut a = demo();
-    let twelve: Vec<_> = (0..12).map(|i| crate::material_ui::MaterialItem { value: format!("/tmp/f{i}.txt"), url: false }).collect();
+    let twelve: Vec<_> = (0..12).map(|i| crate::material_ui::MaterialItem { value: format!("/tmp/f{i}.txt"), url: false, image: None }).collect();
     a.merge_material(twelve.clone());
     assert_eq!(a.material.items.len(), 12);
     // Ein weiteres Element über das Limit hinaus wird abgelehnt; die Liste bleibt bei 12.
-    a.merge_material(vec![crate::material_ui::MaterialItem { value: "/tmp/f12.txt".into(), url: false }]);
+    a.merge_material(vec![crate::material_ui::MaterialItem { value: "/tmp/f12.txt".into(), url: false, image: None }]);
     assert_eq!(a.material.items.len(), 12);
     // Ein bereits enthaltener Pfad wird nicht doppelt aufgenommen.
     a.material.items.clear();
@@ -230,7 +268,7 @@ fn material_items_capped_at_twelve_and_deduplicated() {
 #[test]
 fn remove_material_is_blocked_while_preparing() {
     let mut a = demo();
-    let item = crate::material_ui::MaterialItem { value: "/tmp/a.png".into(), url: false };
+    let item = crate::material_ui::MaterialItem { value: "/tmp/a.png".into(), url: false, image: None };
     a.material.items.push(item.clone());
     a.material.preparing = true;
     a.remove_material(item);
@@ -250,7 +288,7 @@ fn choose_material_opens_select_dialog() {
 #[test]
 fn empty_prompt_with_material_does_not_submit() {
     let mut a = demo();
-    a.material.items.push(crate::material_ui::MaterialItem { value: "/tmp/a.png".into(), url: false });
+    a.material.items.push(crate::material_ui::MaterialItem { value: "/tmp/a.png".into(), url: false, image: None });
     a.prompt = "   ".into();
     a.submit();
     // Leere Eingabe bricht vor jeder Materialprüfung ab.

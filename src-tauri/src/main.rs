@@ -123,6 +123,19 @@ fn sessions_root() -> Option<std::path::PathBuf> {
     Some(agent.join("sessions"))
 }
 
+#[tauri::command]
+async fn prompt_history(path: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
+        // Keine beliebigen Dateien aus dem Webview lesbar machen.
+        let root = sessions_root().ok_or("Kein Sessions-Ordner")?.canonicalize().map_err(|e| e.to_string())?;
+        if !p.starts_with(&root) || p.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+            return Err("Pfad liegt außerhalb des Session-Ordners".into());
+        }
+        pi_backend::prompt_history::read(p.to_str().ok_or("Ungültiger Pfad")?)
+    }).await.map_err(|e| e.to_string())?
+}
+
 /// Liest die ganze Datei zeilenweise, parst aber nur Kopfzeile, die erste
 /// Nutzer-Nachricht und `session_info`-Zeilen (Name steht beliebig weit hinten).
 fn read_info(path: &std::path::Path, modified: u64) -> Option<SessionInfo> {
@@ -295,7 +308,7 @@ fn main() {
         .manage(InfoCache::default())
         .manage(context::SearchState::default())
         .manage(cli::Cli::default())
-        .invoke_handler(tauri::generate_handler![shared_bookmarks_read, shared_bookmarks_update, shared_bookmarks_seed, outline_read, outline_apply, start_pi, send, list_sessions, delete_session, inventory::inventory, inventory::read_config, inventory::save_config, preview::preview, preview::cached_purpose, preview::clear_previews, preview::explain_usage, folders::resume_session, folders::work_locations, folders::list_folders, editor::open_in_editor, editor::existing_paths, material::material_browser, material::material_preview, material::pick_material, material::prepare_material, media::media_routes, media::analyze_media, cli::pi_cli, cli::pi_cli_cancel, cli::startup_info, cli::latest_version, cli::open_changelog, cli::quit_app, net_backends, net_save_backend, net_delete_backend, net_list, net_create, net_remove, net_restart, net_send, net_dirs, net_sessions, net_delete_session, net_rename_session, net_fetch, net_subscribe, net_unsubscribe, context::session_search, context::repair_analyze, context::repair_apply, context::repair_undo, context::repair_export, context::import_md])
+        .invoke_handler(tauri::generate_handler![shared_bookmarks_read, shared_bookmarks_update, shared_bookmarks_seed, outline_read, outline_apply, start_pi, send, list_sessions, prompt_history, delete_session, inventory::inventory, inventory::read_config, inventory::save_config, preview::preview, preview::cached_purpose, preview::clear_previews, preview::explain_usage, folders::resume_session, folders::work_locations, folders::list_folders, editor::open_in_editor, editor::existing_paths, material::material_browser, material::material_preview, material::pick_material, material::prepare_material, media::media_routes, media::analyze_media, cli::pi_cli, cli::pi_cli_cancel, cli::startup_info, cli::latest_version, cli::open_changelog, cli::quit_app, net_backends, net_save_backend, net_delete_backend, net_list, net_create, net_remove, net_restart, net_send, net_dirs, net_sessions, net_delete_session, net_rename_session, net_fetch, net_subscribe, net_unsubscribe, context::session_search, context::repair_analyze, context::repair_apply, context::repair_undo, context::repair_export, context::import_md])
         .build(tauri::generate_context!())
         .expect("Tauri-Start fehlgeschlagen")
         .run(|app, ev| {
