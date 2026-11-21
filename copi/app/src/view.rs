@@ -725,11 +725,12 @@ impl App {
             }
             let before_nl = self.prompt.chars().take(self.prompt_cursor).any(|c| c == '\n');
             let after_nl = self.prompt.chars().skip(self.prompt_cursor).any(|c| c == '\n');
-            if k(ctx, Key::ArrowUp, true, false, false) || (!before_nl && plain(ctx, Key::ArrowUp)) {
+            let browsing = self.history.browsing();
+            if k(ctx, Key::ArrowUp, true, false, false) || ((browsing || !before_nl) && plain(ctx, Key::ArrowUp)) {
                 self.recall(-1);
                 return;
             }
-            if k(ctx, Key::ArrowDown, true, false, false) || (!after_nl && plain(ctx, Key::ArrowDown)) {
+            if k(ctx, Key::ArrowDown, true, false, false) || ((browsing || !after_nl) && plain(ctx, Key::ArrowDown)) {
                 self.recall(1);
                 return;
             }

@@ -40,10 +40,11 @@ const test = async () => {
   const field=$('prompt'); field.value='Entwurf';
   const first=recallInput(-1);
   await until(()=>pending['/demo/a.jsonl']);
-  pending['/demo/a.jsonl'](['Erster vor Komprimierung','Letzter']);
-  await first; assert(field.value==='Letzter','letzter Prompt');
-  await recallInput(-1); assert(field.value==='Erster vor Komprimierung','erster Prompt aus Sessionlog');
-  await recallInput(1); await recallInput(1); assert(field.value==='Entwurf','Entwurf beim Rückweg');
+  pending['/demo/a.jsonl'](['Erster vor Komprimierung\nzweite Zeile','Letzter\nzweite Zeile']);
+  await first; assert(field.value==='Letzter\nzweite Zeile','letzter Prompt');
+  const arrow = key => field.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));
+  arrow('ArrowUp'); assert(field.value==='Erster vor Komprimierung\nzweite Zeile','erster Prompt trotz mehrzeiliger Eingabe');
+  arrow('ArrowDown'); arrow('ArrowDown'); assert(field.value==='Entwurf','Entwurf beim Rückweg');
   delete pending['/demo/a.jsonl'];
   const slow=recallInput(-1); await until(()=>pending['/demo/a.jsonl']);
   await start({session:'/demo/b.jsonl'});

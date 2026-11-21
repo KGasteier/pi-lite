@@ -380,7 +380,7 @@
       else if (e.key === "Escape") { e.preventDefault(); abort(x); }
       else if (!e.shiftKey && !e.ctrlKey && !e.metaKey && input.selectionStart === input.selectionEnd && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
         const up = e.key === "ArrowUp";
-        if (e.altKey || !(up ? input.value.slice(0,input.selectionStart) : input.value.slice(input.selectionEnd)).includes("\n")) { e.preventDefault(); recall(up ? -1 : 1); }
+        if (e.altKey || history.browsing() || !(up ? input.value.slice(0,input.selectionStart) : input.value.slice(input.selectionEnd)).includes("\n")) { e.preventDefault(); recall(up ? -1 : 1); }
       }
     };
     sendBtn.onclick = submit; abortBtn.onclick = () => abort(x);
