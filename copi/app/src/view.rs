@@ -578,12 +578,18 @@ impl App {
             let before_nl = self.prompt.chars().take(self.prompt_cursor).any(|c| c == '\n');
             let after_nl = self.prompt.chars().skip(self.prompt_cursor).any(|c| c == '\n');
             let browsing = self.history.browsing();
-            if k(ctx, Key::ArrowUp, true, false, false) || ((browsing || !before_nl) && plain(ctx, Key::ArrowUp)) {
-                self.recall(-1);
-                return;
-            }
-            if k(ctx, Key::ArrowDown, true, false, false) || ((browsing || !after_nl) && plain(ctx, Key::ArrowDown)) {
-                self.recall(1);
+            let direction = if k(ctx, Key::ArrowUp, true, false, false) || ((browsing || !before_nl) && plain(ctx, Key::ArrowUp)) {
+                -1
+            } else if k(ctx, Key::ArrowDown, true, false, false) || ((browsing || !after_nl) && plain(ctx, Key::ArrowDown)) {
+                1
+            } else {
+                0
+            };
+            if direction != 0 {
+                // Direkt nach Fokuswechsel kann egui denselben Pfeil bereits zur
+                // Widget-Navigation vorgemerkt haben. Hier gehört er der Historie.
+                ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+                self.recall(direction);
                 return;
             }
         }
@@ -1361,7 +1367,8 @@ impl App {
         }
         self.prompt_focused = out.response.has_focus();
         if self.focus_prompt && self.dialogs.is_empty() && !self.editor_open && !self.keyhelp {
-            ui.memory_mut(|m| m.request_focus(prompt_id()));
+            // request_focus setzt auch eguis Tastaturfilter und IME zurück.
+            ui.memory_mut(|m| { if !m.has_focus(prompt_id()) { m.request_focus(prompt_id()); } });
             self.focus_prompt = false;
         }
         let ex = Rect::from_min_size(prompt.right_top() + vec2(-26.0, 4.0), vec2(22.0, 22.0));
