@@ -8,9 +8,18 @@
 - Strg/Cmd+V legt Bilddaten als Materialchip in den **lokalen pi-Chat**, ohne sofort zu senden. Der Materialdialog zeigt nur die angeforderte Datei; Navigation/Schließen verwerfen alte Vorschauantworten. [Bedienung und Testgrenzen](CHAT-MATERIAL.md).
 - Feature-Port statt Branchmerge: `main` bleibt ohne Remote; `copi`, `copi-multi`, `cocopi`, `cocopi-v2`, `cocopi-v3` und `cocopi-v3d` behalten ihre eigenen Funktionen. Bei v3/v3d nur gemeinsamer/Legacy-Code; Slot-v3 und separates v3-Repository nicht geändert. Native Remote-Raster erhalten den Ende-Knopf; native Remote-Rückschau gibt es im Einzelchat, im Web auch in der Remote-Kachel.
 - Schlussprüfung: `cocopi-h` **141 bestanden / 2 ignoriert**, `copi` **136 bestanden / 2 ignoriert** (offline/locked Release-Testprofil, für das App-Crate `opt-level=0`; kein Distributionsbuild). Native Fokusregression und virtueller 10.000-Zeilen-Sprung eingeschlossen. JSONL-Backendtest, Tauri-Release-Checks und Chromium-DOM-Test mit simuliertem Backend bestanden. `test-statusline-net.cjs` behält seinen bekannten Altfehler. Kein Live-Clipboard- oder Remote-Test.
-- Neuer portabler Skill `~/.agents/skills/cocopi2-dev` inkl. Projektnotizen, ohne Logs/Secrets; Links für Claude Code und Codex. Keine Installation, kein Push, kein R2-Eingriff oder Modelllauf. Die unten genannten installierten Binaries stammen aus der früheren Lieferung.
+- Neuer portabler Skill `~/.agents/skills/cocopi2-dev` inkl. Projektnotizen, ohne Logs/Secrets; Links für Claude Code und Codex.
 
-### Separate Hermes-Ausgabe cocopi-h · letzter installierter Stand
+### Release und lokale Installation · 22.11.2026
+
+- Alle acht aktualisierten Branches atomar und ohne Force nach `origin` gepusht; vollständige Refs per `ls-remote` geprüft. `copi-multi` war zuvor nur lokal. Kein R2-Eingriff.
+- Produktions-Releases für ARM/aarch64 aus `4486a2903448bd75c438ee536a6d97a73dce71b4`, offline/locked mit zwei Jobs: `cocopi-h` 5m53s, `pi-lite` 4m50s. Atomarer Austausch nach lokalen Backups. Quelle/Ziel mit vollständigem SHA256 geprüft:
+  - `~/.local/bin/cocopi-h`: `e49dec009008db809a91b3eb706012efeab9483deb08ad336554e1b07b001604`
+  - `~/.local/lib/pi-lite/pi-lite`: `844f8aa147286a15bac9b85e8f9b957458bc69d06842e459f2e39a268ff14e77`
+  - Backups neben den Binaries: Suffix `.bak-chat-material-20261121T225229-3320101`.
+- `cocopi-h --version`, Startervalidierung und Headless-Hermes-Demo aus dem neuen Build geprüft. `copi`, `cocopi`, `cocopi-v3` und der `pi-lite`-Startwrapper blieben hashgleich; Icons und Starter nicht geändert. Keine laufenden Fenster geschlossen oder neu gestartet, kein echter Clipboard-/WebKit-/Remote-Test. Neue Binaries werden beim nächsten regulären Start geladen.
+
+### Separate Hermes-Ausgabe cocopi-h · Erstinstallation (historisch)
 
 Neuer Desktopbranch ab `4720a7a`. Feature/Binary `cocopi-h` verwendet denselben
 cocopi-Kern mit eigener App-ID/Fensterkennung und H-Icon. Installer
