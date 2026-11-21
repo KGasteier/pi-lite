@@ -79,6 +79,8 @@ pub struct Chat {
     think: Option<usize>,
     pub asks: Vec<Ask>,
     pub input: String,
+    pub history_reply: Option<(String, Result<Vec<String>, String>)>,
+    pub jump_to_end: bool,
     /// Fertige Antwort, die lokal vorgelesen werden soll (nur im Live-Betrieb, nie beim Verlaufs-Nachladen).
     pub speak: Option<String>,
     /// Verlauf ist nachgeliefert (`Ev::Live`).
@@ -239,6 +241,17 @@ impl Chat {
                 }
                 let options = v["options"].as_array().map(|a| a.iter().map(|o| o.as_str().map(String::from).unwrap_or_else(|| o.to_string())).collect()).unwrap_or_default();
                 self.asks.push(Ask { id, kind, title: s("title"), message: s("message"), options, text: s("prefill"), since: std::time::Instant::now() });
+            }
+            "response" if self.live && v["id"].as_str().is_some_and(|id| id.starts_with("copi-prompt-history-")) => {
+                let data = &v["data"];
+                let result = if v["success"] != true {
+                    Err("Diese Server-Version liefert keine vollständigen Sessioneinträge".into())
+                } else if v["command"] == "get_entries" {
+                    Ok(pi_backend::prompt_history::entries(&data["entries"]))
+                } else {
+                    Ok(data["messages"].as_array().into_iter().flatten().filter_map(pi_backend::prompt_history::text).collect())
+                };
+                self.history_reply = Some((v["id"].as_str().unwrap().to_owned(), result));
             }
             "response" if v["success"] == true && v["command"] == "get_available_models" => {
                 self.models = v["data"]["models"].as_array().cloned().unwrap_or_default();

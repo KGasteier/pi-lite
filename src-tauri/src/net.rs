@@ -300,7 +300,7 @@ impl Net {
 
     pub fn create(&self, backend: &str, spec: &Value) -> Result<Value, String> {
         let s = |k: &str| spec[k].as_str().map(str::trim).filter(|v| !v.is_empty()).map(String::from);
-        let spec = Spec { name: s("name"), harness: s("harness"), cwd: s("cwd").unwrap_or_default(), session: s("session") };
+        let spec = Spec { name: s("name"), harness: s("harness"), cwd: s("cwd").unwrap_or_default(), session: s("session"), args: Vec::new() };
         Ok(info_json(&self.get(backend)?.create(&spec)?))
     }
 
