@@ -2,6 +2,12 @@
 
 ## Aktueller Stand
 
+### Sprungpfeil im Ausgabefenster · 22.11.2026
+
+- Der frühere Kopfzeilenknopf sitzt unten rechts im Verlauf – nativ und in pi-lite, je getrennt für Einzelchat und Remote-Kacheln. Bei kurzem Verlauf oder am Ende weder sichtbar noch fokussierbar. Klick springt direkt ans Ende; natives Tail-Rendering bleibt virtualisiert.
+- Web: Sichtbarkeit folgt Scrollen, Layoutwechsel und aufklappenden Blöcken; neue Ausgabe behält bei zurückgescrolltem Verlauf den Leseplatz. Am Ende wird weiter automatisch gefolgt.
+- Nativer Test prüft Position, Hitbox und Ausblenden (cocopi-h 142 bestanden / 2 ignoriert; Release-Testprofil mit `opt-level=0` im App-Crate). Chromium-Tauri-Stub prüft Einzelchat und Remote-Kachel sowie Erhalt der Leseposition. Kein Livefenster-/R2-Test.
+
 ### Gesprächsende, vollständige Prompt-Rückschau und Material · 21.11.2026
 
 - Native App und pi-lite: direkte Ende-Schaltfläche, inklusive Kacheln; native Langverläufe bleiben virtualisiert. ↑/↓ liest Nutzerprompts der aktiven Session vor und nach Kompaktierung, mit Wiederholungen und Entwurfsrückkehr. Mehrzeilige Prompts unterbrechen das Blättern nicht. Remote-pi setzt `get_entries` voraus; Hermes verwendet seine API-Nachrichten (im Hub derzeit höchstens 500), keinen pi-Logpfad.
